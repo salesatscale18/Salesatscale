@@ -241,7 +241,26 @@ export function isElevenStability(x: unknown): x is ElevenStability {
 }
 
 /** What a version asks ElevenLabs for (resolved: every part valid). */
-export type ElevenChoice = { model: ElevenModelId; voice: ElevenVoiceId; stability: ElevenStability };
+/**
+ * `speed` (optional): the speaking rate sent to a plain text-to-speech model (Flash v2.5, Multilingual v2) for the
+ * version's pace (elevenSpeedFor); never sent to a dialogue model (Text-to-Dialogue takes only a stability).
+ */
+export type ElevenChoice = { model: ElevenModelId; voice: ElevenVoiceId; stability: ElevenStability; speed?: number };
+
+/** The ElevenLabs speaking rate for the version's pace on BUYER calls (ElevenLabs speech itself is test calls only). Off. */
+export const ELEVEN_PACE_SPEED_FOR_BUYER_CALLS: boolean = false;
+
+/**
+ * The speaking rate for a pace on a plain text-to-speech model: slower 0.9, normal none (nothing sent), faster 1.1.
+ * The AI SDK's `speed` call option (ai 7.0.177 streamSpeech; @ai-sdk/elevenlabs 3.0.88 sends it as the stream's
+ * `voice_settings.speed` for text-to-speech and ignores it with a warning in dialogue mode). Dialogue models: none.
+ * The pace's instruction line is sent as well (lib/voice/settings.ts paceInstruction).
+ */
+export function elevenSpeedFor(model: string, pace: "slower" | "normal" | "faster"): number | undefined {
+  const m = elevenModelInfo(model);
+  if (!m || m.dialogue) return undefined;
+  return pace === "slower" ? 0.9 : pace === "faster" ? 1.1 : undefined;
+}
 
 export const DEFAULT_ELEVEN_CHOICE: ElevenChoice = { model: DEFAULT_ELEVEN_MODEL, voice: DEFAULT_ELEVEN_VOICE, stability: DEFAULT_ELEVEN_STABILITY };
 

@@ -117,6 +117,7 @@ export const VOICE_TOOL_NAMES: ReadonlySet<string> = new Set([...TOOL_DEFS, ...V
 export const TOOL_LABELS: Record<string, string> = {
   search_catalog: "Checking the catalog",
   check_fit: "Checking the products fit",
+  check_offer: "Checking the offer",
   lookup_knowledge: "Looking it up",
   update_deal_state: "Noting the details",
   create_quote: "Preparing the quote",

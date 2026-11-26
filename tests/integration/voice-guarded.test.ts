@@ -15,7 +15,8 @@ import { and, asc, eq } from "drizzle-orm";
 import { conversations, messages, quotes, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
-import { ensureDraftVersion, readDealState } from "@/lib/agent/service";
+import { ensureDraftVersion, readDealState, saveDraftPlaybook } from "@/lib/agent/service";
+import type { PlaybookWithOffers, StoredOffer } from "@/lib/agent/offer-settings";
 import { ClassicVoiceEngine } from "@/lib/voice-classic/engine";
 import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, HELD_FORM_MESSAGE, HELD_FORM_RULE, HELD_QUOTE_MESSAGE, HELD_QUOTE_SAY, refusedQuoteMessage, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
@@ -226,7 +227,20 @@ describe("Classic + guards", () => {
       };
     }
     const noUpdate = { updates: [], next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: null };
-    const quoteArgs = (lines: { sku: string; qty: number }[], extra: Record<string, unknown> = {}) => ({ lines, discount_percent: 0, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null, ...extra });
+    const quoteArgs = (lines: { sku: string; qty: number }[], extra: Record<string, unknown> = {}) => ({ lines, discount_percent: 0, offer: null, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null, ...extra });
+    /**
+     * Offers (part 2, tests/helpers/offers.ts primeOffers on a call): the first quote has no discount, the price
+     * objection is recorded and check_offer runs; a discount above what it returned is then a quote held for approval.
+     */
+    const offersFirst = async (c: { tool: (id: string, name: string, args: unknown) => Promise<Record<string, unknown>> }, lines: { sku: string; qty: number }[]) => {
+      // Its own headline: an identical later call would be a duplicate to the run-once guard (silent probe).
+      const first = await c.tool("q0", "create_quote", quoteArgs(lines, { headline: "The sensors you asked about" }));
+      expect(first, JSON.stringify(first)).toMatchObject({ ok: true, status: "ready" });
+      await c.tool("o0", "update_deal_state", { ...noUpdate, objection: { play: "too_expensive", buyer_words: "ten percent off", step: 4, attempt: true, status: "open" } });
+      const offer = await c.tool("o1", "check_offer", { quote: String(first.quote).split(" ")[0], reason: "next", lines: null, sites: null });
+      expect(offer, JSON.stringify(offer)).toMatchObject({ ok: true });
+      return { first, offer };
+    };
 
     it("K1: send_order_form held on a vague yes (Current's refusal); sent after the buyer asks for it", async () => {
       const c = await fakeCall();
@@ -255,6 +269,7 @@ describe("Classic + guards", () => {
           await c.startNow();
           await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
           await c.buyer(he ? "אפשר עשרה אחוז הנחה על שישה חיישנים?" : "Can you do ten percent off six sensors?");
+          await offersFirst(c, [{ sku: "SENSOR", qty: 6 }]);
           const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }], { discount_percent: 10 }));
           expect(Object.keys(q)[0]).toBe("say_this");
           expect(q.say_this).toBe(HELD_QUOTE_SAY[he ? "he" : "en"]);
@@ -322,14 +337,54 @@ describe("Classic + guards", () => {
       await c.startNow();
       await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
       await c.buyer("Can you do ten percent off six sensors?");
+      await offersFirst(c, [{ sku: "SENSOR", qty: 6 }]);
       const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }], { discount_percent: 10 }));
       expect(q).toMatchObject({ status: "awaiting_seller_approval" });
-      const [row] = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
+      const [row] = await db.select().from(quotes).where(and(eq(quotes.leadId, c.leadId), eq(quotes.status, "awaiting_approval")));
       await db.update(quotes).set({ status: "sent" }).where(eq(quotes.id, row.id));
       await c.buyer("Yes, send me the order form please.");
       const f = await c.tool("f1", "send_order_form", { quote: String(q.quote) });
       expect(f.rule).not.toBe(HELD_FORM_RULE);
       await c.end();
+    });
+
+    it("check_offer on a call (Current, guarded, silent): the binding record never reaches the model, its figures do; the quote-quantities guard passes the offer id through untouched", async () => {
+      // The seller offers a general 5% (the test lab runs the draft playbook); restored afterwards.
+      const before = (await ensureDraftVersion(db, acc)).playbook;
+      const offers: StoredOffer[] = [{ type: "general", on: true, percentBp: 500 }, { type: "smaller_start", on: true }];
+      await saveDraftPlaybook(db, acc, { ...before, maxDiscountBp: 500, offers } as PlaybookWithOffers);
+      try {
+      for (const profile of [null, GUARDED_PROFILE, GUARDED_SILENT_PROFILE]) {
+        const c = await fakeCall([], {}, profile);
+        await c.startNow();
+        await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+        await c.buyer("How much for six sensors? That's a bit much, can you do anything on the price?");
+        const { offer } = await offersFirst(c, [{ sku: "SENSOR", qty: 6 }]);
+        // The model's view: no record (resultForModel), the offer with its figures as the tool gives them.
+        expect(offer.record, JSON.stringify(offer)).toBeUndefined();
+        expect(JSON.stringify(offer)).not.toMatch(/"record"|quoteId|priceListId|catalogVersionId/);
+        const o = offer.offer as { offer_id: string; discount_percent: number; lines: { sku: string; qty: number }[]; totals: Record<string, unknown> } | null;
+        expect(o, JSON.stringify(offer)).toBeTruthy();
+        expect(typeof o!.totals.total_today_including_vat).toBe("string");
+        // Guarded: the agent says the offer (its turn is stored with the check_offer row). Current: the buyer answers
+        // before the agent said a word: the turn's calls are carried to the next spoken line, and the next turn's memo
+        // still knows the offer. Either way the buyer accepts in the next turn.
+        if (profile) await c.said("I can take five percent off the one-time charges. Would that work for you?");
+        await c.buyer("OK, that works for me.");
+        const q = await c.tool("q1", "create_quote", quoteArgs(o!.lines, { discount_percent: o!.discount_percent, offer: o!.offer_id, headline: "Six sensors with the offer" }));
+        expect(q, JSON.stringify(q)).toMatchObject({ ok: true, status: "ready", offer: { id: o!.offer_id } });
+        // Test calls run the quote-quantities guard: six was said by the buyer, so it lets the quote through.
+        expect(c.logs.some((l) => / tool create_quote ok /.test(l))).toBe(true);
+        await c.end();
+        const rows = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId)).orderBy(asc(toolCalls.createdAt), asc(toolCalls.sequence));
+        const stored = rows.find((x) => x.name === "check_offer")!;
+        expect((stored.result as { record?: { id?: string } }).record?.id).toBe(o!.offer_id);
+        const made = rows.filter((x) => x.name === "create_quote").at(-1)!;
+        expect((made.input as { offer?: unknown }).offer).toBe(o!.offer_id);
+      }
+      } finally {
+        await saveDraftPlaybook(db, acc, before);
+      }
     });
 
     it("K2: a number the buyer stated is not lowered on an ambiguous yes; it is when the buyer says it; silent otherwise", async () => {

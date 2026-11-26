@@ -594,8 +594,10 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
       await c.run(500);
       const r = model.conns[0].toolResults.find((x) => x.name === "request_callback")!.result;
       expect(r.ok).toBe(true);
-      expect(r.message).toContain("The booking card with the free times is now in this chat (a card to pick a time on, not a link you sent).");
-      expect(r.message).toContain("Never say you sent a link");
+      expect(r.message).toContain("The booking card with the free times is now in this chat.");
+      expect(r.message).toContain("that the booking card is now in the chat and that they can pick a time for a call with");
+      expect(r.message).toContain("Never read the times on the card aloud.");
+      expect(r.message).not.toMatch(/below|under your reply/);
       expect(r.message).toContain(`For example, in Hebrew: "${BOOKING_CARD_LINE_HE}"`);
       expect(r.message).toMatch(/Say it in Hebrew, the language you are speaking with the buyer\.$/);
       c.engine.onClientMessage({ t: "end" });

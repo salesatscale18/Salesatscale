@@ -24,6 +24,14 @@ export type VoiceSettings = StoredVoiceSettings & {
   elevenModel?: string;
   elevenVoice?: string;
   elevenStability?: number;
+  /**
+   * Voice settings › Conversation › More options (JSON only, no migration; test calls only for now, see the
+   * *_FOR_BUYER_CALLS constants below). A missing key is the default: `turnEnd` "pause" (fixed pause, server VAD),
+   * `thinking` "default" (nothing sent), `openerProtected` true. Only non-default values are stored.
+   */
+  turnEnd?: "pause" | "smart";
+  thinking?: Exclude<ThinkingLevel, "default">;
+  openerProtected?: boolean;
 };
 
 /** The valid ElevenLabs fields of a version's settings JSON (anything not in the catalog is left out). */
@@ -51,6 +59,14 @@ export const MIN_CALL_SEC = 60;
 
 export const VOICE_PACES = ["slower", "normal", "faster"] as const;
 export const VOICE_STYLES = ["patient", "balanced", "quick"] as const;
+/** "Turn ending" (GPT-Realtime): a fixed pause (server VAD, today's) or smart (OpenAI semantic VAD). */
+export const TURN_ENDS = ["pause", "smart"] as const;
+export type TurnEnd = (typeof TURN_ENDS)[number];
+/** "Thinking effort" (GPT-Realtime 2.1, a reasoning realtime model): "default" sends nothing (the provider's own, low). */
+export const THINKING_LEVELS = ["default", "minimal", "low", "medium", "high"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+/** The models "Thinking effort" is offered for (OpenAI's reasoning realtime models). */
+export const THINKING_MODELS: readonly string[] = ["openai/gpt-realtime-2.1"];
 
 /** The model list's hint line for both ElevenLabs Realtime models. */
 const ELEVEN_REALTIME_NOTE = "ElevenLabs listens, decides and speaks as one system. Test calls only for now.";
@@ -65,7 +81,7 @@ export const DEFAULT_VOICE_MODEL = "google/gemini-3.8-live";
  * validation, the picker and the price hint read it.
  */
 export const VOICE_MODELS = [
-  { id: "google/gemini-3.8-live", label: "Gemini 3.8 Live", family: "gemini", proven: true, note: "Its own turn detection (not tunable); Gemini voices." },
+  { id: "google/gemini-3.8-live", label: "Gemini 3.8 Live", family: "gemini", proven: true, note: "Google's own turn-taking, tunable on test calls; Gemini voices." },
   { id: "openai/gpt-realtime-2.1", label: "GPT-Realtime 2.1", family: "openai", proven: true, note: "Tunable turn-taking (style, pause, interruptions); OpenAI voices." },
   { id: "openai/gpt-realtime-mini", label: "GPT-Realtime mini", family: "openai", proven: true, note: "The smaller OpenAI model: cheaper, tunable turn-taking; OpenAI voices." },
   // ElevenLabs end to end (speech to speech, no GPT in the middle), through the Gateway's OpenAI-compatible realtime
@@ -159,27 +175,33 @@ export type VoiceCapabilities = {
   interruptSensitivity: boolean;
   /** Short spoken fillers before a tool (instructions only). */
   fillers: boolean;
+  /** "Turn ending": fixed pause or smart (OpenAI semantic VAD). GPT-Realtime only. */
+  turnEnd: boolean;
+  /** "Thinking effort" (reasoning effort). GPT-Realtime 2.1 only. */
+  thinking: boolean;
+  /** "Protect the opening line" (the engine's own, model-independent): every model. */
+  openerProtect: boolean;
 };
 
 /**
- * What a realtime model lets a seller change, so the UI shows only those.
- * Gemini 3.8 Live has server voice activity detection always on, with no
- * tuning through the normalized session config: style and pause are not offered.
+ * What a realtime model lets a seller change, so the UI shows only those (one panel for every model: a control a
+ * model does not have is not shown). Gemini 3.8 Live: style, pause and interruptions map to Google's own
+ * automaticActivityDetection (test calls only for now: GEMINI_TURN_TAKING_FOR_BUYER_CALLS, geminiActivityDetectionFor).
  */
 export function voiceCapabilities(modelId: string): VoiceCapabilities {
   if (/^google\/|gemini/i.test(modelId)) {
-    return { voices: [...GEMINI_VOICES], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true };
+    return { voices: [...GEMINI_VOICES], pace: true, style: true, pauseMs: true, interruptSensitivity: true, fillers: true, turnEnd: false, thinking: false, openerProtect: true };
   }
   if (/^openai\/|gpt-realtime/i.test(modelId)) {
-    return { voices: [...OPENAI_VOICES], pace: true, style: true, pauseMs: true, interruptSensitivity: true, fillers: true };
+    return { voices: [...OPENAI_VOICES], pace: true, style: true, pauseMs: true, interruptSensitivity: true, fillers: true, turnEnd: true, thinking: THINKING_MODELS.includes(modelId), openerProtect: true };
   }
   // ElevenLabs Realtime: no voice list known (none is sent unless the version stores one for it) and no turn-detection
-  // tuning sent (its own turn-taking, "tuned as one system"): only what the instructions carry.
+  // tuning sent (its own turn-taking, "tuned as one system"): only what the instructions carry, and the engine's own.
   if (isElevenRealtimeModel(modelId)) {
-    return { voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true };
+    return { voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true, turnEnd: false, thinking: false, openerProtect: true };
   }
   // The scripted model and unknown models: nothing provider-specific.
-  return { voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true };
+  return { voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true, turnEnd: false, thinking: false, openerProtect: true };
 }
 
 /**
@@ -239,7 +261,7 @@ export function callVoiceInfo(settings: unknown): CallVoiceInfo {
  * `model` null: the platform default (VOICE_MODEL, else Gemini). `pauseMs` / `interrupt` null: the style's values.
  * `speech`: "elevenlabs" only with a GPT-Realtime model (else "model").
  */
-export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice" | "model" | "pauseMs" | "interrupt" | "speech" | "elevenModel" | "elevenVoice" | "elevenStability">> & {
+export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice" | "model" | "pauseMs" | "interrupt" | "speech" | "elevenModel" | "elevenVoice" | "elevenStability" | "turnEnd" | "thinking" | "openerProtected">> & {
   voice: string | null; model: VoiceModelId | null; pauseMs: number | null; interrupt: NonNullable<VoiceSettings["interrupt"]> | null;
   /** Always set by resolveVoiceSettings; optional in the type so the frozen Classic settings (lib/voice-classic) still build. */
   speech?: VoiceSpeech;
@@ -247,11 +269,16 @@ export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice" | "mode
   elevenModel?: ElevenModelId;
   elevenVoice?: ElevenVoiceId;
   elevenStability?: ElevenStability;
+  /** "Turn ending", "Thinking effort", "Protect the opening line" (defaults "pause", "default", true). Optional for the same reason. */
+  turnEnd?: TurnEnd;
+  thinking?: ThinkingLevel;
+  openerProtected?: boolean;
 };
 
 export const DEFAULT_VOICE_SETTINGS: ResolvedVoiceSettings = {
   voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: DEFAULT_MAX_CALL_SEC, model: null, pauseMs: null, interrupt: null, speech: "model",
   elevenModel: DEFAULT_ELEVEN_MODEL, elevenVoice: DEFAULT_ELEVEN_VOICE, elevenStability: DEFAULT_ELEVEN_STABILITY,
+  turnEnd: "pause", thinking: "default", openerProtected: true,
 };
 
 /** The silence before answering a seller may set, in ms (models with tunable turn detection). */
@@ -288,6 +315,10 @@ export function resolveVoiceSettings(s: VoiceSettings | null | undefined, modelI
     elevenModel: isElevenModel(s?.elevenModel) ? s.elevenModel : DEFAULT_ELEVEN_MODEL,
     elevenVoice: isElevenVoice(s?.elevenVoice) ? s.elevenVoice : DEFAULT_ELEVEN_VOICE,
     elevenStability: isElevenStability(s?.elevenStability) ? s.elevenStability : DEFAULT_ELEVEN_STABILITY,
+    turnEnd: s?.turnEnd === "smart" ? "smart" : "pause",
+    thinking: s?.thinking && (THINKING_LEVELS as readonly string[]).includes(s.thinking) ? s.thinking : "default",
+    // A version that never stored it: on (UX review, 25 Nov). Test calls only for now (OPENER_PROTECTION_FOR_BUYER_CALLS).
+    openerProtected: s?.openerProtected !== false,
   };
 }
 
@@ -309,7 +340,11 @@ export type VoiceSettingsErrors = Partial<Record<keyof VoiceSettings, string>>;
  */
 export function validateVoiceSettings(
   input: unknown, modelId: string = DEFAULT_VOICE_MODEL,
-  opts: { canPickSpeech?: boolean; storedSpeech?: VoiceSettings["speech"]; storedEleven?: Pick<VoiceSettings, "elevenModel" | "elevenVoice" | "elevenStability"> } = {},
+  opts: {
+    canPickSpeech?: boolean; storedSpeech?: VoiceSettings["speech"]; storedEleven?: Pick<VoiceSettings, "elevenModel" | "elevenVoice" | "elevenStability">;
+    /** The version's stored "Protect the opening line": kept when the input does not carry the field. */
+    storedOpenerProtected?: boolean;
+  } = {},
 ): { ok: true; value: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors } {
   const o = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const errors: VoiceSettingsErrors = {};
@@ -382,6 +417,20 @@ export function validateVoiceSettings(
     if (!isElevenStability(n)) errors.elevenStability = "Steadiness is Expressive, Natural or Steady.";
     else if (n !== DEFAULT_ELEVEN_STABILITY) value.elevenStability = n;
   } else if (kept.elevenStability !== undefined) value.elevenStability = kept.elevenStability;
+  // "Turn ending", "Thinking effort": kept only for a model that has them (a model switch drops them); defaults not stored.
+  if (caps.turnEnd && posted(o.turnEnd)) {
+    if (!(TURN_ENDS as readonly unknown[]).includes(o.turnEnd)) errors.turnEnd = "Turn ending is a fixed pause or smart.";
+    else if (o.turnEnd === "smart") value.turnEnd = "smart";
+  }
+  if (caps.thinking && posted(o.thinking)) {
+    if (!(THINKING_LEVELS as readonly unknown[]).includes(o.thinking)) errors.thinking = "Thinking effort is default, minimal, low, medium or high.";
+    else if (o.thinking !== "default") value.thinking = o.thinking as VoiceSettings["thinking"];
+  }
+  // "Protect the opening line" (every model): only "off" is stored (no key = on). Not in the input: the version's kept.
+  if (o.openerProtected !== undefined && o.openerProtected !== null) {
+    if (typeof o.openerProtected !== "boolean") errors.openerProtected = "Protect the opening line is on or off.";
+    else if (!o.openerProtected) value.openerProtected = false;
+  } else if (opts.storedOpenerProtected === false) value.openerProtected = false;
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, value };
 }
 
@@ -389,19 +438,119 @@ export function validateVoiceSettings(
  * Turn-taking values for a style, for providers that take them (OpenAI server
  * VAD: silence before the turn ends, activation threshold, prefix padding).
  * The version's own pause and interruption level, when set, replace the style's.
- * Gemini: none (its VAD is not tunable through the normalized config).
+ * Gemini: none here (its normalized turn detection is ignored by the SDK; its own block: geminiActivityDetectionFor).
  */
 export function turnTakingFor(
   style: ResolvedVoiceSettings["style"], modelId: string, own: { pauseMs?: number | null; interrupt?: ResolvedVoiceSettings["interrupt"] } = {},
 ): { silenceMs: number; threshold: number; prefixPaddingMs: number } | null {
-  if (!voiceCapabilities(modelId).style) return null;
-  const base = style === "patient" ? { silenceMs: 900, threshold: 0.6, prefixPaddingMs: 300 }
-    : style === "quick" ? { silenceMs: 350, threshold: 0.45, prefixPaddingMs: 300 }
-    : { silenceMs: 600, threshold: 0.5, prefixPaddingMs: 300 };
+  if (!voiceCapabilities(modelId).style || voiceFamilyOf(modelId) !== "openai") return null;
   return {
-    ...base,
+    ...styleTurnTaking(style),
     ...(typeof own.pauseMs === "number" ? { silenceMs: own.pauseMs } : {}),
     ...(own.interrupt ? { threshold: INTERRUPT_THRESHOLD[own.interrupt] } : {}),
+  };
+}
+
+/** A conversation style's turn-taking preset (the pause before answering, threshold, prefix padding), for every model. */
+export function styleTurnTaking(style: ResolvedVoiceSettings["style"]): { silenceMs: number; threshold: number; prefixPaddingMs: number } {
+  return style === "patient" ? { silenceMs: 900, threshold: 0.6, prefixPaddingMs: 300 }
+    : style === "quick" ? { silenceMs: 350, threshold: 0.45, prefixPaddingMs: 300 }
+    : { silenceMs: 600, threshold: 0.5, prefixPaddingMs: 300 };
+}
+
+// ---------------------------------------------------------------------------
+// New turn-taking and call controls (test calls only for now). Each has ONE constant for buyer calls; a buyer call
+// sends exactly what it sent before while the constant is false.
+// ---------------------------------------------------------------------------
+
+/** Gemini's own turn-taking block (style, pause, interruptions) on BUYER calls. Off: test calls only. */
+export const GEMINI_TURN_TAKING_FOR_BUYER_CALLS: boolean = false;
+/** "Turn ending: Smart" (OpenAI semantic VAD with eagerness) on BUYER calls. Off: test calls only. */
+export const SMART_TURN_END_FOR_BUYER_CALLS: boolean = false;
+/** "Thinking effort" (OpenAI reasoning.effort) on BUYER calls. Off: test calls only. */
+export const THINKING_EFFORT_FOR_BUYER_CALLS: boolean = false;
+/** "Protect the opening line" (the engine holds the buyer's mic audio during the opener) on BUYER calls. Off: test calls only. */
+export const OPENER_PROTECTION_FOR_BUYER_CALLS: boolean = false;
+
+/**
+ * Google's automaticActivityDetection (Gemini Live `realtimeInputConfig.automaticActivityDetection`, sent raw through
+ * providerOptions: @ai-sdk/google 4.0.122 buildGoogleSessionConfig copies every providerOptions key but `google` into
+ * the setup as is).
+ */
+export type GeminiActivityDetection = {
+  startOfSpeechSensitivity?: "START_SENSITIVITY_LOW" | "START_SENSITIVITY_HIGH";
+  endOfSpeechSensitivity?: "END_SENSITIVITY_LOW" | "END_SENSITIVITY_HIGH";
+  prefixPaddingMs?: number;
+  silenceDurationMs?: number;
+};
+
+/**
+ * A version's style, pause and interruption level as Gemini's activity detection. Interruptions: low → start
+ * sensitivity LOW + prefix 300 ms; medium → no start sensitivity (Google's default); high → HIGH + prefix 40 ms. The
+ * pause (or the style's preset, the same table as GPT) → silenceDurationMs. Style: patient → end sensitivity LOW,
+ * quick → HIGH, balanced → none. The default style with no pause and no interruption level: null (nothing is sent:
+ * the behaviour before 25 Nov).
+ */
+export function geminiActivityDetectionFor(s: Pick<ResolvedVoiceSettings, "style" | "pauseMs" | "interrupt">): GeminiActivityDetection | null {
+  if (s.style === "balanced" && s.pauseMs === null && s.interrupt === null) return null;
+  return {
+    ...(s.interrupt === "low" ? { startOfSpeechSensitivity: "START_SENSITIVITY_LOW" as const } : s.interrupt === "high" ? { startOfSpeechSensitivity: "START_SENSITIVITY_HIGH" as const } : {}),
+    ...(s.style === "patient" ? { endOfSpeechSensitivity: "END_SENSITIVITY_LOW" as const } : s.style === "quick" ? { endOfSpeechSensitivity: "END_SENSITIVITY_HIGH" as const } : {}),
+    ...(s.interrupt === "low" ? { prefixPaddingMs: 300 } : s.interrupt === "high" ? { prefixPaddingMs: 40 } : {}),
+    silenceDurationMs: s.pauseMs ?? styleTurnTaking(s.style).silenceMs,
+  };
+}
+
+/** "Smart" turn ending's eagerness (OpenAI semantic VAD) from the conversation style. */
+export const SMART_EAGERNESS: Record<ResolvedVoiceSettings["style"], "low" | "medium" | "high"> = { patient: "low", balanced: "medium", quick: "high" };
+
+/** What a call's session adds for the new controls (RealtimeSessionConfig fields); nothing when none applies. */
+export type CallTurnExtras = {
+  geminiActivity?: GeminiActivityDetection;
+  semanticVad?: { eagerness: "low" | "medium" | "high" };
+  reasoningEffort?: Exclude<ThinkingLevel, "default">;
+};
+
+/**
+ * The new controls a call on `modelId` (the model it really runs on) sends: test calls only unless the feature's
+ * *_FOR_BUYER_CALLS constant is on (`forBuyers` overrides them in tests). Default settings: nothing on any model.
+ */
+export function callTurnExtras(
+  s: ResolvedVoiceSettings, modelId: string, isTest: boolean,
+  forBuyers: { gemini?: boolean; smart?: boolean; thinking?: boolean } = {},
+): CallTurnExtras {
+  const on = (buyers: boolean) => isTest || buyers;
+  const caps = voiceCapabilities(modelId);
+  const family = voiceFamilyOf(modelId);
+  const out: CallTurnExtras = {};
+  if (family === "gemini" && caps.style && on(forBuyers.gemini ?? GEMINI_TURN_TAKING_FOR_BUYER_CALLS)) {
+    const g = geminiActivityDetectionFor(s);
+    if (g) out.geminiActivity = g;
+  }
+  if (caps.turnEnd && s.turnEnd === "smart" && on(forBuyers.smart ?? SMART_TURN_END_FOR_BUYER_CALLS)) out.semanticVad = { eagerness: SMART_EAGERNESS[s.style] };
+  if (caps.thinking && s.thinking && s.thinking !== "default" && on(forBuyers.thinking ?? THINKING_EFFORT_FOR_BUYER_CALLS)) out.reasoningEffort = s.thinking;
+  return out;
+}
+
+/** Whether the engine protects the opening line on this call ("Protect the opening line", test calls only for now). */
+export function openerProtectionFor(s: Pick<ResolvedVoiceSettings, "openerProtected">, isTest: boolean, forBuyers: boolean = OPENER_PROTECTION_FOR_BUYER_CALLS): boolean {
+  return s.openerProtected !== false && (isTest || forBuyers);
+}
+
+/** The longest the opening line is protected (from the call's start), whatever the opener's audio does. */
+export const OPENER_PROTECT_CAP_MS = 20_000;
+
+/**
+ * The new fields of the panel's form (FormData): what the save action adds to its input. "Protect the opening line"
+ * is a checkbox with a marker field (`openerProtectedShown`), so an unchecked box posts "off" and a form without it
+ * keeps the version's value.
+ */
+export function voiceFormExtras(form: { get(name: string): unknown }): { turnEnd?: string; thinking?: string; openerProtected?: boolean } {
+  const str = (k: string) => { const v = form.get(k); return typeof v === "string" && v ? v : undefined; };
+  return {
+    ...(str("turnEnd") ? { turnEnd: str("turnEnd") } : {}),
+    ...(str("thinking") ? { thinking: str("thinking") } : {}),
+    ...(str("openerProtectedShown") ? { openerProtected: form.get("openerProtected") === "on" } : {}),
   };
 }
 

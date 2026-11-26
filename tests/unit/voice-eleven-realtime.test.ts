@@ -61,7 +61,8 @@ describe("ElevenLabs Realtime: the family", () => {
   });
 
   it("capabilities: no voice list, no turn-taking tuning (none is sent); pace and fillers through the instructions", () => {
-    expect(voiceCapabilities(MINI)).toEqual({ voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true });
+    // Only the engine's own "Protect the opening line" on top (model-independent).
+    expect(voiceCapabilities(MINI)).toEqual({ voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true, turnEnd: false, thinking: false, openerProtect: true });
     expect(turnTakingFor("quick", MINI, { pauseMs: 400, interrupt: "high" })).toBeNull();
   });
 

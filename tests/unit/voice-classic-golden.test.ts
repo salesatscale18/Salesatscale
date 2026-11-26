@@ -37,7 +37,9 @@ const DIFFS: Diff[] = [
     classic: "- Call with a person. Framed as a help, with a booking link in the chat where the buyer picks the time. Never read the link aloud.",
   },
   {
-    id: "core-call-with-person-example (chat example changed: a link; reconciled)",
+    // Offers release (26 Nov 2026, owner option A): the chat example now ends "…below."; Classic's reconciliation
+    // was re-keyed to it, so the spoken line is the same as before the offers release.
+    id: "core-call-with-person-example (chat example changed: a link, then the booking card below; reconciled to the spoken link line)",
     af: `I can set a short call with ${CALL_ROLE}. Does tomorrow at 10:00 work, or would you like to pick another time?"`,
     classic: `I can set a short call with ${CALL_ROLE}: I've put a link in the chat where you can pick a time that suits you."`,
   },
@@ -72,7 +74,71 @@ const DIFFS: Diff[] = [
     classic: `Call with ${CALL_ROLE} booked: Fri 20 Nov 2026 12:30. Keep the conversation going: this call does not end because of the booking. If the buyer wants another time, they can rebook with the same link in the chat, or name a time: call request_callback again with that time, or without one to send the link again.`,
     only: ["continuing-chat"],
   },
+  // The offers release (25-26 Nov 2026): today's chat lines, which Classic reads as they are (its 20 Nov tables have no entry for them).
+  {
+    id: "offers: early price as a \"from\" price",
+    af: "- The buyer asks the price early (\"how much is it?\"): call update_deal_state with price_asked true, then answer at once in one or two plain sentences: the total for what they described, or the entry price and what it depends on, from search_catalog. No list of items. Then carry on. Not this: \"Before we talk price, let me understand your needs.\"",
+    classic: "- The buyer asks the price early (\"how much is it?\"): call update_deal_state with price_asked true, then answer at once in one or two plain sentences: the total for what they described, or the entry price and what it depends on, from search_catalog. Before the quantities are known, word it as a \"from\" price (for example \"from <price> per <unit>\"). No list of items. Then carry on. Not this: \"Before we talk price, let me understand your needs.\"",
+  },
+  {
+    id: "offers: hesitant yes to a smaller set (new chat line)",
+    af: "- The need changes after a quote (other quantity, other product): make a new quote at once. Do not recommend again.\n",
+    classic: "- The need changes after a quote (other quantity, other product): make a new quote at once. Do not recommend again.\n- A hesitant yes to a smaller set (\"Yeah, I guess so\"): ask once, \"Shall I prepare a quote for <the smaller set>?\", and make that quote when they confirm.\n",
+  },
+  {
+    id: "offers: limits, offer only what check_offer returns",
+    af: "- A discount is never the first answer and never unconditional. It stays inside the seller's limit.",
+    classic: "- A discount is never the first answer and never unconditional. Offer only what check_offer returns.",
+  },
+  {
+    id: "offers: hand-over offered and asked first",
+    af: "- Immediate hand-over only when the buyer is upset, complains, raises a legal or existing-customer issue, or insists.",
+    classic: "- Hand-over only when the buyer is upset, complains, raises a legal or existing-customer issue, or insists: offer it and ask first, and hand over when the buyer agrees or insists. A buyer annoyed by a mistake of yours is not a hand-over case.",
+  },
+  {
+    id: "offers: special approval above check_offer",
+    af: "- Special approval: create the quote with create_quote and the discount the buyer needs. Above your limit it waits for the seller's approval: that is the real request. Tell the buyer you have asked the team to approve that price, and keep going: answer questions and carry on with the sale meanwhile. The team's decision reaches the buyer by message; a decline shows under \"Price approval\" in your context: continue the price ladder from it.",
+    classic: "- Special approval: when the buyer needs more than check_offer returned, create the quote with create_quote and the discount the buyer needs. It waits for the seller's approval: that is the real request. Tell the buyer you have asked the team to approve that price, and keep going: answer questions and carry on with the sale meanwhile. The team's decision reaches the buyer by message; a decline shows under \"Price approval\" in your context: continue the price ladder from it.",
+  },
+  {
+    id: "offers: prices also from check_offer",
+    af: "- Prices come only from tools, from the price list of the buyer's market. Never state a price, total or discount you did not get from search_catalog, check_fit or create_quote.",
+    classic: "- Prices come only from tools, from the price list of the buyer's market. Never state a price, total or discount you did not get from search_catalog, check_fit, check_offer or create_quote.",
+  },
+  {
+    id: "offers: discounts through check_offer",
+    af: "- Discounts: you may offer up to 5.0%, only when the buyer asks for a discount, or raised the price and your approved answer did not settle it. A discount applies to one-time charges only. Anything above goes to the seller for approval; create_quote handles that.",
+    classic: "- Discounts and other price offers: only when the buyer asks for a discount, or raised the price and your approved answer did not settle it. Record it with update_deal_state objection first, then call check_offer with the buyer's quote and their reason. Offer only what it returns, one offer at a time, in your own words, with its figures. When the buyer accepts, call create_quote with its offer id and exactly its lines and discount. The first quote never has a discount. If the buyer needs more than check_offer returned, create_quote with the discount they need goes to the seller for approval.",
+  },
+  {
+    id: "offers: hand-off offered and asked first",
+    af: "- Hand off to a person (hand_off_to_human) when: The buyer is upset, complains, raises a legal or existing-customer issue, or insists on a person. A question you have no approved answer for, or a first request for a person, is not a reason to hand off: use the cards \"A question with no approved answer\" and \"The buyer asks for a person\".",
+    classic: "- Hand off to a person (hand_off_to_human) when: The buyer is upset, complains, raises a legal or existing-customer issue, or insists on a person. A question you have no approved answer for, or a first request for a person, is not a reason to hand off: use the cards \"A question with no approved answer\" and \"The buyer asks for a person\". Before you hand off, offer it and ask first (\"I'll ask someone from the team to get back to you. Would that be OK?\"), and hand off when the buyer agrees or insists. A buyer annoyed by a mistake of yours is not a reason to hand off: apologise once and carry on.",
+  },
+  {
+    id: "offers: exceptions only when the condition is met",
+    af: "- Approved exceptions: special terms the seller approved. Offer one only when it applies to the buyer, and only these; never invent other special terms. When a quote uses one, pass its id as create_quote exception: the quote then waits for the seller's approval.",
+    classic: "- Approved exceptions: special terms the seller approved. Offer one only when it applies to the buyer, and only these; never invent other special terms. When a quote uses one, pass its id as create_quote exception: the quote then waits for the seller's approval. Pass an exception only when the buyer's situation meets its stated condition; never add one the buyer did not need. Never say the price already includes it: say the team will confirm the updated price.",
+  },
+  {
+    id: "offers: card \"Too expensive\" steps 2, 4, 5",
+    af: "Do: 1) Acknowledge, and find which kind it is: over their budget, more than another offer, or not clear what they get for it. 2) Answer that kind. Value not clear: set the price against what the problem costs them, in their own numbers, per unit or per month. Another offer: say what this price includes that the other may not. Budget: offer a smaller first step that still solves the main problem. 3) Ask: \"If the price worked, is anything else in the way?\" If something else is, handle that first. 4) Offer a discount only as a trade, inside your limit: for deciding now, for more units, or for paying yearly. Make a new quote with it. 5) If they need more than your limit: send a real approval request to the team, say you have asked, and keep the conversation going; do not end the call because of it. 6) Last rungs: agree a time to come back, then a call.",
+    classic: "Do: 1) Acknowledge, and find which kind it is: over their budget, more than another offer, or not clear what they get for it. 2) Answer that kind. Value not clear: set the price against what the problem costs them, in their own numbers. Another offer: say what this price includes that the other may not. Budget: offer a smaller first step that still solves the main problem, with its figures from check_offer (smaller_start). 3) Ask: \"If the price worked, is anything else in the way?\" If something else is, handle that first. 4) Offer a discount only as a trade: call check_offer with the trade the buyer named (or next) and offer only what it returns, one offer at a time. When the buyer accepts, make a new quote with its offer id. 5) If they need more than check_offer returned: send a real approval request to the team, say you have asked, and keep the conversation going; do not end the call because of it. 6) Last rungs: agree a time to come back, then a call.",
+  },
+  {
+    id: "offers: card \"The buyer is upset\" (offers and asks first; the 20 Nov table's optional entries no longer match)",
+    af: "Do: 1) Stop selling and ask nothing more. 2) Say a person from the team will take over. 3) Hand over at once.\nExample: \"Understood. I am passing you to a member of the team now.\"\nNot this: \"Before I do that, can I just ask one more question?\"",
+    classic: "Do: 1) Stop selling. 2) Offer that someone from the team gets back to them, and ask if that is OK. 3) Hand over (hand_off_to_human) when they agree or insist on a person. A legal or existing-customer issue: say you are passing it to the team and hand over. Annoyed by a mistake of yours: apologise once and carry on; that is not a hand-over case.\nExample: \"I'll ask someone from the team to get back to you. Would that be OK?\"\nNot this: \"I am passing you to the team now.\" without asking first.",
+  },
+  {
+    id: "offers: \"Open objection\" quotes the changed card \"Too expensive\"",
+    af: "Its card, steps already used marked [used]: 1) [used] Acknowledge, and find which kind it is: over their budget, more than another offer, or not clear what they get for it. 2) Answer that kind. Value not clear: set the price against what the problem costs them, in their own numbers, per unit or per month. Another offer: say what this price includes that the other may not. Budget: offer a smaller first step that still solves the main problem. 3) Ask: \"If the price worked, is anything else in the way?\" If something else is, handle that first. 4) Offer a discount only as a trade, inside your limit: for deciding now, for more units, or for paying yearly. Make a new quote with it. 5) If they need more than your limit: send a real approval request to the team, say you have asked, and keep the conversation going; do not end the call because of it. 6) Last rungs: agree a time to come back, then a call.",
+    classic: "Its card, steps already used marked [used]: 1) [used] Acknowledge, and find which kind it is: over their budget, more than another offer, or not clear what they get for it. 2) Answer that kind. Value not clear: set the price against what the problem costs them, in their own numbers. Another offer: say what this price includes that the other may not. Budget: offer a smaller first step that still solves the main problem, with its figures from check_offer (smaller_start). 3) Ask: \"If the price worked, is anything else in the way?\" If something else is, handle that first. 4) Offer a discount only as a trade: call check_offer with the trade the buyer named (or next) and offer only what it returns, one offer at a time. When the buyer accepts, make a new quote with its offer id. 5) If they need more than check_offer returned: send a real approval request to the team, say you have asked, and keep the conversation going; do not end the call because of it. 6) Last rungs: agree a time to come back, then a call.",
+    only: ["new-call"],
+  },
 ];
+
+/** The required reconciliation the offers release left without its chat line (Classic frozen: reported, not edited). */
 
 /** The 20 Nov text with the documented differences applied; each must match exactly once. */
 function expectedClassic(afText: string, id: string): string {
@@ -113,7 +179,8 @@ describe("Classic (20 Nov) engine: golden against af85493", () => {
       expect(rest).toEqual(a.sessionConfig);
       const { instructions: i2, tools: t2, ...sdk } = toSdkSessionConfig(cfg, CLASSIC_VOICE_MODEL) as Record<string, unknown>;
       expect(i2).toBe(instructions);
-      expect(t2).toHaveLength(af.sdkTools.length);
+      // One more than on 20 Nov: check_offer (offers release; see the tools test below).
+      expect(t2).toHaveLength(af.sdkTools.length + 1);
       expect(sdk).toEqual(a.sdkConfig);
     });
   }
@@ -131,13 +198,17 @@ describe("Classic (20 Nov) engine: golden against af85493", () => {
   it("the tools: the 20 Nov set (today's tools and end_call), today's schemas only where a tool changed", () => {
     const now = realtimeTools("gemini");
     const before = af.tools as { name: string; description: string; parameters: unknown }[];
-    expect(now.map((t) => t.name)).toEqual(before.map((t) => t.name));
+    // Offers release (26 Nov 2026, owner option A): Classic offers today's TOOL_DEFS by construction (its
+    // tool-schema.ts), so it also offers check_offer (without it Classic could not give any discount).
+    expect(now.map((t) => t.name)).toEqual([...TOOL_DEFS.map((d) => d.name), "end_call"]);
+    expect(now.map((t) => t.name).filter((n) => n !== "check_offer")).toEqual(before.map((t) => t.name));
     expect([...VOICE_TOOL_NAMES].sort()).toEqual([...TOOL_DEFS.map((d) => d.name), "end_call"].sort());
     expect(VOICE_TOOL_NAMES.has("order_form_status")).toBe(false);
     // Changed since 20 Nov (Reach part B and N1): request_callback { brief, time } and its booking link;
-    // schedule_follow_up texts a link. Classic offers today's definitions of these, through the 20 Nov wording table.
+    // schedule_follow_up texts a link; offers (25 Nov): create_quote's offer id and discount wording. Classic offers
+    // today's definitions of these, through the 20 Nov wording table.
     const changed = before.filter((b) => JSON.stringify(b) !== JSON.stringify(now.find((t) => t.name === b.name))).map((b) => b.name);
-    expect(changed.sort()).toEqual(["request_callback", "schedule_follow_up"]);
+    expect(changed.sort()).toEqual(["create_quote", "request_callback", "schedule_follow_up"]);
     const rc = now.find((t) => t.name === "request_callback")!.parameters as { required: string[] };
     expect(rc.required).toEqual(["brief", "time"]);
   });
@@ -165,7 +236,8 @@ describe("Classic (20 Nov) engine: golden against af85493", () => {
     // reached, a tool result). They are listed so a change in this set is a decision, not an accident.
     const where = [...new Set(unmatched.map((u) => `${u.where}: ${u.from.slice(0, 60)}`))].sort();
     expect(where).toMatchSnapshot();
-    expect(unmatched.every((u) => u.optional)).toBe(true);
+    // All optional.
+    expect(unmatched.filter((u) => !u.optional)).toEqual([]);
     // The stage table is the 20 Nov one (plus reconciliations), not today's voice table.
     expect(STAGE_VOICE.some((e) => String(e.from).includes("recommendation_confirmed"))).toBe(false);
   });

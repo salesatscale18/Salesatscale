@@ -4,9 +4,12 @@
  * plain labels and the time texts. No server imports: client components use
  * them too, and constants live here, never in a "use client" file.
  */
-import { DEFAULT_VOICE_SETTINGS, isOpenAiVoiceModel, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, voiceCapabilities, voiceMode, voiceModelLabel, type ResolvedVoiceSettings, type VoiceCapabilities } from "./settings";
+import {
+  DEFAULT_VOICE_SETTINGS, GEMINI_TURN_TAKING_FOR_BUYER_CALLS, isOpenAiVoiceModel, MIN_CALL_SEC, OPENER_PROTECTION_FOR_BUYER_CALLS, PLATFORM_MAX_CALL_SEC, SMART_TURN_END_FOR_BUYER_CALLS,
+  THINKING_EFFORT_FOR_BUYER_CALLS, voiceCapabilities, voiceFamilyOf, voiceMode, voiceModelLabel, type ResolvedVoiceSettings, type VoiceCapabilities,
+} from "./settings";
 import { PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
-import { DEFAULT_ELEVEN_MODEL, DEFAULT_ELEVEN_VOICE, elevenChoiceText } from "@/lib/voice-rt-eleven/catalog";
+import { DEFAULT_ELEVEN_MODEL, DEFAULT_ELEVEN_STABILITY, DEFAULT_ELEVEN_VOICE, elevenChoiceText } from "@/lib/voice-rt-eleven/catalog";
 
 export type VoiceLabAccess = "ok" | "not_admin" | "voice_off";
 
@@ -91,9 +94,75 @@ export function voiceOptions(caps: VoiceCapabilities): VoiceOption[] {
   return out.slice(0, MAX_VOICE_OPTIONS);
 }
 
-/** Whether the panel has anything beyond "Filler phrases" and "Longest call" to fold under "Advanced". */
-export function hasAdvancedTuning(caps: VoiceCapabilities): boolean {
-  return caps.pauseMs || caps.interruptSensitivity;
+// ---------------------------------------------------------------------------
+// The Voice settings panel's rows (one panel for every model; owner, 25 Nov 2026)
+// ---------------------------------------------------------------------------
+
+/** The panel's optional rows: the ones a model may not have, or that sit in a "More options" fold. */
+export type PanelRow = "stability" | "fillers" | "style" | "pause" | "interrupt" | "turnEnd" | "thinking" | "opener";
+/** VOICE › More options, in order. */
+export const VOICE_FOLD: readonly PanelRow[] = ["stability", "fillers"];
+/** CONVERSATION's optional rows in order (style is outside its fold, the rest inside). */
+export const CONVERSATION_ROWS: readonly PanelRow[] = ["style", "turnEnd", "pause", "interrupt", "thinking", "opener"];
+/** CONVERSATION › More options, in order. */
+export const CONVERSATION_FOLD: readonly PanelRow[] = ["turnEnd", "pause", "interrupt", "thinking", "opener"];
+export const ALL_ROWS: readonly PanelRow[] = [...VOICE_FOLD, ...CONVERSATION_ROWS];
+
+/** Each row's label (the "Not on this model" and "set aside" lines name rows by it). */
+export const ROW_LABEL = {
+  stability: "voice.settings.eleven_stability", fillers: "voice.settings.fillers", style: "voice.settings.style", pause: "voice.settings.pause",
+  interrupt: "voice.settings.interrupt", turnEnd: "voice.settings.turn_end", thinking: "voice.settings.thinking", opener: "voice.settings.opener",
+} as const satisfies Record<PanelRow, string>;
+
+/** The optional rows the panel shows for a model (and "Voice from": `eleven`, its speaking model in dialogue mode). */
+export function panelRows(caps: VoiceCapabilities, o: { eleven: boolean; elevenDialogue: boolean }): Set<PanelRow> {
+  const out = new Set<PanelRow>();
+  if (o.eleven && o.elevenDialogue) out.add("stability");
+  if (caps.fillers) out.add("fillers");
+  if (caps.style) out.add("style");
+  if (caps.pauseMs) out.add("pause");
+  if (caps.interruptSensitivity) out.add("interrupt");
+  if (caps.turnEnd) out.add("turnEnd");
+  if (caps.thinking) out.add("thinking");
+  if (caps.openerProtect) out.add("opener");
+  return out;
+}
+
+/** Whether a row's value differs from its default (the fold's "N changed", opening it, the set-aside line). */
+export function rowChanged(r: PanelRow, v: ResolvedVoiceSettings): boolean {
+  switch (r) {
+    case "stability": return (v.elevenStability ?? DEFAULT_ELEVEN_STABILITY) !== DEFAULT_ELEVEN_STABILITY;
+    case "fillers": return v.fillers !== DEFAULT_VOICE_SETTINGS.fillers;
+    case "style": return v.style !== DEFAULT_VOICE_SETTINGS.style;
+    case "pause": return v.pauseMs !== null;
+    case "interrupt": return v.interrupt !== null;
+    case "turnEnd": return v.turnEnd === "smart";
+    case "thinking": return !!v.thinking && v.thinking !== "default";
+    case "opener": return v.openerProtected === false;
+  }
+}
+
+/**
+ * After a switch of the model (or "Voice from"): the rows the new choice does not show whose value is not the default.
+ * Their values stay in the form (switching back restores them) and are not posted, so a save does not store them.
+ */
+export function setAsideRows(shown: ReadonlySet<PanelRow>, v: ResolvedVoiceSettings): PanelRow[] {
+  return ALL_ROWS.filter((r) => !shown.has(r) && rowChanged(r, v));
+}
+
+/** The fold's summary: "More options", and while it is closed with changed values inside, "· 2 changed" (one unit). */
+export function moreOptionsCount(changed: number, open: boolean): number | null {
+  return !open && changed > 0 ? changed : null;
+}
+
+/** The rows that run on test calls only for now on this model (their *_FOR_BUYER_CALLS constants are off). */
+export function testOnlyRows(modelId: string): PanelRow[] {
+  const out: PanelRow[] = [];
+  if (voiceFamilyOf(modelId) === "gemini" && !GEMINI_TURN_TAKING_FOR_BUYER_CALLS) out.push("style", "pause", "interrupt");
+  if (!SMART_TURN_END_FOR_BUYER_CALLS) out.push("turnEnd");
+  if (!THINKING_EFFORT_FOR_BUYER_CALLS) out.push("thinking");
+  if (!OPENER_PROTECTION_FOR_BUYER_CALLS) out.push("opener");
+  return out;
 }
 
 /** "0:38", "12:05": time in a call. */

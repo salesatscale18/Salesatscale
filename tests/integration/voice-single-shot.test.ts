@@ -18,6 +18,7 @@ import { VOICE_SAMPLE_RATE, parseClientMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
 import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { withOpenerUnprotected } from "../helpers/voice-opener";
 
 type Sent = { kind: "audio"; tag: number } | { kind: "respond"; text?: string } | { kind: "text"; text: string } | { kind: "result"; name: string } | { kind: "response-create" };
 
@@ -170,7 +171,8 @@ describe("single-shot wiring (recording fake model, fake clock)", () => {
     await c.settle();
   });
 
-  it("the opener is the model's first input, once, before any buyer audio", async () => {
+  // Unprotected: mic frames reach the model right after the opener request (protected: tests/integration/voice-opener-protect.test.ts).
+  it("the opener is the model's first input, once, before any buyer audio", () => withOpenerUnprotected(db, acc, async () => {
     const model = new RecordingModel();
     const c = await call(model);
     const sent = model.conns[0].sent;
@@ -178,6 +180,16 @@ describe("single-shot wiring (recording fake model, fake clock)", () => {
     expect(sent.some((x) => x.kind === "audio")).toBe(true);
     expect(sent[0]).toMatchObject({ kind: "respond" });
     expect(sent.filter((x) => x.kind === "respond")).toHaveLength(1);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  }));
+
+  it("protected (the default on test calls): the opener goes first and no mic frame reaches the model while it plays", async () => {
+    const model = new RecordingModel();
+    const c = await call(model);
+    const sent = model.conns[0].sent;
+    expect(sent[0]).toMatchObject({ kind: "respond" });
+    expect(sent.some((x) => x.kind === "audio")).toBe(false);
     c.engine.onClientMessage({ t: "end" });
     await c.settle();
   });

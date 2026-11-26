@@ -118,9 +118,15 @@ describe("the Voice settings form (design review, 24 Nov 2026)", () => {
     expect(h).toMatch(/<div class="sas-stack-2" id="vs-buyers-body" hidden="">/);
     expect(h).toMatch(/<select class="sas-select" id="vs-voice" name="voice"/);
     expect(h).not.toContain("disabled");
-    // The fillers (the model's own voice only) are in the "Buyers hear" group; pace and style in Conversation.
-    expect(at("data-voice-buyers-hear")).toBeLessThan(at('name="fillers"'));
-    expect(at('name="fillers"')).toBeLessThan(at('name="pace"'));
+    // One panel (25 Nov): Voice → speaking model, voice, pace, More options (steadiness, fillers), then the hear lines
+    // as the section's last lines; style in Conversation.
+    expect(at('name="elevenVoice"')).toBeLessThan(at('name="pace"'));
+    expect(at('name="pace"')).toBeLessThan(at('name="elevenStability"'));
+    expect(at('name="elevenStability"')).toBeLessThan(at('name="fillers"'));
+    expect(at('name="fillers"')).toBeLessThan(at("data-voice-test-hears"));
+    expect(at("data-voice-test-hears")).toBeLessThan(at("data-voice-buyers-hear"));
+    expect(at("data-voice-buyers-hear")).toBeLessThan(at('data-vs-section="conversation"'));
+    expect(h).toContain("Buyer calls: says &quot;one moment&quot; while it looks something up. ElevenLabs test calls skip it.");
     expect(h).toContain('name="style"');
     expect(voiceSettingsSummary(resolveVoiceSettings({ model: MINI, speech: "elevenlabs" } as never), MINI)).toMatch(/^GPT-Realtime mini · Rachel · ElevenLabs v4 Turbo · /);
   });
@@ -148,6 +154,7 @@ describe("the Voice settings form (design review, 24 Nov 2026)", () => {
     expect(h).not.toContain("Buyers hear");
     expect(h).toContain("Test calls and buyer calls hear ElevenLabs.");
     expect(h).toContain('<input type="hidden" name="voice" value=""/>');
-    expect(h).toContain('<input type="hidden" name="fillers" value="on"/>');
+    // The fillers switch is in Voice › More options for every model now (it still posts).
+    expect(h).toMatch(/name="fillers" checked=""/);
   });
 });

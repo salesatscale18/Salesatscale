@@ -513,8 +513,8 @@ describe("settings and modes", () => {
     expect(maxCallSeconds({ env: { VOICE_MAX_CALL_SECONDS: "240" } })).toBe(240);
     expect(maxCallSeconds({ env: { VOICE_MAX_CALL_SECONDS: "junk" }, deadlineSec: 200 })).toBe(200);
   });
-  it("capabilities per model; Gemini has no turn-taking tuning", () => {
-    expect(voiceCapabilities("google/gemini-3.8-live")).toMatchObject({ style: false, pauseMs: false, interruptSensitivity: false, pace: true });
+  it("capabilities per model; Gemini's turn-taking goes through its own block (no normalized tuning)", () => {
+    expect(voiceCapabilities("google/gemini-3.8-live")).toMatchObject({ style: true, pauseMs: true, interruptSensitivity: true, pace: true, turnEnd: false, thinking: false });
     expect(voiceCapabilities("google/gemini-3.8-live").voices.length).toBeGreaterThan(0);
     expect(voiceCapabilities("openai/gpt-realtime-2")).toMatchObject({ style: true, pauseMs: true });
     expect(turnTakingFor("patient", "google/gemini-3.8-live")).toBeNull();
@@ -527,7 +527,7 @@ describe("settings and modes", () => {
     const bad = validateVoiceSettings({ voice: "Robot", pace: "warp", maxCallSec: 5, fillers: "yes" });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(Object.keys(bad.errors).sort()).toEqual(["fillers", "maxCallSec", "pace", "voice"]);
-    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 480, model: null, pauseMs: null, interrupt: null, speech: "model", elevenModel: "elevenlabs/eleven-v4-turbo", elevenVoice: "21m00Tcm4TlvDq8ikWAM", elevenStability: 1 });
+    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 480, model: null, pauseMs: null, interrupt: null, speech: "model", elevenModel: "elevenlabs/eleven-v4-turbo", elevenVoice: "21m00Tcm4TlvDq8ikWAM", elevenStability: 1, turnEnd: "pause", thinking: "default", openerProtected: true });
     expect(resolveVoiceSettings({ pace: "warp" as never, maxCallSec: 10 })).toMatchObject({ pace: "normal", maxCallSec: 60 });
   });
 });
@@ -796,9 +796,14 @@ describe("security headers", () => {
 });
 
 describe("call requests on a call (request_callback)", () => {
-  it("the booking result reads in call wording: the link is in the chat, never read aloud; the call goes on", () => {
-    const msg = "Link sent in the chat. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with a member of our team with the link. Keep answering their questions until the call.";
-    expect(voiceToolResultMessage(msg)).toBe("The booking card with the free times is now in this chat (a card to pick a time on, not a link you sent). Tell the buyer, in one short spoken sentence in their language, that they can pick a time for a call with a member of our team from the free times on the booking card in the chat. Never say you sent a link, and never read the link or the times aloud. Then ask if there is anything else you can help with: this call goes on, and you stay on the line.");
+  it("the booking result reads in call wording: the card is in the chat (no \"below\", no link), never read aloud; the call goes on", () => {
+    // The text lib/agent/tools.ts gives (request_callback, no time named), for this playbook's call role.
+    const msg = "The booking card is now in the chat, right under your reply. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with a member of our team on the card below. Keep answering their questions until the call.";
+    const spoken = voiceToolResultMessage(msg);
+    expect(spoken).toBe("The booking card with the free times is now in this chat. Tell the buyer, in one short spoken sentence in their language, that the booking card is now in the chat and that they can pick a time for a call with a member of our team there. Never read the times on the card aloud. Then ask if there is anything else you can help with: this call goes on, and you stay on the line.");
+    // A caller sees no "below" and no "under your reply"; nothing points to a link.
+    expect(spoken).not.toMatch(/below|under your reply|\blink\b|in their wording/);
+    expect(voiceToolResultMessage(spoken)).toBe(spoken);
   });
 
   it("N1 results in call wording: booked is confirmed aloud; not free offers the nearest times aloud and the card", () => {
@@ -1043,6 +1048,16 @@ describe("voice-only end_call and the order form on the line", () => {
     expect(orderFormStatus({ step: "company", event: "step" })).toEqual({ open: true, step: "Company details", submitted: false });
     expect(orderFormStatus({ step: "pay", event: "submitted" })).toEqual({ open: true, step: "Payment", submitted: true });
     expect(orderFormStatus({ step: "card_4111", event: "step" })).toEqual({ open: false, step: null, submitted: false });
+  });
+
+  it("offers on a call: check_offer is offered (Current), with its own label; every tool the call offers has one", () => {
+    expect(VOICE_TOOL_NAMES.has("check_offer")).toBe(true);
+    expect(realtimeTools("openai").map((t) => t.name)).toContain("check_offer");
+    expect(toolLabel("check_offer")).toBe("Checking the offer");
+    for (const t of realtimeTools("gemini")) expect(toolLabel(t.name), t.name).not.toBe("Checking");
+    // create_quote takes the offer id on a call as in chat (strict schema: required, nullable).
+    const cq = realtimeTools("openai").find((t) => t.name === "create_quote")!.parameters as { required: string[] };
+    expect(cq.required).toContain("offer");
   });
 
   it("end_call is a call tool only: not in the chat tools or the chat prompt", () => {

@@ -31,6 +31,7 @@ import { rtElevenProfile } from "@/lib/voice-rt-eleven/profile";
 import { ScriptedSpeaker } from "@/lib/voice-pipeline/speaker";
 import { PIPELINE_VOICE_NAME, SPEAK_MICROS_PER_CHAR } from "@/lib/voice-pipeline/models";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { withOpenerUnprotected } from "../helpers/voice-opener";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
 const SCRIPTED = { VOICE_REALTIME: "scripted" };
@@ -216,7 +217,13 @@ describe("realtime + ElevenLabs (rt_eleven)", () => {
     expect(held).toMatchObject({ ok: false, rule: "Not agreed yet" });
     await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
     await c.buyerSays("Can you do ten percent off six sensors?");
-    const q = await c.tool("q1", "create_quote", { lines: [{ sku: "SENSOR", qty: 6 }], discount_percent: 10, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null });
+    // Offers: a first quote without a discount, the price objection on record and check_offer, then the 10% (more
+    // than check_offer returned) is a quote held for approval.
+    const first = await c.tool("q0", "create_quote", { lines: [{ sku: "SENSOR", qty: 6 }], discount_percent: 0, offer: null, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null });
+    expect(first).toMatchObject({ ok: true, status: "ready" });
+    await c.tool("o0", "update_deal_state", { ...noUpdate, objection: { play: "too_expensive", buyer_words: "ten percent off", step: 4, attempt: true, status: "open" } });
+    expect(await c.tool("o1", "check_offer", { quote: String(first.quote).split(" ")[0], reason: "next", lines: null, sites: null })).toMatchObject({ ok: true });
+    const q = await c.tool("q1", "create_quote", { lines: [{ sku: "SENSOR", qty: 6 }], discount_percent: 10, offer: null, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null });
     expect(q).toMatchObject({ ok: true, status: "awaiting_seller_approval", quote_held: true, say_this: HELD_QUOTE_SAY.en });
     await c.respond(String(q.say_this));
     await c.run(4_000);
@@ -225,7 +232,8 @@ describe("realtime + ElevenLabs (rt_eleven)", () => {
     await c.end();
   });
 
-  it("barge-in mid-stream: frames stop at once, flush, one note with the estimated heard text (a prefix ending at a word); the row ends with …", async () => {
+  // The reply here is the opening line: unprotected for this test (tests/integration/voice-opener-protect.test.ts).
+  it("barge-in mid-stream: frames stop at once, flush, one note with the estimated heard text (a prefix ending at a word); the row ends with …", () => withOpenerUnprotected(db, acc, async () => {
     // 182 characters × 25 ms = 4.6 s of audio in ONE stream.
     const c = await rtCall({ speaker: new ScriptedSpeaker("elevenlabs/eleven-v4-turbo", { maxMs: 10_000, msPerChar: 25 }) });
     c.engine.onClientMessage({ t: "ready" } as never);
@@ -258,7 +266,7 @@ describe("realtime + ElevenLabs (rt_eleven)", () => {
     expect(c.logs.some((l) => /rt barge-in: speech stopped sentMs=\d+ unplayedMs=\d+ heard=\d+\/182 chars basis=total$/.test(l))).toBe(true);
     await c.end();
     expect((await sessionRow(c.sessionId)).usage).toMatchObject({ rtEleven: { bargeIns: 1 } });
-  });
+  }));
 
   for (const wiring of ["rt_eleven (guarded profile)", "Current (no profile)"] as const) {
     it(`end_call with its goodbye in the same response (${wiring}): the goodbye is spoken, then the call ends once it played`, async () => {

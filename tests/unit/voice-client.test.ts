@@ -267,7 +267,8 @@ describe("voice lab helpers", () => {
     expect(callLimitText(270)).toBe("4 minutes 30 seconds");
     expect(callLimitText(60)).toBe("1 minute");
     expect(answerSpeedText(912)).toBe("0.9 s");
-    expect(voiceSettingsSummary(DEFAULT_VOICE_SETTINGS, "google/gemini-3.8-live")).toBe("Gemini 3.8 Live · Puck · upbeat, lively · Normal pace");
+    // Gemini has a conversation style now (one panel for every model).
+    expect(voiceSettingsSummary(DEFAULT_VOICE_SETTINGS, "google/gemini-3.8-live")).toBe("Gemini 3.8 Live · Puck · upbeat, lively · Normal pace · Balanced");
     expect(voiceSettingsSummary({ ...DEFAULT_VOICE_SETTINGS, voice: "coral", style: "patient" }, "openai/gpt-realtime")).toBe("Coral · warm, friendly · Normal pace · Patient");
     expect(voiceSettingsSummary({ ...DEFAULT_VOICE_SETTINGS, voice: "coral" }, "openai/gpt-realtime-mini")).toBe("GPT-Realtime mini · Coral · warm, friendly · Normal pace · Balanced");
   });

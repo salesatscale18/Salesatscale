@@ -255,7 +255,9 @@ export async function saveDraftVoiceSettings(
 ): Promise<{ ok: true; settings: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors }> {
   const draft = await ensureDraftVersion(db, accountId);
   // Checked against the model the draft uses now; a model change in the input re-checks the rest for the new one.
-  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env), { canPickSpeech: opts.canPickSpeech === true, storedSpeech: storedSpeech(draft.voiceSettings), storedEleven: storedEleven(draft.voiceSettings) });
+  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env), { canPickSpeech: opts.canPickSpeech === true, storedSpeech: storedSpeech(draft.voiceSettings), storedEleven: storedEleven(draft.voiceSettings),
+    storedOpenerProtected: (draft.voiceSettings as { openerProtected?: unknown } | null)?.openerProtected === false ? false : undefined,
+  });
   if (!v.ok) return v;
   await db.update(agentVersions).set({ voiceSettings: v.value })
     .where(and(eq(agentVersions.id, draft.id), eq(agentVersions.accountId, accountId), eq(agentVersions.status, "draft")));

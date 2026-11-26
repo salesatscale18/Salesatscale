@@ -39,5 +39,5 @@ export async function rtElevenSpeakerFor(
   if (override) return override;
   if (mode === "scripted") return new ScriptedSpeaker("scripted", { voice: elevenVoiceLabel(choice.voice) });
   const { GatewaySpeaker } = await import("@/lib/voice-pipeline/gateway");
-  return new ElevenSpeaker(choice, (l) => new GatewaySpeaker(l.model, env, l.voice, { dialogue: l.dialogue, stability: l.stability }));
+  return new ElevenSpeaker(choice, (l) => new GatewaySpeaker(l.model, env, l.voice, { dialogue: l.dialogue, stability: l.stability, ...(l.speed !== undefined ? { speed: l.speed } : {}) }));
 }
