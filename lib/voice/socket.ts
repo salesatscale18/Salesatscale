@@ -354,7 +354,9 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     const rtEleven = rtEngine !== null;
     const guarded = isGuardedEngine(stored) || rtEleven;
     const modelFor = classic ? classicRealtimeModelFor : realtimeModelFor;
-    const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model, ...(guarded ? { rawTranscripts: true } : {}) }) : null);
+    // Transcripts cleaned on every engine (the New engine too since 26 Nov 2026: Current's cleaner, as its profile's
+    // `clean`); the mapper's rawTranscripts option is no longer asked for.
+    const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model }) : null);
     if (!model) {
       await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
       return refuse("model_unavailable");

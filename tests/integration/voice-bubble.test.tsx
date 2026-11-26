@@ -173,11 +173,11 @@ describe("the order form and standby (step 3)", () => {
     send({ t: "wake" });
     await clock.advance(1_000, settle);
     expect(model.connections).toHaveLength(2);
-    // Buyer calls run the New engine since 26 Nov 2026 (BUYER_VOICE_ENGINE): as Classic, the held note goes in as a
-    // note right after the fresh instructions and recap (never in the instructions). (Current, switched off, put it in
-    // the instructions.)
-    expect(model.connections[1].notes.filter((n) => n.includes("The buyer opened the order form, on step: Company details"))).toHaveLength(1);
-    expect(model.connections[1].cfg.instructions).not.toContain("The buyer opened the order form, on step: Company details");
+    // The woken model reads it in its instructions; no note item that could prompt an answer. Buyer calls run the New
+    // engine since 26 Nov 2026 (BUYER_VOICE_ENGINE), which keeps Current's way here (Classic sent a held note right
+    // after the wake, which Gemini answers as a turn).
+    expect(model.connections[1].notes).toHaveLength(0);
+    expect(model.connections[1].cfg.instructions).toContain("The buyer opened the order form, on step: Company details");
     send({ t: "end" });
     await clock.advance(5_000, settle);
     ws.emit("close");

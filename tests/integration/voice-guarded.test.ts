@@ -6,7 +6,7 @@
  * (c) Each guard fires on its case and is silent otherwise (K1-K4); the quote's spoken summary in English and Hebrew
  *     (K5/K6); the hand-off keeps the call (K7); recording and its notice once (K8); the opener waits for the
  *     browser (K9); one agent at a time (K10).
- * (d) Transcripts are stored as said (no cleaner); Current still cleans them.
+ * (d) Transcripts are cleaned as Current does (since 26 Nov 2026; stored as said before).
  * The relay runs the guarded engine for a guarded session (logs engine=guarded, keeps it on the session).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -475,7 +475,9 @@ describe("Classic + guards", () => {
         await c.said(he ? "יעזור להתחיל עם סניף אחד?" : "Would starting with one site help?");
         await c.buyer(he ? "כן, נראה לי. אני צריך פתרון." : "Yeah, I guess so. I need a solution.");
         const held = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 1 }], { sites: 1 }));
-        expect(held).toMatchObject({ ok: false, rule: "Smaller quote not asked", message: smallerQuoteNotAsked("1 site").message });
+        // Hebrew: Current's language hint after the guidance (the New engine keeps it since 26 Nov 2026).
+        const hint = he ? " Say it in Hebrew, the language you are speaking with the buyer." : "";
+        expect(held).toMatchObject({ ok: false, rule: "Smaller quote not asked", message: `${smallerQuoteNotAsked("1 site").message}${hint}` });
         expect(c.logs.some((l) => l.endsWith("tool create_quote held: a smaller quote the buyer did not ask for"))).toBe(true);
         await c.said(he ? "להכין הצעת מחיר לסניף אחד?" : "Shall I prepare a quote for one site?");
         await c.buyer(he ? "כן בבקשה" : "yes please");
@@ -590,14 +592,14 @@ describe("Classic + guards", () => {
       expect(await textTurnBlocked(db, acc, c.conversationId, "test")).toBe(false);
     });
 
-    it("notes: an order-form note goes in as a note (Classic), never into the instructions; no language note", async () => {
+    it("notes on Gemini, Current's way since 26 Nov 2026 (no note mid-call; tests/integration/voice-new-current-fixes.test.ts: the next connection)", async () => {
       const c = await fakeCall();
       await c.startNow();
       c.engine.onClientMessage({ t: "context", kind: "order_form", step: "company", label: "Company", event: "opened" });
       await c.run(6_000);
-      expect(c.model.conns[0].notes).toEqual([expect.stringContaining("Company details")]);
+      expect(c.model.conns[0].notes).toEqual([]);
       await c.buyer("שלום, אני מדבר עברית.");
-      expect(c.model.conns[0].notes.some((n) => /now speaks/.test(n))).toBe(false);
+      expect(c.model.conns[0].notes).toEqual([]);
       expect(c.model.conns[0].cfg.instructions).not.toContain("### The order form (a note from the app");
       await c.end();
     });
@@ -626,7 +628,7 @@ describe("Classic + guards", () => {
     await again.end();
   });
 
-  it("(d) transcripts are stored as said in guarded (a stray marker stays); Current still cleans them", async () => {
+  it("(d) transcripts: guarded cleans them as Current does (since 26 Nov 2026; it stored them as said before)", async () => {
     const run = async (engine: "guarded" | "current", markers: "with_text" | "only") => {
       const c = await scriptedCall(engine, { markers });
       await c.run(15_000);
@@ -638,15 +640,16 @@ describe("Classic + guards", () => {
     const guarded = await run("guarded", "with_text");
     const current = await run("current", "with_text");
     expect(guarded[0].actor).toBe("agent");
-    expect(guarded[0].body.startsWith(`${SCRIPTED_MARKER} Hi `)).toBe(true);
+    expect(guarded[0].body.startsWith("Hi ")).toBe(true);
     expect(current[0].body.startsWith("Hi ")).toBe(true);
+    expect(guarded.some((m) => m.body.includes(SCRIPTED_MARKER))).toBe(false);
     expect(current.some((m) => m.body.includes(SCRIPTED_MARKER))).toBe(false);
-    // The buyer side: noise transcribed as a marker only is stored as heard in guarded, dropped by Current.
+    // The buyer side: noise transcribed as a marker only is dropped by both.
     const g2 = await run("guarded", "only");
     const c2 = await run("current", "only");
-    expect(g2.filter((m) => m.actor === "buyer").map((m) => m.body)).toContain(SCRIPTED_MARKER);
+    expect(g2.filter((m) => m.actor === "buyer")).toHaveLength(0);
     expect(c2.filter((m) => m.actor === "buyer")).toHaveLength(0);
-    // The live mapper too: raw for guarded, cleaned by default.
+    // The live mapper: cleaned by default (the relay no longer asks a guarded call for raw transcripts); raw on request.
     const map = (raw: boolean) => {
       const m = new ServerEventMapper(raw ? { rawTranscripts: true } : {});
       return [...m.map({ type: "audio-transcript-delta", delta: "<no speech detected> Hello", responseId: "r1" } as never), ...m.map({ type: "response-done", responseId: "r1" } as never)]

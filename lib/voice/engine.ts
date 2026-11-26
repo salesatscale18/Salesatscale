@@ -170,12 +170,15 @@ export type VoiceEngineDeps = {
 };
 
 /**
- * The model side of another engine run on this one (lib/voice-guarded: "Classic + guards"): its instructions and
- * tools, its transcripts as said (no cleaner), its stage and result wording and the quote's spoken summary. With a
- * profile the engine also drives the model as Classic did (notes, injected lines, no language notes, no argument
- * rewriting, Classic's stage count) and shapes tool results as Classic with only the guards added
- * (guardedToolResult). Everything else (recording, the opener's wait, one agent at a time, the infrastructure, the
- * guards themselves) is this engine's.
+ * The model side of another engine run on this one (lib/voice-guarded: "Classic + guards", the New engine of every
+ * call since 26 Nov 2026): its instructions and tools, its transcript cleaning, its stage and result wording and the
+ * quote's spoken summary. With a profile the engine counts the stage as Classic did and shapes tool results as
+ * Classic with only the guards added (guardedToolResult). Since 26 Nov 2026 (New became the buyers' engine) a profile
+ * call keeps Current's buyer fixes, run as Current runs them: the opt-out and card replies in the call's language and
+ * no injected reply on top of a spoken line's own answer, the language-switch note and the language hints, the tool
+ * argument repair (voiceToolArgs), and the order form's note as Current places it (never mid-call on Gemini, in the
+ * instructions of every later connection). Everything else (recording, the opener's wait, one agent at a time, the
+ * infrastructure, the guards themselves) is this engine's.
  */
 export type VoiceProfile = {
   /** Stored on the session (settings.engine) and logged (`engine=<name>`). */
@@ -183,7 +186,8 @@ export type VoiceProfile = {
   loadInstructions(
     db: Db, a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: Awaited<ReturnType<typeof readDealState>>; now: Date },
     /** `modelId`: the realtime model the call runs on (a scripted call: the version's model it stands in for); `isTest`: a test-lab call. */
-    opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean },
+    /** `language`: the language the call speaks now (a reconnect or wake after the buyer switched language), as Current's loader takes it. */
+    opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean; language?: string },
   ): Promise<VoiceCallContext>;
   tools(family: SchemaFamily): RealtimeToolDef[];
   /** A transcript as stored and shown (Current: cleanTranscript). */
@@ -597,8 +601,6 @@ export class VoiceEngine {
     chars: 0,
     times: [] as RtTimes[],
   };
-  /** Profile (Classic's notes): a form note that came while the model was away, sent with the next connection. */
-  private heldFormNote: string | null = null;
   /** The call's recording (null: not recorded). */
   private recorder: CallRecorder | null = null;
   /** The call clock (ms since connect) when the call ended: the recording's end. */
@@ -860,14 +862,8 @@ export class VoiceEngine {
     this.formLast = { step: msg.step, event: msg.event };
     this.formNotes ??= new FormContextNotes(this.clock, (note) => {
       if (this.ended) return;
-      if (this.profile) {
-        // Classic: the note goes in now on every model; while the model is away it waits for the next connection.
-        if (this.conn && !this.reconnecting && !this.waking && this.standbySince === null && this.conn.sendNote) {
-          this.noteSent("order form step");
-          this.conn.sendNote(note);
-        } else this.heldFormNote = note;
-        return;
-      }
+      // Every engine (a profile too since 26 Nov 2026): Current's way. Classic sent the note mid-call on Gemini as well,
+      // and right after a wake, where Gemini answers it as a turn (notesMidCall).
       this.formNote = note;
       if (!this.notesMidCall()) return;
       // Off the line (standby, a wake or a reconnect under way): nothing now, the next connection's instructions carry it.
@@ -1057,12 +1053,6 @@ export class VoiceEngine {
     this.traceResp = null;
     this.activeSince = this.clock.now();
     this.usageAcc.newSession();
-    // Profile (Classic): a form note held while the model was away goes in now, after the fresh instructions and recap.
-    if (this.profile && this.heldFormNote) {
-      this.noteSent("order form step");
-      conn.sendNote?.(this.heldFormNote);
-      this.heldFormNote = null;
-    }
   }
 
   /** Cost so far, from the latest usage snapshot and the model-connected time (0 for the scripted model). */
@@ -1532,9 +1522,9 @@ export class VoiceEngine {
     // The version's own pause and interruption level replace the style's (models with tunable turn detection).
     const tt = turnTakingFor(settings.style, this.model.modelId, { pauseMs: settings.pauseMs, interrupt: settings.interrupt });
     return {
-      // The order form's latest step (a note the model reads, never answers), on every connection after it came.
-      // (A profile: notes go in as notes, as Classic: never in the instructions.)
-      instructions: this.formNote && !this.profile ? `${instructions}\n\n### The order form (a note from the app, not from the buyer)\n${this.formNote}` : instructions,
+      // The order form's latest step (a note the model reads, never answers), on every connection after it came (a
+      // profile too since 26 Nov 2026).
+      instructions: this.formNote ? `${instructions}\n\n### The order form (a note from the app, not from the buyer)\n${this.formNote}` : instructions,
       tools: this.profile ? this.profile.tools(family) : realtimeTools(family), toolBehavior: this.profile?.toolBehavior?.(family) ?? "blocking", pace: settings.pace,
       // The call starts in the conversation's language; the buyer may switch (never locked).
       language: languages?.language ?? (this.loaded!.conv.language || "en"),
@@ -1567,7 +1557,7 @@ export class VoiceEngine {
     return voiceFamilyOf(this.model.modelId) === "gemini" ? "gemini" : null;
   }
 
-  /** A transcript as stored and shown: markers taken out (Current), or as said (a profile). */
+  /** A transcript as stored and shown: markers taken out (Current; a profile: its own `clean`, the guarded one is Current's). */
   private clean(text: string): string {
     return this.profile ? this.profile.clean(text) : cleanTranscript(text);
   }
@@ -1586,8 +1576,8 @@ export class VoiceEngine {
     const next = spokenLanguageOf(text, this.spokenLanguage, this.latinLanguage);
     if (next === this.spokenLanguage) return;
     this.spokenLanguage = next;
-    // A profile (Classic): no language note; the language only picks the words of the quote summary.
-    if (!this.profile && this.notesMidCall() && this.conn && !this.reconnecting && !this.waking && this.standbySince === null) {
+    // Every engine (a profile too since 26 Nov 2026); on Gemini the next connection's instructions carry the language.
+    if (this.notesMidCall() && this.conn && !this.reconnecting && !this.waking && this.standbySince === null) {
       this.noteSent("language");
       this.conn.sendNote?.(`(Note from the system, not from the buyer: the buyer now speaks ${languageNameEn(next)}. Speak ${languageNameEn(next)} from now on, also after an interruption or a pause, until the buyer speaks another language. Do not answer this note.)`);
     }
@@ -1632,9 +1622,7 @@ export class VoiceEngine {
     this.warnHeld = false;
     this.send({ t: "notice", kind: "limit_soon" });
     this.noteSent("time limit", true);
-    this.conn?.requestResponse(this.profile
-      ? "The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat."
-      : `The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat. ${this.sayIn()}`);
+    this.conn?.requestResponse(`The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat. ${this.sayIn()}`);
   }
 
   // -------------------------------------------------------------------------
@@ -2263,7 +2251,8 @@ export class VoiceEngine {
       const deal = await readDealState(this.db, account.id, conv.leadId);
       const ctx = this.profile
         ? await this.profile.loadInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
-          ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, recorded: this.recorded, ...this.callModel(),
+          // The language the call speaks now, as Current (Gemini takes no mid-call language note: it reads it here).
+          ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded, ...this.callModel(),
         })
         : await loadVoiceInstructions(this.db, { account, version: this.instructionVersion(version), conv, lead, deal, now: new Date(this.clock.now()) }, {
           ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES), agentMessages: this.effectiveAgentMessages() } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded,
@@ -2392,18 +2381,9 @@ export class VoiceEngine {
     // A spoken turn is already being answered by the model (the provider's own turn detection starts its response):
     // an injected instruction on top would be a second answer to the same turn. So the fixed replies below are
     // injected only for a typed line, which the model never hears; on a spoken one the model answers by its rules
-    // (the voice block's card and opt-out lines; the record_opt_out result gives the exact reply).
-    if (this.profile) {
-      // Classic: the fixed replies are asked for on any line, spoken or typed, in English.
-      if (isSpokenOptOut(masked.text)) await this.codeOptOut(masked.text, true, OPT_OUT_REPLY.en);
-      else if (masked.found) {
-        this.noteSent("card number", true);
-        this.conn.requestResponse(`The buyer started reading out a card number. Stop them politely and say exactly this and nothing else: "${CARD_REPLY.en}"`);
-      } else if (typed) {
-        this.noteSent("typed line", schemaFamilyOf(this.model.modelId) !== "gemini");
-        this.conn.sendText(masked.text);
-      }
-    } else if (isSpokenOptOut(masked.text)) {
+    // (the voice block's card and opt-out lines; the record_opt_out result gives the exact reply). Every engine (a
+    // profile too since 26 Nov 2026: Classic asked for the English reply on any line, a second answer on a spoken one).
+    if (isSpokenOptOut(masked.text)) {
       await this.codeOptOut(masked.text, typed);
     } else if (masked.found && !typed) {
       this.log.info(voiceLine(this.sessionId, "note skipped: card number on a spoken turn (the model answers it)"));
@@ -2437,7 +2417,7 @@ export class VoiceEngine {
     this.trackSpokenLanguage(text);
     this.send({ t: "transcript", id: prev.turnId, role: "buyer", text, final: true, atMs: prev.startMs });
     // An opt-out said in the rest of the line counts as if it came whole (spoken: the model answers it).
-    if (!this.profile && isSpokenOptOut(text)) await this.codeOptOut(text, false);
+    if (isSpokenOptOut(text)) await this.codeOptOut(text, false);
   }
 
   /**
@@ -2683,8 +2663,8 @@ export class VoiceEngine {
     const label = toolLabel(name);
     this.setState("checking");
     this.send({ t: "tool", id: callId, name, label, status: "running" });
-    // A profile (Classic) passes the model's arguments as they came.
-    const args = this.profile ? rawArgs : await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
+    // Every engine (a profile too since 26 Nov 2026: Classic passed the model's arguments as they came).
+    const args = await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
     const t0 = this.clock.now();
     // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
     // A number the buyer stated (sites, quantities) is not lowered unless their last line says the new number.
@@ -2888,11 +2868,21 @@ export class VoiceEngine {
         await this.putOrderFormInChat(r.result.link);
         forModel = { ...r.result, link: "shown in the chat", message: ORDER_FORM_IN_CHAT_MESSAGE };
       }
+      if (name === "record_opt_out" && OPT_OUT_REPLY[this.spokenLanguage]) {
+        // Current's: the reply in the language the call speaks now (the tool gives the conversation's).
+        const reply = OPT_OUT_REPLY[this.spokenLanguage];
+        forModel = { ...r.result, reply, message: `The buyer is opted out and will not be contacted again. Say exactly this and nothing else: ${reply}` };
+      }
       // T1: the full update_deal_state result, the stage in Classic's call wording.
       if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...forModel, stage: profile.stageText(r.result.stage) };
       forModel = this.afterCallTool(turn, name, r, forModel);
     }
     if (typeof forModel.message === "string") forModel = { ...forModel, message: profile.resultMessage(forModel.message) };
+    // Current's: on a call in another language than English, guidance the result gives (in English) names the language
+    // to answer in. Not the opt-out reply (exact words) nor the quote summary (say_this: said as written).
+    if (this.spokenLanguage !== "en" && name !== "record_opt_out" && forModel.say_this === undefined && typeof forModel.message === "string") {
+      forModel = { ...forModel, message: `${forModel.message} ${this.sayIn()}` };
+    }
     return profile.shapeResult ? profile.shapeResult(name, forModel, { family: schemaFamilyOf(this.model.modelId) }) : forModel;
   }
 

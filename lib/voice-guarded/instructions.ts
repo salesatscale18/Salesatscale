@@ -152,14 +152,18 @@ export function guardedRemovedLines(o: { fillers?: boolean } = {}): string[] {
 
 /**
  * Loads a call's instructions as Classic does (the same data, opener and pick-up line) and adds the guarded lines.
- * The engine's own options beyond Classic's (the spoken language, its stage count) are not used: as Classic.
+ * The engine's stage count is not used: as Classic. `language` (since 26 Nov 2026, Current's buyer fix): the language
+ * the call speaks now, on a reconnect or wake after the buyer switched language; Classic's loader then builds them as
+ * for a conversation in that language (Classic's own text, "start in <language>"), as Current's loader does. The same
+ * language as the conversation's (every first connection): exactly Classic's.
  */
 export async function loadGuardedInstructions(
   db: Db,
   a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: DealState | null; now: Date },
-  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean } = {},
+  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean; language?: string } = {},
 ): Promise<VoiceCallContext> {
-  const ctx = await loadClassicInstructions(db, a, { recap: opts.recap, resumed: opts.resumed, woke: opts.woke });
+  const switched = !!opts.language && opts.language !== (a.conv.language || "en");
+  const ctx = await loadClassicInstructions(db, switched ? { ...a, conv: { ...a.conv, language: opts.language! } } : a, { recap: opts.recap, resumed: opts.resumed, woke: opts.woke });
   return {
     instructions: guardedInstructions(ctx.instructions, { recorded: opts.recorded, gptToolRules: gptToolRulesFor(opts.modelId, opts.isTest ?? false) }),
     opener: ctx.opener, openerPrompt: ctx.openerPrompt, language: ctx.language, expectedLanguages: ctx.expectedLanguages, continuing: ctx.continuing,

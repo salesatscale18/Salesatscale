@@ -4,8 +4,14 @@
  * "Classic + guards" (test lab engine "guarded", owner, 23 Nov 2026): today's voice engine (lib/voice/engine.ts) run
  * with the Classic (20 Nov) model side. Toward the model it is Classic: the 20 Nov voice block and tables with
  * Classic's reconciliations (lib/voice-classic/instructions.ts), Classic's tools and session fields, Classic's
- * result shaping (the full update_deal_state result with its stage block), notes, injected lines and opener, no
- * language notes, and transcripts stored as said (no cleaner). Added, each silent until it fires:
+ * result shaping (the full update_deal_state result with its stage block), opener and stage count. Since it became the
+ * buyers' engine (26 Nov 2026) it keeps Current's buyer fixes, run by the engine as Current runs them
+ * (lib/voice/engine.ts): the opt-out and card replies in the call's language, with no injected reply on top of a
+ * spoken line's own answer; the language-switch note (OpenAI; Gemini: the next connection's instructions in the
+ * language spoken now) and the language hints (time-limit warning, tool result guidance); the tool argument repair
+ * (misplaced update_deal_state fields, the order form asked with an internal quote id); the order form's note as
+ * Current places it; and transcripts cleaned (Current's cleaner, here and in the live mapper). Added, each silent
+ * until it fires:
  * - K1 the order form only after the buyer's yes (Current's guard and refusal);
  * - K2 a number the buyer stated is not lowered on an ambiguous yes;
  * - K3 an auto-added line comes off only when the buyer asked;
@@ -20,6 +26,7 @@
  * The instruction lines added: lib/voice-guarded/instructions.ts guardedAddedLines.
  */
 import type { VoiceProfile } from "@/lib/voice/engine";
+import { cleanTranscript } from "@/lib/voice/transcript-clean";
 import { realtimeTools as currentRealtimeTools, ORDER_FORM_STATUS_TOOL, type SchemaFamily } from "@/lib/voice/tool-schema";
 import { realtimeTools as classicRealtimeTools } from "@/lib/voice-classic/tool-schema";
 import { classicStageText } from "@/lib/voice-classic/instructions";
@@ -52,8 +59,8 @@ export const GUARDED_PROFILE: VoiceProfile = {
   engine: GUARDED_ENGINE,
   loadInstructions: loadGuardedInstructions,
   tools: guardedTools,
-  // T4: what was said and transcribed is stored and shown as is.
-  clean: (text) => text,
+  // Current's cleaner (since 26 Nov 2026; T4 stored transcripts as said): transcription markers never stored or shown.
+  clean: cleanTranscript,
   stageText: (stage) => classicStageText(stage),
   resultMessage: classicResultMessage,
   quoteMessage: guardedQuoteMessage,

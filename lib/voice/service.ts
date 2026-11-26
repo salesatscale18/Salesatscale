@@ -241,7 +241,8 @@ export async function realtimeModelFor(
   if (mode === "live") {
     const { GatewayRealtime } = await import("./gateway-realtime");
     // The call's own model (its session row, from its version), the same for its whole length: wakes and retries too.
-    // `rawTranscripts`: a "Classic + guards" call stores what was said and heard as is (no cleaner).
+    // `rawTranscripts`: what was said and heard as is (no cleaner). Not asked for since 26 Nov 2026 (the New engine
+    // cleans transcripts as Current does); kept for a comparison run.
     return opts.rawTranscripts ? new GatewayRealtime(opts.env, opts.modelId, { rawTranscripts: true }) : new GatewayRealtime(opts.env, opts.modelId);
   }
   return null;
