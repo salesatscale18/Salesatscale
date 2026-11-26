@@ -142,9 +142,11 @@
    composer, so the bubble sits at the bottom-end of the messages, just above the composer, and never covers Send. */
 /* Voice mode: the voice bar on the composer's white strip (board VoiceBubbleBack 1); the composer is hidden. The bar
    has its own row for the short labels and room for the bubble's outer ring (voice-bubble.css .vb-bar), so neither
-   covers the last message; 16 px gutters. */
+   covers the last message; 16 px gutters. At the bottom, room for the speaking ring at its largest (it reaches about
+   24 px below the bubble: inset 17 px, scaled to 1.14) plus 8 px, above the home indicator (the safe area), so the
+   ring is never cut by the screen's edge. */
 .c-voicebar { flex: none; position: relative; z-index: 3; background: var(--raised); border-block-start: 1px solid var(--line);
-  padding: 8px 16px calc(12px + env(safe-area-inset-bottom)); }
+  padding: 8px 16px calc(32px + env(safe-area-inset-bottom)); }
 
 /* RA (reach: web chat for real leads, board ReachChat / ReachSms). The chat menu in the header
    (stop text messages, or turn them back on), the "Stop text messages" link at the top of a chat

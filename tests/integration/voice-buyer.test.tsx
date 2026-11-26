@@ -582,7 +582,10 @@ describe("the buyer sees state words only", () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
     const he = renderToStaticMarkup(<ChatClient token="t" lang="he" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
     expect(he).toContain("שיחה קולית התחילה · 11:01");
-    expect(html).toContain('aria-label="Said in the call at 1:20"');
+    // A spoken line shows its clock time like every other line (with the mic mark), not the time in the call.
+    expect(html).toContain('aria-label="Said in the call at 11:02"');
+    expect(html).toMatch(/data-spoken=""><svg[^]*?<\/svg><time dateTime="2026-11-19T09:02:00.000Z">11:02<\/time>/);
+    expect(html).not.toContain(">1:20<");
     expect(html).not.toContain("data-voice-tool");
     const off = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
     expect(off).not.toContain("Switch to voice");
