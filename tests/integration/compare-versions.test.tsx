@@ -101,10 +101,11 @@ describe("Compare versions", () => {
     expect(c.changes.map((r) => [r.area, r.item, r.kind])).toEqual([
       ["plays", "Too expensive · step 2", "changed"],
       ["questions", "Deal details", "added"],
-      ["limits", "Discount without approval", "changed"],
       ["limits", "Offer a call when", "changed"],
       // Never do is its own area since the Playbook parts (S1).
       ["never", "Never do · Rule 2", "moved"],
+      // Offers are their own area since the Offers part, labelled in words.
+      ["offers", "General discount", "changed"],
       ["voice", "Speaking pace", "changed"],
     ]);
     // The play step: words removed and added in the middle of one sentence.
@@ -112,16 +113,18 @@ describe("Compare versions", () => {
     expect(step.tag).toBe("now your own card");
     const del = step.before!.filter((s) => s.op === "del").map((s) => s.text.trim());
     const ins = step.after!.filter((s) => s.op === "ins").map((s) => s.text.trim());
-    expect(del).toEqual(["the problem", "unit"]);
-    expect(ins).toEqual(["one spoiled delivery", "fridge"]);
+    expect(del).toEqual(["the problem"]);
+    expect(ins).toEqual(["one spoiled delivery"]);
     expect(step.before![0].op).toBe("same");
     expect(step.before!.at(-1)!.op).toBe("same");
     // The new question: nothing on the old side ("Not asked").
     expect(c.changes[1]).toMatchObject({ before: null, missing: "not_asked" });
-    expect(c.changes[2].before).toEqual([{ op: "del", text: "5%" }]);
-    expect(c.changes[2].after).toEqual([{ op: "ins", text: "8%" }]);
+    // The General discount row (Offers, 23 Nov): only the percent is struck and added.
+    expect(c.changes[4].before!.filter((s) => s.op !== "same").map((s) => s.text.trim())).toEqual(["5%"]);
+    expect(c.changes[4].after!.filter((s) => s.op !== "same").map((s) => s.text.trim())).toEqual(["8%"]);
+    expect(c.changes[4].after!.map((s) => s.text).join("")).toBe("On · 8% off at most");
     // The moved rule: its own text on both sides, with the positions.
-    const moved = c.changes[4];
+    const moved = c.changes[3];
     expect(moved.positions).toEqual({ before: 1, after: 2 });
     expect(moved.before![0].text).toBe(draft.playbook.neverDo[1]);
     expect(moved.after![0].text).toBe(draft.playbook.neverDo[1]);
@@ -165,8 +168,8 @@ describe("Compare versions", () => {
     expect(html).toMatch(/data-run-the="" href="[^"]*change=run_it#vc-scen-h">Run the 1</);
     expect(html).toContain('<del class="vc-del">5%</del>');
     expect(html).toContain('<ins class="vc-ins">8%</ins>');
-    expect(html).toContain('<del class="vc-del">unit</del>');
-    expect(html).toContain('<ins class="vc-ins">fridge</ins>');
+    expect(html).toContain('<del class="vc-del">the problem</del>');
+    expect(html).toContain('<ins class="vc-ins">one spoiled delivery</ins>');
     expect(html).toContain("Not asked");
     expect(html).toContain("· Moved");
     expect(html).toMatch(/data-change-chip="never_run"[^>]*>Never run<span class="sas-fchip__count sas-num">\d+</);

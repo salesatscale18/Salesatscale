@@ -68,8 +68,8 @@ describe("diffVersions", () => {
     b.objectionAttempts = 3;
     const rows = diffVersions(version(base()), version(b), opts);
     expect(rows.map((r) => [r.area, r.item, text(r.before), text(r.after)])).toEqual([
-      ["limits", "Discount without approval", "5%", "8%"],
       ["objections", "Tries per objection", "2", "3"],
+      ["offers", "General discount", "On · 5% off at most", "On · 8% off at most"],
     ]);
   });
 
@@ -228,7 +228,7 @@ describe("diffVersions", () => {
     const b = clone(base());
     b.maxDiscountBp = 800;
     b.goal = "Sell more.";
-    expect(areaCounts(diffVersions(version(base()), version(b), opts))).toEqual([{ area: "limits", count: 1 }, { area: "close", count: 1 }]);
+    expect(areaCounts(diffVersions(version(base()), version(b), opts))).toEqual([{ area: "offers", count: 1 }, { area: "close", count: 1 }]);
   });
 
   it("S1 moves: who takes calls is in Agent, the goal and the ways to close in How a deal closes; the total is unchanged", () => {

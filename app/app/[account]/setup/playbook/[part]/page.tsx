@@ -19,6 +19,9 @@ import { AfterPreviewPanel, AgentPreview, OpeningPreview } from "../preview";
 import { previewLanguages } from "../previews";
 import { afterPreview } from "../after-preview";
 import { readOpener } from "@/lib/agent/core/opener";
+import { offersOf } from "@/lib/agent/offer-settings";
+import { QUOTE_VALID_DAYS } from "@/lib/quotes/service";
+import { OffersRows } from "../offers";
 
 /** The notice cookie, or nothing outside a request (render tests). */
 async function noticeCookie(): Promise<string | undefined> {
@@ -28,7 +31,7 @@ async function noticeCookie(): Promise<string | undefined> {
 /**
  * Setup · Playbook › one part (boards PlaybookAgent, PlaybookClose,
  * PlaybookLimits, PlaybookNever, PlaybookOpening2, PlaybookAsks,
- * PlaybookObjections). Every part but After the order is read first, one row
+ * PlaybookObjections, PlaybookOffers). Every part but After the order is read first, one row
  * edited at a time; After the order keeps its editor. Always the draft.
  * Sales plays keep their own pages (plays/).
  */
@@ -86,6 +89,9 @@ export default async function PlaybookPartPage({ params, searchParams }: { param
     }
     case "asks":
       body = <AsksRows {...base} p={p} orderFormHref={`${data.base}/setup/order-form`} />;
+      break;
+    case "offers":
+      body = <OffersRows {...base} offers={offersOf(p)} quoteValidDays={QUOTE_VALID_DAYS} />;
       break;
     case "objections": {
       const prefill = typeof sp.words === "string" ? sp.words.slice(0, 200) : null;

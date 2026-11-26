@@ -139,13 +139,15 @@ describe("safety", () => {
 });
 
 describe("prompt", () => {
-  it("states identity, rules and fields, and the discount limit", () => {
+  it("states identity, rules and fields, and no discount percent (offers come from check_offer)", () => {
     const p = stableSystemPrompt(pb, { tradeName: "Polar Monitoring", currency: "ILS", languages: ["he", "en"] });
     expect(p).toContain("Polar Monitoring assistant");
     expect(p).toContain("automated assistant");
     expect(p).toContain("Never ask for or accept payment card details");
     expect(p).toContain("business_type: Business type (needed for the quote)");
-    expect(p).toContain("up to 7.0%");
+    // Offers (part 2): the agent knows no percent in advance.
+    expect(p).not.toContain("7.0%");
+    expect(p).toContain("call check_offer with the buyer's quote and their reason");
     expect(p).not.toContain("Example question");
   });
   it("includes a field's example question when set", () => {

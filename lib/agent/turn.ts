@@ -8,14 +8,16 @@ import { and, desc, eq, exists } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { agentVersions, conversations, leads, markets, messages, sellerAccounts, toolCalls, users, voiceSessions } from "@/db/schema";
+import { agentVersions, conversations, leads, markets, messages, PLAY_KEYS, sellerAccounts, toolCalls, users, voiceSessions } from "@/db/schema";
 import { optOutLead } from "@/lib/leads/service";
 import { AiBudgetError, budgetGuarded } from "@/lib/ai/usage";
 import { isRetryableModelError, withHistoryCacheBreakpoint, type Block, type LlmClient, type LlmRequest, type LlmResponse } from "./llm";
 import { stableSystemPrompt, turnContext } from "./prompt";
 import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } from "./safety";
 import { readDealState } from "./service";
-import { runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } from "./tools";
+import { resultForModel, runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } from "./tools";
+import { allowedFigures, figureNote, unverifiedFigures, withoutSentences } from "./figure-check";
+import { playFacts } from "./core/plays";
 import { linksOnOwnLine } from "./links";
 import { loadStageFacts } from "./core/stage-facts";
 import { publishedCatalog } from "@/lib/catalog/service";
@@ -215,6 +217,15 @@ export async function runBuyerTurn(
   const model = budgetGuarded(db, llm);
   let text = "";
   let optedOut = false;
+  // Reply figure check (owner, 23 Nov): one regeneration per turn; a second failure removes the sentences or hands off.
+  let figuresRetried = false;
+  // What a reply may state besides this turn's tool results: the buyer's own numbers and the quotes the app already showed.
+  // Approved 25 Nov: also the seller's approved play facts the agent is given (facts lookup_knowledge returns this turn
+  // are tool results, so they count already).
+  const chatFigures = [
+    ...recent.filter(({ m }) => m.actor === "buyer" || (m.actor === "agent" && m.agentVersionId === null)).map(({ m }) => m.body),
+    ...PLAY_KEYS.flatMap((k) => playFacts(version.playbook.plays?.[k]).map((f) => f.text)),
+  ];
   // The tools' strict mode of this turn's first call, sent again on every later round: the
   // model's thinking blocks are bound to the exact tool list they were made with.
   let strictTools: boolean | undefined;
@@ -261,7 +272,42 @@ export async function runBuyerTurn(
       const uses = res.content.filter((b): b is Extract<Block, { type: "tool_use" }> => b.type === "tool_use" && typeof (b as { id?: unknown }).id === "string");
       history.push({ role: "assistant", content: res.content as Anthropic.Beta.BetaContentBlockParam[] });
       if (uses.length === 0 || round === MAX_TOOL_ROUNDS) {
-        text = plainChatText(res.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n"));
+        const draft = plainChatText(res.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n"));
+        text = draft;
+        // Call turns (a voice call's own session) are not checked: voice has no figure check in v1 (offers plan §4),
+        // and a regeneration or a hand-off would hold up or end the spoken answer on a live call.
+        if (optedOut || callTurn || round === MAX_TOOL_ROUNDS || !draft) break;
+        const allowed = allowedFigures([...chatFigures, masked.text, ...pending.filter((p) => p.r.outcome === "ok").map((p) => p.r.result)]);
+        // A quote waiting for the seller's approval (made this turn, or the lead's latest when no quote was made this turn):
+        // the totals of this turn's pricing (check_fit, check_offer, create_quote) may not be stated.
+        const quotesNow = pending.filter((p) => p.name === "create_quote" && p.r.outcome === "ok");
+        const held = quotesNow.length ? quotesNow.at(-1)!.r.result.status === "awaiting_seller_approval" : stageFacts.quote === "awaiting_approval";
+        const withheld = held
+          ? allowedFigures(pending.filter((p) => p.r.outcome === "ok" && (p.name === "check_fit" || p.name === "check_offer" || p.name === "create_quote"))
+            .map((p) => [p.r.result.totals, (p.r.result.offer as { totals?: unknown } | null | undefined)?.totals, p.r.result.now]))
+          : [];
+        const bad = unverifiedFigures(draft, allowed, withheld);
+        if (!bad.length) break;
+        const figures = [...new Set(bad.map((f) => f.raw))];
+        if (!figuresRetried) {
+          // First time: the model writes the reply again (same tools and strict mode, so the turn's rules hold).
+          figuresRetried = true;
+          pending.push({ name: "reply_figures", input: { figures }, r: { outcome: "refused", rule: "Figures not from a tool", result: { ok: false, refused: true, rule: "Figures not from a tool", figures, rewritten: true } } });
+          history.push({ role: "user", content: figureNote(bad, { held }) });
+          text = "";
+          continue;
+        }
+        // Second time: the sentences with unverified figures go; with nothing left, a person takes over with the draft.
+        const kept = withoutSentences(draft, bad);
+        if (kept) {
+          text = kept;
+          pending.push({ name: "reply_figures", input: { figures }, r: { outcome: "failed", rule: "Figures not from a tool", result: { ok: false, rule: "Figures not from a tool", figures, removed: true } } });
+        } else {
+          const r = await runTool("hand_off_to_human", { reason: "Reply figures could not be verified", summary: "", suggested_reply: draft }, ctx("figures"));
+          pending.push({ name: "hand_off_to_human", input: { reason: "Reply figures could not be verified", suggested_reply: draft }, r });
+          pending.push({ name: "reply_figures", input: { figures }, r: { outcome: "failed", rule: "Figures not from a tool", result: { ok: false, rule: "Figures not from a tool", figures, handedOff: true } } });
+          text = pick(HANDOFF_REPLY, lang);
+        }
         break;
       }
       // Call turns: reply text written next to bookkeeping calls only may finish the turn after the tools run.
@@ -296,7 +342,7 @@ export async function runBuyerTurn(
           if (!needsRound && bookkeepingNeedsRound(u.name, r, stageBefore)) needsRound = true;
           if (u.name === "update_deal_state" && typeof r.result.stage === "string") seenStage = r.result.stage;
         }
-        results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(r.result), ...(r.outcome === "failed" ? { is_error: true } : {}) });
+        results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(resultForModel(r.result)), ...(r.outcome === "failed" ? { is_error: true } : {}) });
       }
       if (!needsRound) {
         text = replyNow;

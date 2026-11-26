@@ -3,11 +3,11 @@
  * the server decides whether it is allowed. A refusal is a normal result
  * ({ ok: false, refused: true, rule, missing }) the agent reads and acts on.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { catalogItems, conversations, leadEvents, leads, messages, orderForms, orders, quoteLines, quotes, sellerAccounts, type Market, type Playbook, type QuoteVersion, type SellerAccount } from "@/db/schema";
+import { catalogItems, conversations, leadEvents, leads, messages, orderForms, orders, quoteLines, quotes, quoteVersions, sellerAccounts, type Market, type Playbook, type QuoteVersion, type SellerAccount } from "@/db/schema";
 import { agentDeliveryText, estimateDelivery } from "@/lib/delivery/eta";
 import { deliveryPlanFor } from "@/lib/delivery/plan";
 import { resolveMarket } from "@/lib/markets/service";
@@ -19,7 +19,7 @@ import { publishedCatalog } from "@/lib/catalog/service";
 import { formatMoney } from "@/lib/domain/money";
 import { priceWithList, type EngineLine } from "@/lib/pricing/engine";
 import { catalogAutoAdd, engineItems, enginePriceList, pricingContext, requestLinesOf, type PricingContext } from "@/lib/quotes/pricing";
-import { createQuote, markQuoteSent } from "@/lib/quotes/service";
+import { createQuote, markQuoteSent, QUOTE_VALID_DAYS } from "@/lib/quotes/service";
 import { marketTimezone } from "@/lib/markets/settings";
 import { localDateIso } from "@/lib/format";
 import { createOrderForm } from "@/lib/orders/service";
@@ -41,6 +41,8 @@ import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
 import { bookNamedTime, offerBooking } from "@/lib/team-calls/service";
 import { callRoleOf } from "./core/call-role";
 import { askTeam } from "@/lib/team-questions/service";
+import { nextOffer, offerSkipText, offersOf, type OfferOption, type OfferPricing, type OfferType } from "./offers";
+import { findOffer, highestOfferedBp, leadOfferCalls, offerHistory, type NoOfferRecord, type OfferCall, type OfferRecord } from "./offer-records";
 
 const lineSchema = {
   type: "array",
@@ -51,6 +53,18 @@ const lineSchema = {
     additionalProperties: false,
   },
 } as const;
+
+/** check_offer (offers plan, part 2): one offer at a time, in the seller's order. Needs the owner's approval of the wording. */
+const CHECK_OFFER_DESCRIPTION = "Get the one offer you may make on price, before you offer the buyer anything (a discount, a volume price, a smaller first step). Pass the buyer's current quote and the reason: next (the price in general), or the trade the buyer named: more_units, decide_now, pay_yearly, smaller_start (pass its lines and sites). Returns one offer at a time, in the seller's order, with the new figures already calculated and an offer id; state only those figures, in your own words. Creates nothing: when the buyer accepts, call create_quote with the offer id. When nothing more can be offered, it says so. Refused until the buyer's price objection or discount request is recorded (update_deal_state objection, play too_expensive).";
+
+/** check_offer's message with an offer. */
+export const OFFER_OK_MESSAGE = "Offer this as a trade, in your own words: what the buyer gives and what they get, with these figures only. Do not offer more, and add no other amount or percentage. When the buyer accepts, call create_quote with this offer id, these lines, these sites and this discount_percent. If the buyer turns it down, you may call check_offer again for the next offer. If the buyer needs more than this, create_quote with the discount they need (offer null) goes to the seller for approval.";
+/** check_offer's message when nothing more can be offered. */
+export const OFFER_NONE_MESSAGE = "Nothing more can be offered on price without the team's approval. If the buyer needs more, create_quote with the discount they need (offer null) goes to the seller for approval; otherwise take the card's last rungs.";
+/** create_quote's message for a quote held for an approved exception (owner, 23 Nov: never say the price already includes it). */
+export const HELD_EXCEPTION_MESSAGE = "The seller must approve this quote because it uses an exception. Tell the buyer you have asked the team to apply it and that they will confirm the updated price; never say the price already includes it. Keep going: the conversation does not pause. The app tells the buyer the team's decision. Do not give totals.";
+/** Added for pay yearly: the quote cannot record a yearly term. */
+const OFFER_YEARLY_NOTE = " Paying yearly is a condition you say: the quote cannot record a yearly term, so do not say it is on the quote.";
 
 export const TOOL_DEFS: ToolDef[] = [
   {
@@ -67,6 +81,25 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: { lines: lineSchema, sites: { type: ["integer", "null"], description: "Number of sites if known." } },
       required: ["lines", "sites"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "check_offer",
+    description: CHECK_OFFER_DESCRIPTION,
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        quote: { type: "string", description: 'The buyer\'s current quote, e.g. "Q-1001".' },
+        reason: {
+          type: "string", enum: ["next", "more_units", "decide_now", "pay_yearly", "smaller_start"],
+          description: "next = the price in general (the next offer in the seller's order); more_units = they would take more; decide_now = they would sign while the new quote is valid; pay_yearly = they would pay the plan a year ahead; smaller_start = a smaller first set (pass its lines and sites).",
+        },
+        lines: { type: ["array", "null"], items: lineSchema.items, description: "smaller_start: the smaller first set (required). more_units: the larger quantities the buyer named, or null for the next volume price. null otherwise." },
+        sites: { type: ["integer", "null"], description: "Number of sites for these lines, if known." },
+      },
+      required: ["quote", "reason", "lines", "sites"],
       additionalProperties: false,
     },
   },
@@ -144,13 +177,14 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "create_quote",
-    description: "Create a quote priced by the server from the price list of the buyer's market. When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it. Refused with the missing fields while a field needed for the quote is unknown and was asked fewer than two times (after two, quote on an assumption with `assumed`), or if an item is not sold in the buyer's market. A discount (one-time charges only) above your limit goes to the seller for approval. Pass a headline: one short line on what the buyer gets, in the buyer's language, no prices (it tops the quote card).",
+    description: "Create a quote priced by the server from the price list of the buyer's market. When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it. Refused with the missing fields while a field needed for the quote is unknown and was asked fewer than two times (after two, quote on an assumption with `assumed`), or if an item is not sold in the buyer's market. A discount comes only from check_offer: pass its offer id as offer, with exactly its lines and discount_percent; anything else is refused. The buyer's first quote never has a discount. A discount above what check_offer returned (offer null) goes to the seller for approval. Pass a headline: one short line on what the buyer gets, in the buyer's language, no prices (it tops the quote card).",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
         lines: lineSchema,
-        discount_percent: { type: "number" },
+        discount_percent: { type: "number", description: "0 unless the buyer accepted an offer (its discount_percent) or needs more than check_offer returned (goes to approval)." },
+        offer: { type: ["string", "null"], description: 'The offer id from check_offer the buyer accepted, e.g. "OF-3f9a2c"; null otherwise.' },
         sites: { type: ["integer", "null"] },
         remove_auto_added: {
           type: ["array", "null"],
@@ -176,7 +210,7 @@ export const TOOL_DEFS: ToolDef[] = [
           description: "Only for a field needed for the quote that you asked twice and the buyer did not answer: the value you quote on, e.g. {key: \"sites\", value: \"1\"}. Say the assumption in your close. null otherwise.",
         },
       },
-      required: ["lines", "discount_percent", "sites", "remove_auto_added", "exception", "headline", "assumed"],
+      required: ["lines", "discount_percent", "offer", "sites", "remove_auto_added", "exception", "headline", "assumed"],
       additionalProperties: false,
     },
   },
@@ -273,6 +307,8 @@ export type TurnMemo = {
   asked?: Set<string>;
   /** lookup_knowledge queries of this turn that found nothing (O4: ask_team records them with the question). */
   emptyLookups?: Set<string>;
+  /** Ok check_offer and create_quote calls of this turn (tool calls are stored at its end), for the offers made so far. */
+  offerCalls?: OfferCall[];
 };
 
 /**
@@ -502,6 +538,69 @@ function isMisplacedConfirm(u: unknown): boolean {
   return value === true || (typeof value === "string" && /^(true|yes)$/i.test(value.trim()));
 }
 
+/** The lead's quote by its reference ("Q-1010", "Q-1010 v2") or id; only a quote of this account and this lead. */
+async function leadQuoteByRef(ctx: ToolContext, refIn: unknown) {
+  const ref = String(refIn ?? "").trim();
+  const byId = UUID_RE.test(ref);
+  const number = byId ? NaN : Number(ref.replace(/^\s*Q-?/i, "").replace(/\s*v\d+$/i, ""));
+  if (!byId && !Number.isInteger(number)) return null;
+  const [q] = await ctx.db.select().from(quotes).where(and(
+    eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId), byId ? eq(quotes.id, ref.toLowerCase()) : eq(quotes.number, number),
+  ));
+  return q ?? null;
+}
+
+/** Ok check_offer and create_quote calls of this lead: stored ones and this turn's. */
+async function offerCallsOf(ctx: ToolContext): Promise<OfferCall[]> {
+  return [...await leadOfferCalls(ctx.db, ctx.accountId, ctx.leadId), ...(ctx.memo?.offerCalls ?? [])];
+}
+
+function rememberOfferCall(ctx: ToolContext, name: string, input: Record<string, unknown>, result: Record<string, unknown>) {
+  if (ctx.memo) (ctx.memo.offerCalls ??= []).push({ name, input, result, outcome: "ok", at: Date.now() });
+}
+
+/** OF- and the first 6 hex characters of the call id's SHA-256 (stable for the call). */
+export const offerIdFor = (callId: string) => `OF-${createHash("sha256").update(callId).digest("hex").slice(0, 6)}`;
+
+const sameLines = (a: readonly Line[], b: readonly Line[]) => {
+  const m = (l: readonly Line[]) => [...l].map((x) => `${x.sku.toUpperCase()}:${x.qty}`).sort().join(",");
+  return m(a) === m(b);
+};
+const linesText = (l: readonly Line[]) => l.map((x) => `${x.qty} × ${x.sku}`).join(", ");
+
+/** The offer's plain terms (agent and seller card) and its short form (the folded chip). English, pure. */
+export function offerTermsOf(o: OfferOption, money: (m: number, period?: "month" | "year") => string, validDays: number): { terms: string; short: string } {
+  const pct = (o.terms.percentBp / 100).toString();
+  const monthly = o.after.recurring.totalMinor > 0 ? " Recurring charges are not discounted." : "";
+  if (o.kind === "smaller") {
+    return { terms: `A smaller first step: ${linesText(o.terms.lines)}${o.terms.sites ? ` for ${o.terms.sites} site${o.terms.sites === 1 ? "" : "s"}` : ""}. No discount; the rest can follow later.`, short: "a smaller first step" };
+  }
+  if (o.kind === "volume") {
+    const v = o.terms.volume ?? [];
+    const each = v.map((x) => `${x.qty} × ${x.sku} at ${x.unitMinor === null ? "the seller's price" : money(x.unitMinor)} each instead of ${x.fromUnitMinor === null ? "the list price" : money(x.fromUnitMinor)} (now ${x.fromQty})`).join("; ");
+    return { terms: `The volume price for more units: ${each}. No discount on top.`, short: v.map((x) => `${x.qty} × ${x.sku} at ${x.unitMinor === null ? "" : money(x.unitMinor)}`).join(", ") };
+  }
+  switch (o.type) {
+    case "decide_now": return { terms: `${pct}% off the one-time charges if the buyer signs within ${validDays} days, while the new quote is valid.${monthly}`, short: `${pct}% if signed within ${validDays} days` };
+    case "pay_yearly": return { terms: `${pct}% off the one-time charges for paying the plan a year ahead (a spoken condition: the quote cannot record a yearly term).${monthly}`, short: `${pct}% for paying yearly` };
+    case "more_units": return { terms: `${pct}% off the one-time charges for taking ${linesText(o.terms.lines)} (${o.terms.units} units or more).${monthly}`, short: `${pct}% from ${o.terms.units} units` };
+    default: return { terms: `${pct}% off the one-time charges.${monthly}`, short: `${pct}% off` };
+  }
+}
+
+/** Totals as a tool result states them, from engine totals (complete quotes only). */
+function figuresBreakdown(f: OfferOption["after"], taxRateBp: number, money: (m: number, period?: "month" | "year") => string) {
+  return totalsBreakdown({ oneTime: f.oneTime, recurring: f.recurring, period: f.recurringPeriod === "year" ? "year" : "month", taxRateBp, complete: true }, money);
+}
+
+/** The model's view of a result: the app's own record (binding, seller card) is left out. */
+export function resultForModel(result: Record<string, unknown>): Record<string, unknown> {
+  if (!("record" in result)) return result;
+  const { record: _r, ...rest } = result;
+  void _r;
+  return rest;
+}
+
 export async function runTool(name: string, input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const args = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   /** Money in a currency (the price list's), with the period for recurring amounts. */
@@ -593,6 +692,96 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         delivery: await deliveryOf(ctx, p.market),
       },
     };
+  }
+
+  if (name === "check_offer") {
+    const q = await leadQuoteByRef(ctx, args.quote);
+    if (!q) return refuse("Quote not found for this buyer", { message: "Make the quote first with create_quote, without a discount. An offer is made against a quote the buyer has." });
+    if (q.status === "awaiting_approval") return refuse("Quote waits for the seller's approval", { message: "Tell the buyer the team is checking that price. Do not offer anything else on it now." });
+    if (q.status === "cancelled" || q.status === "replaced") return refuse("Quote is no longer current", { message: "Use the buyer's current quote." });
+    const deal = await readDealState(ctx.db, ctx.accountId, ctx.leadId);
+    if (!readObjections(deal?.objections).some((o) => o.play === "too_expensive" && o.status === "open")) {
+      return refuse("No price objection recorded", { message: "An offer answers a price objection or a discount request. If the buyer raised one, record it with update_deal_state objection (play too_expensive, status open), then call check_offer again. Otherwise offer nothing." });
+    }
+    const reason = typeof args.reason === "string" && args.reason !== "next" ? args.reason : "next";
+    const named = reason === "next" ? null : (reason as OfferType);
+    const given = args.lines === null || args.lines === undefined ? null : asLines(args.lines);
+    if (args.lines !== null && args.lines !== undefined && !given) return { outcome: "failed", result: { ok: false, error: "lines must be [{sku, qty}] or null" } };
+    const sitesIn = typeof args.sites === "number" ? args.sites : undefined;
+    if (named === "smaller_start" && !given?.length) return refuse("Lines needed", { message: "Pass the smaller first set's lines (and sites)." });
+    const p = await pricingOf(ctx);
+    if (!p.catalog) return refuse("No published catalog yet");
+    if (!p.priceList) return refuse(NO_PRICE_LIST, { message: NO_PRICES_MESSAGE });
+    const [v] = await ctx.db.select().from(quoteVersions).where(and(eq(quoteVersions.accountId, ctx.accountId), eq(quoteVersions.quoteId, q.id), eq(quoteVersions.version, q.currentVersion)));
+    if (!v) return refuse("Quote not found for this buyer", { message: "Make the quote first with create_quote, without a discount." });
+    const calls = await offerCallsOf(ctx);
+    // The quote's request as the agent made it (its create_quote call), else its lines (a person's quote).
+    const made = [...calls].reverse().find((c) => c.name === "create_quote" && c.result.quote_id === q.id);
+    const requested = (made && asLines(made.input.lines)) || requestLinesOf(await ctx.db.select({ sku: quoteLines.sku, qty: quoteLines.qty }).from(quoteLines).where(and(eq(quoteLines.accountId, ctx.accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(quoteLines.sortOrder));
+    const quoteSites = made && typeof made.input.sites === "number" ? made.input.sites : undefined;
+    const pricing: OfferPricing = {
+      items: engineItems(p.catalog), entries: p.priceList.entries, priceList: enginePriceList(p.priceList.list),
+      autoAdd: catalogAutoAdd(p.catalog), fitRules: p.catalog.rules,
+    };
+    const history = offerHistory(calls, new Date());
+    const ask = {
+      offers: offersOf(ctx.playbook),
+      quote: { lines: requested, sites: quoteSites, removedByBuyer: v.removedAutoAdd, discountBp: v.discountBp },
+      pricing,
+      made: history.map((h) => ({ type: h.record.type, outcome: h.outcome })),
+      named,
+      smaller: named === "smaller_start" && given ? { lines: given, sites: sitesIn } : null,
+      larger: named === "more_units" && given?.length ? { lines: given, sites: sitesIn } : null,
+    };
+    const r = nextOffer(ask);
+    // A smaller or larger set the buyer named that does not qualify is refused (the agent fixes the set).
+    if (r.namedSkip && typeof r.namedSkip.reason === "object") {
+      const code = r.namedSkip.reason.code;
+      if (code === "not_smaller") return refuse("Not a smaller set", { message: "Pass a set with fewer units, items or sites than the quote." });
+      if (code === "not_larger") return refuse("Not a larger set", { message: "Pass a set with more units than the quote." });
+      if (code === "fit") return refuse("Fit check failed", { problems: [r.namedSkip.reason.detail ?? ""] });
+    }
+    const money = moneyIn(p.priceList.list.currency);
+    const tried: OfferRecord["tried"] = r.before.map((e) => ({ type: e.type, n: e.place.n, state: e.made ?? "skipped", ...(e.skip ? { reason: offerSkipText(e.skip) } : {}) }));
+    const namedNote = r.namedSkip
+      ? { named_not_available: `${r.namedSkip.type}: ${r.namedSkip.reason === "off" ? "not offered by this seller" : r.namedSkip.reason === "made" ? "already offered" : offerSkipText(r.namedSkip.reason)}` }
+      : {};
+    const now = { total_today_including_vat: money(v.oneTimeTotalMinor), recurring_total_including_vat: v.recurringTotalMinor > 0 ? money(v.recurringTotalMinor, v.recurringPeriod === "year" ? "year" : "month") : null };
+    if (!r.next) {
+      const record: NoOfferRecord = { exhausted: true, quoteId: q.id, quoteNumber: q.number, tried };
+      const result = { ok: true, quote: `Q-${q.number} v${v.version}`, now, offer: null, ...namedNote, message: OFFER_NONE_MESSAGE, record };
+      rememberOfferCall(ctx, name, args, result);
+      return { outcome: "ok", result };
+    }
+    const o = r.next.option;
+    const id = offerIdFor(ctx.callId);
+    const { terms, short } = offerTermsOf(o, money, QUOTE_VALID_DAYS);
+    const record: OfferRecord = {
+      id, type: o.type, kind: o.kind, place: r.next.place, reason: named ?? "next", terms, short,
+      percentBp: o.terms.percentBp, ...(o.terms.units ? { units: o.terms.units } : {}), lines: o.terms.lines, ...(o.terms.sites !== undefined ? { sites: o.terms.sites } : {}),
+      removedAutoAdd: v.removedAutoAdd, ...(o.terms.spokenOnly ? { spokenOnly: true } : {}),
+      currency: o.after.currency,
+      before: { todayMinor: o.before.todayMinor, recurringMinor: o.before.recurring.totalMinor },
+      after: { todayMinor: o.after.todayMinor, recurringMinor: o.after.recurring.totalMinor },
+      recurringPeriod: o.after.recurringPeriod,
+      quoteId: q.id, quoteNumber: q.number, quoteVersion: v.version,
+      priceListId: p.priceList.list.id, catalogVersionId: p.catalog.version.id, expiresAt: v.validUntil.toISOString(), tried,
+    };
+    const change = o.after.todayMinor - o.before.todayMinor;
+    const result = {
+      ok: true, quote: `Q-${q.number} v${v.version}`, price_basis: priceBasis(p.priceList.list.pricesIncludeTax, p.priceList.list.taxRateBp), now,
+      offer: {
+        offer_id: id, trade: o.type, place: `offer ${r.next.place.n} of ${r.next.place.of} in the seller's order`, ...(r.next.again ? { offered_before: true } : {}),
+        terms, lines: o.terms.lines, sites: o.terms.sites ?? null, discount_percent: o.terms.percentBp / 100,
+        totals: figuresBreakdown(o.after, p.priceList.list.taxRateBp, money),
+        ...(change < 0 ? { saving_today_including_vat: money(-change) } : change > 0 ? { more_today_including_vat: money(change) } : {}),
+      },
+      ...namedNote,
+      message: OFFER_OK_MESSAGE + (o.terms.spokenOnly ? OFFER_YEARLY_NOTE : ""),
+      record,
+    };
+    rememberOfferCall(ctx, name, args, result);
+    return { outcome: "ok", result };
   }
 
   if (name === "lookup_knowledge") {
@@ -739,10 +928,50 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       assumedNow = missing.map((f) => ({ field: f.label, value: given.get(f.key)! }));
     }
     const pct = typeof args.discount_percent === "number" ? args.discount_percent : 0;
-    const sites = typeof args.sites === "number" ? args.sites : undefined;
-    const removeAsked = Array.isArray(args.remove_auto_added)
+    let sites = typeof args.sites === "number" ? args.sites : undefined;
+    let removeAsked = Array.isArray(args.remove_auto_added)
       ? [...new Set(args.remove_auto_added.filter((s): s is string => typeof s === "string").map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 50)
       : [];
+    // Offers (part 2): an in-limit discount exists only through an offer id; a discount without one is an approval request.
+    const offerId = typeof args.offer === "string" && args.offer.trim() ? args.offer.trim() : null;
+    let offer: OfferRecord | null = null;
+    let discountLimitBp: number | undefined;
+    const discountBp = Math.round(pct * 100);
+    if (offerId || discountBp > 0) {
+      const calls = await offerCallsOf(ctx);
+      if (offerId) {
+        offer = findOffer(calls, offerId);
+        if (!offer) return refuse("Unknown offer", { message: "Use an offer id check_offer returned for this buyer." });
+        if (Date.parse(offer.expiresAt) < Date.now()) return refuse("Offer expired", { message: "Call check_offer again and offer its new figures." });
+        const live = await pricingOf(ctx);
+        if (!live.priceList || !live.catalog || live.priceList.list.id !== offer.priceListId || live.catalog.version.id !== offer.catalogVersionId) {
+          return refuse("Prices changed since the offer", { message: "Call check_offer again and offer its new figures." });
+        }
+        // The seller's row now: still on, and at least the offer's percent (a lowered limit wins).
+        const row = offersOf(ctx.playbook).find((o) => o.type === offer!.type);
+        if (!row?.on || (row.percentBp ?? 0) < offer.percentBp) return refuse("Offer no longer allowed", { message: "Call check_offer again and offer its new figures." });
+        if (!sameLines(lines, offer.lines) || discountBp !== offer.percentBp) {
+          return refuse("Quote differs from the offer", { message: `Pass exactly the offer's lines and discount_percent: ${linesText(offer.lines)}, ${offer.percentBp / 100}.` });
+        }
+        sites = offer.sites ?? sites;
+        removeAsked = offer.removedAutoAdd;
+        discountLimitBp = offer.percentBp;
+      } else {
+        // Rule A: the first quote never has a discount.
+        const [earlier] = await ctx.db.select({ id: quotes.id }).from(quotes).where(and(eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId))).limit(1);
+        if (!earlier) return refuse("No discount on the first quote", { message: "Quote first without a discount (discount_percent 0, offer null). Price offers come only after the buyer raises the price, from check_offer." });
+        // Rule C: a request above the offers needs a price objection on record and the offers tried first.
+        if (!readObjections(deal?.objections).some((o) => o.play === "too_expensive")) {
+          return refuse("No price objection recorded", { message: "An offer answers a price objection or a discount request. If the buyer raised one, record it with update_deal_state objection (play too_expensive, status open), then call check_offer. Otherwise quote without a discount." });
+        }
+        if (!calls.some((c) => c.name === "check_offer")) return refuse("Offer first", { message: "Call check_offer first and offer what it returns; if the buyer needs more, create the quote with the discount they need." });
+        // Rule B: up to what was offered, a discount comes only through its offer id.
+        const offered = highestOfferedBp(offerHistory(calls, new Date()));
+        if (discountBp <= offered) return refuse("Discount not from an offer", { message: "A discount comes only from check_offer. Call it with the buyer's quote and reason, offer what it returns, and pass its offer id when the buyer accepts." });
+        // Above the offers: always the seller's approval (the quote's limit is what was offered).
+        discountLimitBp = offered;
+      }
+    }
     // The memo's market, catalog and price list (read once per turn); createQuote ignores them if they are not this lead's.
     // An approved exception must be one of this version's (the playbook the agent runs on).
     const exceptionId = typeof args.exception === "string" && args.exception.trim() ? args.exception.trim() : null;
@@ -752,8 +981,10 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     }
     const preloaded = ctx.memo ? { account: ctx.memo.account, context: await pricingOf(ctx) } : undefined;
     const r = await createQuote(ctx.db, ctx.accountId, { kind: "agent" }, ctx.leadId, {
-      lines, discountBp: Math.round(pct * 100), sites, removedByBuyer: removeAsked, idempotencyKey: `tool:${ctx.callId}`, preloaded,
+      lines, discountBp, sites, removedByBuyer: removeAsked, idempotencyKey: `tool:${ctx.callId}`, preloaded,
       ...(exception ? { exception: { id: exception.id, text: exception.text } } : {}),
+      ...(discountLimitBp !== undefined ? { discountLimitBp } : {}),
+      ...(offer ? { offer: { id: offer.id, type: offer.type }, changeNote: `Offer ${offer.id}: ${offer.short}` } : {}),
     });
     if (!r.ok) {
       if (r.reason === "fit") return refuse("Fit check failed", { problems: r.problems });
@@ -767,6 +998,10 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     }
     const v = r.version;
     const money = moneyIn(v.currency);
+    // The quote made from an offer must have the offer's figures (same engine, same price list).
+    if (offer && !r.reused && (v.oneTimeTotalMinor !== offer.after.todayMinor || v.recurringTotalMinor !== offer.after.recurringMinor)) {
+      console.error(`[agent] quote from offer ${offer.id} differs from the offer: ${v.oneTimeTotalMinor}/${v.recurringTotalMinor} vs ${offer.after.todayMinor}/${offer.after.recurringMinor}`);
+    }
     // The quote's market (the lead's): the memo's when it is that market, else read again.
     const quoteMarket = preloaded && preloaded.context.market.id === v.marketId ? preloaded.context.market : await resolveMarket(ctx.db, ctx.accountId, v.marketId);
     const period = v.recurringPeriod === "year" ? "year" : "month";
@@ -787,9 +1022,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const heldMessageId = awaiting && !r.reused ? await sendHeldQuoteMessage(ctx, account ? localTradeName(account, ctx.language ?? "en") : "") : null;
     // The card's headline (the agent's, when valid); stored with the message link, read by lib/agent/quote-card.ts.
     const headline = validHeadline(args.headline);
-    return {
-      outcome: "ok",
-      result: {
+    const quoteResult: Record<string, unknown> = {
         ok: true,
         quote: `Q-${r.quote.number} v${v.version}`,
         ...(v.removedAutoAdd.length ? { removed_at_buyer_request: v.removedAutoAdd } : {}),
@@ -815,14 +1048,18 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         ...(heldMessageId ? { quote_message_id: heldMessageId, quote_held: true } : {}),
         quote_id: r.quote.id,
         quote_version: v.version,
+        ...(offer ? { offer: { id: offer.id, trade: offer.type } } : {}),
         ...(headline ? { headline } : {}),
         ...(assumedNow.length ? { quoted_on_assumption: assumedNow } : {}),
         message: (awaiting
-          ? "The seller must approve this quote. Tell the buyer you have asked the team to approve that price, and keep going: the conversation does not pause. The app tells the buyer the team's decision. Do not give totals."
+          ? exception
+            ? HELD_EXCEPTION_MESSAGE
+            : "The seller must approve this quote. Tell the buyer you have asked the team to approve that price, and keep going: the conversation does not pause. The app tells the buyer the team's decision. Do not give totals."
           : "The quote message was sent to the buyer by the app. Do not repeat the lines or totals. Add only the closing sentence.")
           + (assumedNow.length ? " Say in one short clause what you assumed and that the buyer can tell you if it is different." : ""),
-      },
     };
+    rememberOfferCall(ctx, name, args, quoteResult);
+    return { outcome: "ok", result: quoteResult };
   }
 
   if (name === "send_order_form") {
@@ -934,7 +1171,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       outcome: "ok",
       result: {
         ok: true, ...(r.replaced ? { replaced_earlier: true } : {}),
-        message: `Link sent in the chat. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with ${callRoleOf(ctx.playbook)} with the link. Keep answering their questions until the call.`,
+        message: `The booking card is now in the chat, right under your reply. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with ${callRoleOf(ctx.playbook)} on the card below. Keep answering their questions until the call.`,
       },
     };
   }
@@ -954,7 +1191,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         },
       }),
     ]);
-    return { outcome: "ok", result: { ok: true, message: "A person will continue. Tell the buyer briefly; do not continue selling." } };
+    return { outcome: "ok", result: { ok: true, message: "A person from the team will get back to the buyer. Tell the buyer so in one short sentence; do not continue selling." } };
   }
 
   return { outcome: "failed", result: { ok: false, error: `Unknown tool ${name}` } };

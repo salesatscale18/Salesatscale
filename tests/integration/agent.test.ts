@@ -147,14 +147,18 @@ describe("agent turns (scripted model)", () => {
 
   it("a discount above the limit becomes a quote awaiting the seller's approval", async () => {
     const c = await newConv();
+    // Offers (part 2): the first quote has no discount, the offer comes from check_offer, and only a discount above it goes to approval.
+    const lastResult = (req: LlmRequest) => JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content) as Record<string, unknown>;
     const llm = new ScriptedLlm([
       step(use("a", "update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: { play: "too_expensive", buyer_words: "15% off or no deal", step: 5, attempt: true, status: "open" } })),
-      step(use("b", "create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 15, sites: 1 })),
+      step(use("b", "create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 0, offer: null, sites: 1 })),
+      (req: LlmRequest) => ({ content: [use("c", "check_offer", { quote: String(lastResult(req).quote).split(" ")[0], reason: "next", lines: null, sites: null })] }),
+      step(use("d", "create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 15, offer: null, sites: 1 })),
       step(say("I'm confirming that price with the team.")),
     ]);
     await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "15% off or no deal" });
-    const [q] = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
-    expect(q.status).toBe("awaiting_approval");
+    const all = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
+    expect(all.map((x) => x.status).sort()).toEqual(["awaiting_approval", "sent"]);
     expect((await getDealState(db, acc, c.leadId))?.objections).toEqual([{ play: "too_expensive", words: "15% off or no deal", steps: [5], status: "open", attempts: 1 }]);
   });
 
@@ -417,21 +421,21 @@ describe("agent turns (scripted model)", () => {
     await runTool("lookup_knowledge", { query: "sensor warranty" }, ctx("m4"));
     expect(memo.facts).toBe(firstFacts);
     await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, ctx("m5"));
-    // The memo account (limit 0%) is used, not a re-read (limit 7%): a 5% discount needs approval.
-    const q = await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 5, sites: 1 }, ctx("m6"));
-    expect(q.result).toMatchObject({ ok: true, status: "awaiting_seller_approval" });
-    // Without a memo the account is read from the database (limit 7%): ready.
+    // The agent's discount limit now comes from offers (offer-tool.test.ts); a quote without a discount is ready with the memo's rows.
+    const q = await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 0, offer: null, sites: 1 }, ctx("m6"));
+    expect(q.result).toMatchObject({ ok: true, status: "ready" });
+    expect(memo.catalog).toBe(firstCatalog);
     const c2 = await newConv();
     const plain = (callId: string) => ({ db, accountId: acc, conversationId: c2.conversationId, leadId: c2.leadId, playbook: draft.playbook, currency: "ILS", callId });
     await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, plain("n1"));
-    expect((await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 5, sites: 1 }, plain("n2"))).result).toMatchObject({ status: "ready" });
+    expect((await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 0, offer: null, sites: 1 }, plain("n2"))).result).toMatchObject({ status: "ready" });
     // Rows of another account in the memo are ignored.
     const c3 = await newConv();
     const [otherAcc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, other));
     const foreign = { account: { ...otherAcc, maxDiscountBp: 0 } };
     const fctx = (callId: string) => ({ ...plain(callId), conversationId: c3.conversationId, leadId: c3.leadId, memo: foreign });
     await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, fctx("f1"));
-    expect((await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 5, sites: 1 }, fctx("f2"))).result).toMatchObject({ status: "ready" });
+    expect((await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 0, offer: null, sites: 1 }, fctx("f2"))).result).toMatchObject({ status: "ready" });
   });
   // --- Markets and price lists (wave 2, lane Q) ------------------------------
 

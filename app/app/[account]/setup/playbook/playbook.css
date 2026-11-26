@@ -353,3 +353,42 @@
 @media (max-width: 899px) {
   .pb-part-layout[data-with-preview] { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Offers (board PlaybookOffers; the list approved 23 Nov): list rows read first, a place number, the numbers,
+   the switch; off rows greyed below without a number; "Anything above these" pinned last. */
+.pb-offers .pb-row--item { grid-template-columns: 24px minmax(0, 1fr) auto; }
+.pb-offer-read { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+.pb-offer__name { font-weight: 600; }
+.pb-offer__place { flex: none; width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--primary-soft); color: var(--primary); font-variant-numeric: tabular-nums; }
+.pb-offer__place--off { background: var(--surface-sunken); color: var(--ink-muted); }
+.pb-offer__icon { flex: none; width: 32px; height: 32px; border-radius: var(--radius-md); display: inline-grid; place-items: center; background: var(--surface-sunken); color: var(--ink-muted); }
+.pb-offer__icon--none { background: transparent; }
+.pb-offer__read-nums { white-space: nowrap; color: var(--ink); font-variant-numeric: tabular-nums; }
+.pb-offer__nums { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.pb-offer__nums > .sas-error { flex-basis: 100%; }
+.pb-offer__num { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-muted); white-space: nowrap; }
+.pb-offer__num .sas-input { width: 72px; }
+.pb-offer__end { display: inline-flex; gap: 4px; align-items: center; }
+.pb-offer__always { white-space: nowrap; }
+.pb-offer__menu { position: relative; display: inline-flex; width: 32px; justify-content: center; }
+.pb-offer__pop { position: absolute; inset-inline-end: 0; top: calc(100% + 4px); z-index: 5; display: flex; flex-direction: column; min-width: 160px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-raised); box-shadow: 0 10px 30px rgba(15, 20, 32, .16); }
+.pb-offer__pop button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink); font: inherit; text-align: start; cursor: pointer; }
+.pb-offer__pop button:hover:not(:disabled), .pb-offer__pop button:focus-visible { background: var(--surface-sunken); }
+.pb-offer__pop button:disabled { color: var(--ink-muted); cursor: default; }
+/* Off: greyed under the active rows, without a number; the switch keeps full contrast. */
+.pb-offers .pb-row[data-on="0"]:not([data-open]) .pb-offer-read, .pb-offers .pb-row[data-on="0"] .pb-offer__read-nums { opacity: .6; }
+.pb-offers__off > [role="listitem"] > .pb-row { border-top: 1px solid var(--line); }
+.pb-offer--pinned { background: var(--surface); }
+.pb-offer--pinned .pb-row__lead { color: var(--ink-muted); }
+.pb-offers__hint { padding: 12px 20px 4px; }
+.pb-offer--pinned .pb-offer__place { visibility: hidden; }
+/* Phone: the numbers, Change, the switch and ⋯ go on a line under the offer's text. */
+@media (max-width: 767px) {
+  .pb-offers__hint { padding-inline: 16px; }
+  .pb-offer__icon { display: none; }
+  .pb-offers .pb-row--item:not([data-open]) { grid-template-columns: 24px minmax(0, 1fr); }
+  .pb-offers .pb-row--item:not([data-open]) > .pb-row__lead { grid-column: 1; grid-row: 1; }
+  .pb-offers .pb-row--item:not([data-open]) > .pb-row__value { grid-column: 2; grid-row: 1; }
+  .pb-offers .pb-row--item:not([data-open]) > .pb-row__actions { grid-column: 2; grid-row: 2; justify-content: flex-start; flex-wrap: wrap; padding-inline-start: 34px; }
+  .pb-offers .pb-offer--pinned > .pb-row__actions { padding-inline-start: 34px; }
+}
