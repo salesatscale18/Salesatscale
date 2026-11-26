@@ -38,8 +38,10 @@ export function infoTipNext(s: InfoTipState, e: InfoTipEvent): InfoTipState {
 }
 
 export type Box = { left: number; top: number; right: number; bottom: number };
-/** `maxHeight`: set when the popover is shortened to fit (its content then scrolls). */
-export type InfoTipPlace = { side: "below" | "above"; left: number; top: number; width: number; maxHeight?: number };
+/** `maxHeight`: set when the popover is shortened to fit (its content then scrolls). "start": beside the button, on its inline-start side. */
+export type InfoTipPlace = { side: "below" | "above" | "start"; left: number; top: number; width: number; maxHeight?: number };
+/** A preferred placement: "above" the button, or beside it on its inline-start side ("start"). */
+export type InfoTipPrefer = "above" | "start";
 
 const hits = (a: Box, b: Box) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 
@@ -52,9 +54,13 @@ const MIN_HEIGHT = 120;
  * order: below the button, else above it, starting just before the button or moved sideways off
  * an avoid box; then below or above the avoid boxes themselves; then the first of those with room
  * for at least 120px, shortened to fit; last, the side with more room, moved inside the viewport.
+ * `explains`: what the (i) explains (a column's tags): never covered while another placement fits;
+ * with them (or a `prefer`), beside the button on its inline-start side is tried too. `prefer`
+ * ("above" / "start") is tried first. `rtl`: the inline-start side is the right.
  */
-export function placeInfoTip({ anchor, size, viewport, avoid = [], gap = 6, margin = 8 }: {
-  anchor: Box; size: { width: number; height: number }; viewport: { width: number; height: number }; avoid?: Box[]; gap?: number; margin?: number;
+export function placeInfoTip({ anchor, size, viewport, avoid = [], explains = [], prefer, rtl = false, gap = 6, margin = 8 }: {
+  anchor: Box; size: { width: number; height: number }; viewport: { width: number; height: number }; avoid?: Box[]; explains?: Box[];
+  prefer?: InfoTipPrefer; rtl?: boolean; gap?: number; margin?: number;
 }): InfoTipPlace {
   const width = Math.max(0, Math.min(size.width, viewport.width - 2 * margin));
   const clampLeft = (x: number) => Math.min(Math.max(x, margin), Math.max(margin, viewport.width - width - margin));
@@ -65,16 +71,32 @@ export function placeInfoTip({ anchor, size, viewport, avoid = [], gap = 6, marg
     ...avoid.filter((a) => a.bottom > anchor.bottom).map((a) => ["below", a.bottom] as ["below", number]),
     ...avoid.filter((a) => a.top < anchor.top).map((a) => ["above", a.top] as ["above", number]),
   ];
-  const clear = (left: number, top: number, h: number) => !avoid.some((a) => hits({ left, top, right: left + width, bottom: top + h }, a));
-  const candidates = edges.flatMap(([side, edge]) => lefts.map((left) => {
+  type Cand = { side: InfoTipPlace["side"]; left: number; room: number; top: number; shortTop: number; h: number };
+  let candidates: Cand[] = edges.flatMap(([side, edge]) => lefts.map((left) => {
     const room = side === "below" ? viewport.height - margin - (edge + gap) : edge - gap - margin;
     const h = Math.min(size.height, room);
     return { side, left, room, top: side === "below" ? edge + gap : edge - gap - size.height, shortTop: side === "below" ? edge + gap : edge - gap - h, h };
   }));
-  const whole = candidates.find((c) => c.room >= size.height && c.top >= margin && clear(c.left, c.top, size.height));
-  if (whole) return { side: whole.side, left: whole.left, top: whole.top, width };
-  const short = candidates.find((c) => c.h >= Math.min(size.height, MIN_HEIGHT) && clear(c.left, c.shortTop, c.h));
-  if (short) return { side: short.side, left: short.left, top: short.shortTop, width, maxHeight: short.h };
+  if (explains.length || prefer) {
+    // Beside the button on its inline-start side, from its top (moved up to stay inside the viewport); only where it fits there.
+    const left = rtl ? anchor.right + gap : anchor.left - gap - width;
+    if (left >= margin && left + width <= viewport.width - margin) {
+      const room = viewport.height - 2 * margin;
+      const h = Math.min(size.height, room);
+      const at = (hh: number) => Math.max(margin, Math.min(anchor.top, viewport.height - margin - hh));
+      candidates.push({ side: "start", left, room, top: at(size.height), shortTop: at(h), h });
+    }
+  }
+  // The preferred side first (otherwise in the order above).
+  if (prefer) candidates = [...candidates.filter((c) => c.side === prefer), ...candidates.filter((c) => c.side !== prefer)];
+  const clearOf = (boxes: Box[]) => (left: number, top: number, h: number) => !boxes.some((a) => hits({ left, top, right: left + width, bottom: top + h }, a));
+  // Clear of what it explains as well while a placement allows it; else clear of the row's controls only.
+  for (const clear of explains.length ? [clearOf([...avoid, ...explains]), clearOf(avoid)] : [clearOf(avoid)]) {
+    const whole = candidates.find((c) => c.room >= size.height && c.top >= margin && clear(c.left, c.top, size.height));
+    if (whole) return { side: whole.side, left: whole.left, top: whole.top, width };
+    const short = candidates.find((c) => c.h >= Math.min(size.height, MIN_HEIGHT) && clear(c.left, c.shortTop, c.h));
+    if (short) return { side: short.side, left: short.left, top: short.shortTop, width, maxHeight: short.h };
+  }
   const below = viewport.height - anchor.bottom >= anchor.top;
   const top = below ? anchor.bottom + gap : anchor.top - gap - size.height;
   return { side: below ? "below" : "above", left: lefts[0], top: Math.max(margin, Math.min(top, viewport.height - size.height - margin)), width };
@@ -89,7 +111,13 @@ const boxOf = (r: DOMRect): Box => ({ left: r.left, top: r.top, right: r.right, 
 export function measureInfoTip(wrap: HTMLElement, button: HTMLElement, pop: HTMLElement): InfoTipPlace {
   const scope = wrap.closest("[data-info-scope]");
   const avoid = scope ? [...scope.querySelectorAll<HTMLElement>("[data-info-avoid]")].filter((el) => !el.contains(wrap)).map((el) => boxOf(el.getBoundingClientRect())) : [];
+  // What it explains (`data-info-explains`, a selector): those on screen, not the (i)'s own.
+  const sel = wrap.dataset.infoExplains;
+  const vh = window.innerHeight;
+  const explains = sel ? [...document.querySelectorAll<HTMLElement>(sel)].filter((el) => !el.contains(wrap)).map((el) => boxOf(el.getBoundingClientRect())).filter((b) => b.right > b.left && b.bottom > 0 && b.top < vh) : [];
+  const prefer = wrap.dataset.infoPrefer === "above" || wrap.dataset.infoPrefer === "start" ? wrap.dataset.infoPrefer : undefined;
   return placeInfoTip({
+    explains, prefer, rtl: getComputedStyle(wrap).direction === "rtl",
     // The whole content's height, also while a shortened popover scrolls.
     anchor: boxOf(button.getBoundingClientRect()), size: { width: pop.offsetWidth, height: pop.scrollHeight + pop.offsetHeight - pop.clientHeight },
     viewport: { width: document.documentElement.clientWidth, height: window.innerHeight }, avoid,
@@ -100,8 +128,12 @@ export function measureInfoTip(wrap: HTMLElement, button: HTMLElement, pop: HTML
  * `label`: the row's label (the button reads "About: {label}"). `children`: the moved explanation
  * (short paragraphs; no links needed to read it). `wide`: up to ~360px for longer content.
  * `popoverId`: a fixed id for the popover, for other elements' aria-describedby.
+ * `explains`: a selector for what the (i) explains (a column's tags), never covered while another
+ * placement fits. `prefer`: the placement tried first ("above", or "start": beside it on the inline-start side).
  */
-export function InfoTip({ label, children, wide, popoverId }: { label: string; children: ReactNode; wide?: boolean; popoverId?: string }) {
+export function InfoTip({ label, children, wide, popoverId, explains, prefer }: {
+  label: string; children: ReactNode; wide?: boolean; popoverId?: string; explains?: string; prefer?: InfoTipPrefer;
+}) {
   const auto = useId();
   const id = popoverId ?? `${auto}-info`;
   const [s, setS] = useState<InfoTipState>(INFO_TIP_CLOSED);
@@ -137,7 +169,7 @@ export function InfoTip({ label, children, wide, popoverId }: { label: string; c
 
   return (
     <span
-      ref={wrapRef} className="sas-info" data-info-open={open ? "" : undefined}
+      ref={wrapRef} className="sas-info" data-info-open={open ? "" : undefined} data-info-explains={explains} data-info-prefer={prefer}
       // Hover only for a mouse: a touch shows it with the tap (click), which pins it.
       onPointerEnter={(e) => { if (e.pointerType !== "mouse") return; if (leaveTimer.current) clearTimeout(leaveTimer.current); send("enter"); }}
       onPointerLeave={(e) => { if (e.pointerType !== "mouse") return; leaveTimer.current = setTimeout(() => send("leave"), 120); }}

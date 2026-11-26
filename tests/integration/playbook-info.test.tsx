@@ -167,15 +167,21 @@ describe("Playbook: explanations behind an (i)", () => {
     });
   }
 
-  it("Limits: the one hand-over fact line stays visible; the full always-on list is behind the row's (i)", async () => {
+  it("Limits: the one hand-over fact line stays visible (one line at 1280); the full always-on list is behind the (i) right after it", async () => {
     const html = await part("limits");
     const { popovers, rest } = splitPopovers(html);
     expect(has(rest, t("playbook.handoff_always_line"))).toBe(true);
-    expect(t("playbook.handoff_always_line")).toBe("Also always when the buyer is upset or insists on a person, and in a few other cases.");
+    // Short enough for one line next to the wider label column (363px of ~414px at 1280, with its (i)), still true, and
+    // not the complete list: the (i) that holds the seven cases follows the sentence directly.
+    expect(t("playbook.handoff_always_line")).toBe("Also always when the buyer is upset or insists on a person.");
+    const fact = html.slice(html.indexOf('<span class="sas-small pb-row__fact">'));
+    expect(fact).toMatch(/^<span class="sas-small pb-row__fact"><span data-handoff-always-read="">Also always when the buyer is upset or insists on a person\.<\/span>⁠<span class="sas-info"[^>]*><button type="button" class="sas-info__btn" aria-label="About: Hand over to a person when"/);
     const list = popovers.find((p) => p.includes("data-handoff-always-list"));
     expect(list).toBeDefined();
     expect(list?.match(/<li>/g)?.length).toBe(HANDOFF_ALWAYS.length);
-    expect(html).toContain('aria-label="About: Hand over to a person when"');
+    expect(html.match(/aria-label="About: Hand over to a person when"/g)?.length).toBe(1);
+    // The label itself has no (i) now: it fits the label column on one line.
+    expect(html).toMatch(/<span class="pb-row__label" id="[^"]+">Hand over to a person when<\/span>/);
     // The notice about unanswered questions: one line with its link, and its Dismiss.
     const notice = html.slice(html.indexOf('data-testid="handoff-notice"'));
     expect(notice).toMatch(/<span class="pb-notice__text">Unanswered questions no longer hand off the chat: the agent asks the team\. <a href="[^"]+\/plays\/no_answer" aria-label="See the play [^"]+">See the play<\/a><\/span>/);
@@ -198,6 +204,9 @@ describe("Playbook: explanations behind an (i)", () => {
     expect(block).toContain(">Order form fields</a>");
     expect(block).toContain('data-own-fields="1">1 of your own fields</summary>');
     expect(html).toContain('aria-label="About: Filled in the order form"');
+    // The roles' (i) on the column header opens above it (or beside it), not over the rows' role tags it explains.
+    expect(html).toMatch(/<span class="sas-info" data-info-explains="\[data-role-tag\]" data-info-prefer="above"><button type="button" class="sas-info__btn" aria-label="About: Where the answer is used"/);
+    expect(html).toContain("data-role-tag=");
     // The roles' header (with its (i)) shows on a phone too.
     expect(html).toContain("pb-item-head pb-item-head--info");
     expect(css).toMatch(/\.pb-item-head--info \{ display: grid; \}/);

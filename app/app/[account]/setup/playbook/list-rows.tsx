@@ -352,7 +352,7 @@ function FieldHead({ info }: { info?: ReactNode }) {
       <span className="pb-row__lead" />
       <span className="pb-row__value" aria-hidden="true">{t("playbook.field.label")}</span>
       <span className="pb-row__actions">
-        <span className="pb-item__tag"><span aria-hidden="true">{t("playbook.field.where_used")}</span>{info ? <InfoTip label={t("playbook.field.where_used")} wide>{info}</InfoTip> : null}</span>
+        <span className="pb-item__tag"><span aria-hidden="true">{t("playbook.field.where_used")}</span>{info ? <InfoTip label={t("playbook.field.where_used")} wide prefer="above" explains="[data-role-tag]">{info}</InfoTip> : null}</span>
         <span className="pb-item__icons" />
       </span>
     </div>

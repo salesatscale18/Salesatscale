@@ -90,7 +90,9 @@
 
 /* Read first, one row at a time: label, value, Change. */
 .pb-rows { display: flex; flex-direction: column; }
-.pb-row { display: grid; grid-template-columns: 168px minmax(0, 1fr) auto; gap: 6px 16px; align-items: start; padding: 14px 20px; border-top: 1px solid var(--line); }
+/* The label column fits the longest label on one line: "Discount without approval" + its (i) (198px at 14px),
+   "Hand over to a person when" (187px; its (i) follows the fact line under the value). */
+.pb-row { display: grid; grid-template-columns: 200px minmax(0, 1fr) auto; gap: 6px 16px; align-items: start; padding: 14px 20px; border-top: 1px solid var(--line); }
 .pb-rows > .pb-row:first-child { border-top: 0; }
 .pb-row--wide { grid-template-columns: minmax(0, 1fr) auto; }
 .pb-row--add { display: block; }
@@ -99,9 +101,9 @@
 .pb-row__value { min-width: 0; display: flex; flex-direction: column; gap: 6px; line-height: 22px; overflow-wrap: anywhere; }
 /* The one fact line that stays visible under a value (Limits' hand-over); every other explanation is behind an (i). */
 .pb-row__fact { margin-top: 2px; }
-/* A label with its (i): the (i) right after the label text, never alone on a line. */
-.pb-row__label--info { display: flex; align-items: flex-start; gap: 4px; }
-.pb-row__label--info .sas-info { flex: none; margin: 0; }
+/* A label with its (i): the (i) inline, directly after the label text (not pushed to the column's far edge). */
+.pb-row__label--info { display: block; }
+.pb-row__label--info .sas-info { margin: 0; margin-inline-start: 2px; vertical-align: top; }
 .pb-row__label--info .sas-info__btn { margin-block: -1px; }
 .pb-row__actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; line-height: 22px; flex-wrap: wrap; }
 .pb-row__form { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; min-width: 0; }
@@ -371,4 +373,15 @@
 }
 @media (max-width: 899px) {
   .pb-part-layout[data-with-preview] { grid-template-columns: minmax(0, 1fr); }
+}
+/* Phone: the "Preview" button is a slim bar docked at the bottom edge (full width, above the home indicator), not a
+   floating button over the first field. The part is padded by more than the bar, and focus scrolls clear of it, so the
+   last row and an open row's Save / Cancel are never hidden behind it. */
+@media (max-width: 767px) {
+  .pb-pv__toggle {
+    inset-inline: 0; inset-block-end: 0; width: 100%; height: auto; min-height: 44px; justify-content: center;
+    padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); border-width: 1px 0 0; border-radius: 0; box-shadow: none;
+  }
+  .pb-part-layout[data-with-preview] { padding-block-end: calc(72px + env(safe-area-inset-bottom, 0px)); }
+  html:has(.pb-pv__toggle) { scroll-padding-block-end: calc(72px + env(safe-area-inset-bottom, 0px)); }
 }
