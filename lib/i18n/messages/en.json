@@ -4809,5 +4809,7 @@
   "playbook.offers.read_units": "{pct}% off from {units} units",
   "playbook.offers.off_head": "Off",
   "playbook.play.edit_in_offers": "Edit in Offers",
-  "draft.limit.change_in_offers": "Change in Playbook › Offers"
+  "draft.limit.change_in_offers": "Change in Playbook › Offers",
+  "playbook.offers.locked": "{name} is always on",
+  "playbook.offers.locked_why": "Always on: it stays in the list and can't be switched off."
 }

@@ -424,3 +424,17 @@
   .pb-offers .pb-row--item:not([data-open]) > .pb-row__actions { grid-column: 2; grid-row: 2; justify-content: flex-start; flex-wrap: wrap; padding-inline-start: 34px; }
   .pb-offers .pb-offer--pinned > .pb-row__actions { padding-inline-start: 34px; }
 }
+
+/* An open offer keeps its header (place, icon, name, (i)); its fields open under it, indented to the name. */
+.pb-row__head { min-width: 0; }
+.pb-row--item[data-open][data-keep-read]:has(> .pb-row__lead) > .pb-row__value { grid-column: 2 / -1; grid-row: auto; }
+.pb-offers .pb-row__form--under { padding-inline-start: 76px; }
+/* The always-on offer: a lock in the switch's column, the switch's size. */
+.pb-offer__lock { flex: none; width: 40px; height: 22px; display: inline-grid; place-items: center; color: var(--ink-muted); }
+.pb-offer__lock .sas-ico { width: 16px; height: 16px; }
+@media (max-width: 767px) {
+  /* Phone: no icon, so the fields indent to the name past the place number only; the switch (or the lock)
+     and ⋯ end the line under the name, so they line up from row to row. */
+  .pb-offers .pb-row__form--under { padding-inline-start: 34px; }
+  .pb-offers .pb-row--item:not([data-open]) > .pb-row__actions > .pb-offer__read-nums { flex: 1 1 auto; }
+}
