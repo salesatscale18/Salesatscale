@@ -15,6 +15,7 @@ import { PLAY_KEYS, type Playbook, type PlaybookField, type PlayKey, type VoiceS
 import { DEFAULT_PLAYS, playFacts } from "@/lib/agent/core/plays";
 import { objectionAttemptsOf } from "@/lib/agent/core/objections";
 import { questionBudgetOf } from "@/lib/agent/core/stage";
+import { UNPAID_STEPS, unpaidRemindersOf } from "@/lib/orders/unpaid-reminders";
 import { t, type MessageKey } from "@/lib/i18n";
 import { callLimitShort } from "@/lib/voice/lab";
 import { callVoice, resolveVoiceSettings, voiceCapabilities, voiceModelLabel } from "@/lib/voice/settings";
@@ -392,10 +393,27 @@ function diffObjections(r: Rows, a: Playbook, b: Playbook) {
   }
 }
 
+/**
+ * After the order: "Signed, not paid yet", compared as the reminder runner reads
+ * it (unpaidRemindersOf: missing = the defaults 2 / 5 / 7, all on). So a version
+ * without the setting and one that holds exactly the defaults compare equal
+ * (also drafts where the S1 row save wrote the defaults by mistake).
+ */
+function diffAfter(r: Rows, a: Playbook, b: Playbook) {
+  r.in("close");
+  const ua = unpaidRemindersOf(a);
+  const ub = unpaidRemindersOf(b);
+  const value = (s: { days: number; on: boolean }) => (s.on ? `${s.days} ${L("playbook.unpaid.days_after")}` : L("playbook.unpaid.off"));
+  for (const step of UNPAID_STEPS) {
+    if (ua[step].on === ub[step].on && ua[step].days === ub[step].days) continue;
+    r.text(`${L("playbook.unpaid.title")} · ${L(`playbook.unpaid.${step}`)}`, value(ua[step]), value(ub[step]));
+  }
+}
+
 /** Playbook keys the areas above cover. `agentNameAuto` is derived from the name (made automatically), so not compared. */
 const COVERED = new Set<string>([
   "agentName", "agentNameLocal", "agentNameAuto", "agentGender", "questionBudget", "objectionAttempts", "goal", "tone", "outcomes", "fields",
-  "objections", "maxDiscountBp", "offerMeetingWhen", "handOffWhen", "callRole", "neverDo", "exceptions", "opener", "plays",
+  "objections", "maxDiscountBp", "offerMeetingWhen", "handOffWhen", "callRole", "neverDo", "exceptions", "opener", "plays", "unpaidReminders",
 ]);
 
 /** Anything else a playbook holds (a part added later): compared as its stored value. */
@@ -446,6 +464,7 @@ export function diffVersions(a: VersionContent, b: VersionContent, opts: DiffOpt
   diffOpening(r, a.playbook, b.playbook);
   diffObjections(r, a.playbook, b.playbook);
   diffClose(r, a.playbook, b.playbook);
+  diffAfter(r, a.playbook, b.playbook);
   diffOther(r, a.playbook, b.playbook);
   if (opts.platformDetails) {
     r.in("model");

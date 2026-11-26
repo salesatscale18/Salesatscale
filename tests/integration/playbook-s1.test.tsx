@@ -2,8 +2,9 @@
  * Playbook rethink, slice S1 (Foundation), against the database. Scripted
  * only: no model is called.
  *
- * - Per-row save (savePlaybookChange): every change type stores exactly what
- *   the one-page editor's whole-form save stored for the same values. The
+ * - Per-row save (savePlaybookChange): every change type stores what the
+ *   one-page editor's whole-form save stored for the same values in the keys
+ *   the row changes, and leaves every other key as it was. The
  *   old form is rebuilt here from its markup rules (oldForm / entriesOf), not
  *   from the new code, so the comparison is independent.
  * - A refusal anywhere in the playbook (also another part) saves nothing and
@@ -21,6 +22,7 @@ import type { ReactElement } from "react";
 import { and, eq } from "drizzle-orm";
 import { agentVersions, auditLog, users, type Playbook, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { changedKeys } from "../helpers/playbook-change-keys";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
 vi.mock("@/lib/auth/account", () => ({
@@ -224,7 +226,7 @@ describe("Playbook S1 against the database", () => {
   }, 120_000);
   afterAll(async () => t.close());
 
-  describe("per-row save stores exactly what the whole-form save stored", () => {
+  describe("per-row save stores what the whole-form save stored, in the changed keys only", () => {
     for (const variant of ["rich", "sparse"] as const) {
       for (const c of CASES) {
         it(`${variant}: ${c.name}`, async () => {
@@ -244,11 +246,19 @@ describe("Playbook S1 against the database", () => {
           if (change.kind === "part" && change.part === "asks") {
             change = { ...change, entries: entriesOf(f).filter(([k]) => k === "questionBudget" || k.startsWith("field.")) };
           }
+          const before = (await draftOf(accNew.id)) as unknown as Record<string, unknown>;
           const oldR = await savePlaybookForm(db, accOld.id, entriesOf(f));
           const newR = await savePlaybookChange(db, accNew.id, change);
           expect(newR).toEqual(oldR);
           expect(oldR).toEqual({ ok: true });
-          expect(await draftOf(accNew.id)).toEqual(await draftOf(accOld.id));
+          // The keys the row changes hold what the whole-form save stored; every other key stays as it was
+          // (the whole form also wrote the shown defaults: budget, attempts, gender, reminders).
+          const owned = new Set(changedKeys(c.change));
+          const n = (await draftOf(accNew.id)) as unknown as Record<string, unknown>;
+          const o = (await draftOf(accOld.id)) as unknown as Record<string, unknown>;
+          for (const k of new Set([...Object.keys(before), ...Object.keys(n), ...Object.keys(o)])) {
+            expect([k, n[k]]).toEqual([k, owned.has(k) ? o[k] : before[k]]);
+          }
         });
       }
     }
