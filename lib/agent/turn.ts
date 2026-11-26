@@ -4,7 +4,7 @@
  * code before the model sees anything.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, exists } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
@@ -15,6 +15,7 @@ import { isRetryableModelError, withHistoryCacheBreakpoint, type Block, type Llm
 import { stableSystemPrompt, turnContext } from "./prompt";
 import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } from "./safety";
 import { readDealState } from "./service";
+import { buildHistory, type StoredCall } from "./history";
 import { resultForModel, runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } from "./tools";
 import { allowedFigures, figureNote, unverifiedFigures, withoutSentences } from "./figure-check";
 import { playFacts } from "./core/plays";
@@ -138,7 +139,8 @@ export async function runBuyerTurn(
     return { status: "replied", messageId: m.id, text: m.body, calls: 0 };
   }
 
-  // History: text only. Deal state in the system prompt carries what was learned.
+  // History: the messages, and on a chat turn every earlier tool call with its result (lib/agent/history.ts).
+  // Deal state in the system prompt carries what was learned.
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
@@ -170,14 +172,17 @@ export async function runBuyerTurn(
   // The model's history must start with the buyer, so a fixed opener (the conversation's first
   // message, sent as the agent) is dropped below: the per-turn context tells the agent what it said.
   const opener = recent.length < HISTORY && recent[0]?.m.actor === "agent" ? recent[0].m.body : null;
-  const history: Anthropic.Beta.BetaMessageParam[] = [];
-  for (const { m, u } of recent) {
-    // A line from a voice call (live voice) says so: the buyer said (or typed) it on the call, which may have ended since.
-    if (m.actor === "buyer") history.push({ role: "user", content: m.voiceSessionId ? `(On the voice call${m.typedInCall ? ", typed" : ""}) ${m.body}` : m.body });
-    else if (m.actor === "agent") history.push({ role: "assistant", content: m.body });
-    else if (m.actor === "human") history.push({ role: "assistant", content: `[${u?.firstName ?? "A person"} from the team]: ${m.body}` });
-  }
-  while (history.length && history[0].role !== "user") history.shift();
+  // The tool list, the same for every round of the turn: TOOL_DEFS, or on a call turn whose caller describes it,
+  // TOOL_DEFS with update_deal_state's spoken_reply argument (lib/agent/call-reply.ts).
+  const tools = spokenArgDescription ? toolDefsWithSpokenReply(TOOL_DEFS, spokenArgDescription) : TOOL_DEFS;
+  // Chat turns replay the earlier tool calls (chat and call turns alike); a call turn's history stays text only.
+  const recentIds = recent.map(({ m }) => m.id);
+  const storedCalls: StoredCall[] = callTurn || !recentIds.length ? [] : await db.select({
+    id: toolCalls.id, messageId: toolCalls.messageId, sequence: toolCalls.sequence, name: toolCalls.name,
+    input: toolCalls.input, result: toolCalls.result, outcome: toolCalls.outcome,
+  }).from(toolCalls).where(and(eq(toolCalls.accountId, args.accountId), eq(toolCalls.conversationId, conv.id), inArray(toolCalls.messageId, recentIds)))
+    .orderBy(asc(toolCalls.sequence), asc(toolCalls.createdAt));
+  const { history, replayed } = buildHistory(recent, storedCalls, new Set(tools.map((t) => t.name)));
 
   // Both system blocks are fixed for the whole turn, so the prompt prefix stays
   // byte-stable across tool rounds. Deal-state changes made during the turn reach
@@ -226,12 +231,12 @@ export async function runBuyerTurn(
     ...recent.filter(({ m }) => m.actor === "buyer" || (m.actor === "agent" && m.agentVersionId === null)).map(({ m }) => m.body),
     ...PLAY_KEYS.flatMap((k) => playFacts(version.playbook.plays?.[k]).map((f) => f.text)),
   ];
+  // Owner, 26 Nov: the results of earlier tool calls in this conversation are in the history, so the agent knows
+  // their figures (as the model read them). A held quote's pricing stays withheld (below).
+  const earlierOk = replayed.filter((c) => c.outcome === "ok").map((c) => ({ name: c.name, result: resultForModel(c.result) }));
   // The tools' strict mode of this turn's first call, sent again on every later round: the
   // model's thinking blocks are bound to the exact tool list they were made with.
   let strictTools: boolean | undefined;
-  // The tool list, the same for every round of the turn: TOOL_DEFS, or on a call turn whose caller describes it,
-  // TOOL_DEFS with update_deal_state's spoken_reply argument (lib/agent/call-reply.ts).
-  const tools = spokenArgDescription ? toolDefsWithSpokenReply(TOOL_DEFS, spokenArgDescription) : TOOL_DEFS;
   // Call turns: the stage block the model last read (the per-turn context's, then each update_deal_state result's),
   // for the "reply with bookkeeping" check (lib/agent/call-reply.ts). Same inputs as turnContext's stage.
   let seenStage = callTurn
@@ -277,15 +282,20 @@ export async function runBuyerTurn(
         // Call turns (a voice call's own session) are not checked: voice has no figure check in v1 (offers plan §4),
         // and a regeneration or a hand-off would hold up or end the spoken answer on a live call.
         if (optedOut || callTurn || round === MAX_TOOL_ROUNDS || !draft) break;
-        const allowed = allowedFigures([...chatFigures, masked.text, ...pending.filter((p) => p.r.outcome === "ok").map((p) => p.r.result)]);
+        const allowed = allowedFigures([...chatFigures, masked.text, ...earlierOk.map((c) => c.result), ...pending.filter((p) => p.r.outcome === "ok").map((p) => p.r.result)]);
         // A quote waiting for the seller's approval (made this turn, or the lead's latest when no quote was made this turn):
         // the totals of this turn's pricing (check_fit, check_offer, create_quote) may not be stated.
         const quotesNow = pending.filter((p) => p.name === "create_quote" && p.r.outcome === "ok");
         const held = quotesNow.length ? quotesNow.at(-1)!.r.result.status === "awaiting_seller_approval" : stageFacts.quote === "awaiting_approval";
+        // Earlier turns' pricing is withheld too: their check_fit and check_offer results, and their held quotes (a quote
+        // that was ready is in the chat already).
+        const pricing = [
+          ...earlierOk.filter((c) => c.name === "check_fit" || c.name === "check_offer" || (c.name === "create_quote" && c.result.status === "awaiting_seller_approval")),
+          ...pending.filter((p) => p.r.outcome === "ok" && (p.name === "check_fit" || p.name === "check_offer" || p.name === "create_quote")).map((p) => ({ name: p.name, result: p.r.result })),
+        ];
         const withheld = held
-          ? allowedFigures(pending.filter((p) => p.r.outcome === "ok" && (p.name === "check_fit" || p.name === "check_offer" || p.name === "create_quote"))
-            // A held create_quote's lines carry line prices (data for the agent), withheld like its totals.
-            .map((p) => [p.r.result.totals, (p.r.result.offer as { totals?: unknown } | null | undefined)?.totals, p.r.result.now, p.name === "create_quote" && p.r.result.status === "awaiting_seller_approval" ? p.r.result.lines : null]))
+          // A held create_quote's lines carry line prices (data for the agent), withheld like its totals.
+          ? allowedFigures(pricing.map((p) => [p.result.totals, (p.result.offer as { totals?: unknown } | null | undefined)?.totals, p.result.now, p.name === "create_quote" && p.result.status === "awaiting_seller_approval" ? p.result.lines : null]))
           : [];
         const bad = unverifiedFigures(draft, allowed, withheld);
         if (!bad.length) break;
