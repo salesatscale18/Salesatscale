@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Icon, type IconName } from "@/components/sas/icon";
+import { InfoTip } from "@/components/sas/info-tip";
 import { t, type MessageKey } from "@/lib/i18n";
 import { parseUnpaidRows, sameUnpaidSettings, UNPAID_STEPS, type UnpaidReminderSettings, type UnpaidRowsInput, type UnpaidStep } from "@/lib/orders/unpaid-reminders";
 import "./playbook.css";
@@ -63,7 +64,10 @@ export function SignedNotPaidCard({ initial, errors, draft, live, onBlocked }: {
     <div className="pb-unpaid" data-testid="unpaid-card">
       <input type="hidden" name="unpaid.shown" value="1" />
       <div className="pb-unpaid__head">
-        <h3 className="sas-heading" id="pb-unpaid-h" style={{ fontSize: 15, lineHeight: "22px", margin: 0 }}>{t("playbook.unpaid.title")}</h3>
+        <span className="pb-unpaid__title">
+          <h3 className="sas-heading" id="pb-unpaid-h" style={{ fontSize: 15, lineHeight: "22px", margin: 0 }}>{t("playbook.unpaid.title")}</h3>
+          <InfoTip label={t("playbook.unpaid.title")}><span data-unpaid-hint="">{t("playbook.unpaid.hint")}</span></InfoTip>
+        </span>
         <span className="sas-small">{t("playbook.unpaid.sub")}</span>
       </div>
       {UNPAID_STEPS.map((step) => {
@@ -106,12 +110,11 @@ export function SignedNotPaidCard({ initial, errors, draft, live, onBlocked }: {
           </div>
         );
       })}
-      <div className="pb-unpaid__foot">
-        <span className="pb-unpaid__hint"><Icon name="info" />{t("playbook.unpaid.hint")}</span>
-        {sameUnpaidSettings(draft, live) ? null : (
+      {sameUnpaidSettings(draft, live) ? null : (
+        <div className="pb-unpaid__foot">
           <span className="pb-unpaid__pending" data-testid="unpaid-not-live" role="status"><Icon name="clock" />{t("playbook.unpaid.applies_after_publish")}</span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -9,7 +9,8 @@
  *   expensive was Ready with a 5% discount limit.
  * - Each preview renders the real template output for the draft (en and he).
  * - Objections: the add row can open prefilled (`?words=`).
- * - Limits shows the always-on hand-over line in the read state; Sales plays
+ * - Limits shows the always-on hand-over line in the read state (the full list
+ *   behind its (i): playbook-info.test.tsx); Sales plays
  *   rows are name + summary + state; one-line part descriptions.
  *
  * With PBS3_RENDER_DIR set, the rendered pages are written there as HTML (visual check).
@@ -201,7 +202,7 @@ describe("Playbook S3: previews; no objections gap", () => {
     it("Limits: the always-on hand-over line in the read state", async () => {
       const html = await part("limits");
       save("limits", html);
-      expect(text(html)).toContain("Also always when the buyer is upset, complains or insists on a person, raises a legal or existing-customer issue, or the agent can't reply.");
+      expect(text(html)).toContain("Also always when the buyer is upset or insists on a person, and in a few other cases.");
       expect(html).toContain('data-handoff-always-read=""');
     });
     it("one-line part descriptions; short stepper hints; the rest behind the disclosures", async () => {

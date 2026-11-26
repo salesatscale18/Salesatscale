@@ -13,7 +13,8 @@ import { AddRow, EditRow, OtherErrors, PartRows, useRowSave, useRows, type Error
 import { SortHelp, moved, useSortable } from "./sortable";
 import { usePreview } from "./preview";
 import { focusAfterDelete } from "./focus";
-import { PlatformFixed, enterSaves, growProps } from "./parts";
+import { InfoTip } from "@/components/sas/info-tip";
+import { enterSaves, growProps } from "./parts";
 import "./playbook.css";
 
 /** `edit`: the row opened first (from `?edit=`). */
@@ -129,8 +130,10 @@ function ListItem({ id, what, read, editor, toChange, own, remove, lead, aside, 
  * A − n + stepper that saves on each change like a row (one `set` change),
  * with its pending state and the refusal at the stepper.
  */
-function SavedStepper({ id, field, label, hint, value, min, max, fewer, more, testId }: {
-  id: string; field: "questionBudget" | "objectionAttempts"; label: MessageKey; hint: MessageKey; value: number; min: number; max: number;
+function SavedStepper({ id, field, label, info, infoWide, value, min, max, fewer, more, testId }: {
+  id: string; field: "questionBudget" | "objectionAttempts"; label: MessageKey;
+  /** The stepper's explanation, behind the (i) after its label (also its group's description). */
+  info: ReactNode; infoWide?: boolean; value: number; min: number; max: number;
   fewer: MessageKey; more: MessageKey; testId: string;
 }) {
   const [shown, setShown] = useState<{ saved: number; n: number } | null>(null);
@@ -143,14 +146,13 @@ function SavedStepper({ id, field, label, hint, value, min, max, fewer, more, te
   };
   const own = save.errors?.[field];
   return (
-    <div className="pb-row pb-row--stepper" data-testid={testId} data-row={field} aria-busy={save.pending || undefined}>
+    <div className="pb-row pb-row--stepper" data-testid={testId} data-row={field} aria-busy={save.pending || undefined} data-info-scope="">
       <div className="sas-stack-2" style={{ flex: "1 1 260px", gap: 2, minWidth: 0 }}>
-        <span className="pb-stepper__label" id={`${id}-label`}>{t(label)}</span>
-        <span className="sas-small" id={`${id}-hint`}>{t(hint)}</span>
+        <span className="pb-stepper__label"><span id={`${id}-label`}>{t(label)}</span><InfoTip label={t(label)} wide={infoWide} popoverId={`${id}-hint`}>{info}</InfoTip></span>
         {own ? <span className="sas-error" id={`${id}-error`} role="alert">{own}</span> : null}
         {save.errors ? <OtherErrors errors={save.errors} own={[field]} /> : null}
       </div>
-      <span role="group" aria-labelledby={`${id}-label`} aria-describedby={`${id}-hint`} className="pb-stepper" data-testid={testId === "question-budget" ? "budget-stepper" : "attempts-stepper"}>
+      <span role="group" aria-labelledby={`${id}-label`} aria-describedby={`${id}-hint`} className="pb-stepper" data-info-avoid="" data-testid={testId === "question-budget" ? "budget-stepper" : "attempts-stepper"}>
         <button type="button" onClick={() => go(n - 1)} disabled={n <= min || save.pending} aria-label={t(fewer)}><Icon name="minus" /></button>
         <output id={id} aria-live="polite" aria-labelledby={`${id}-label`} data-value={n}>{n}</output>
         <button type="button" onClick={() => go(n + 1)} disabled={n >= max || save.pending} aria-label={t(more)}><Icon name="plus" /></button>
@@ -226,9 +228,6 @@ export function OpeningRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbook,
         )}
         toChange={(form) => ({ kind: "set", values: {}, openerQuestion: { en: val(form, "en"), he: val(form, "he") } })}
       />
-      <div className="pb-rows__note sas-stack-4">
-        <span className="pb-hint-line" data-topic-hint=""><Icon name="info" />{t("playbook.opening.lead_page_hint")}</span>
-      </div>
     </PartRows>
   );
 }
@@ -241,7 +240,10 @@ function TopicList({ topics, defaultTopic }: { topics: { en: string; he: string 
   const shownTopic = pv.topic !== null && pv.topic < topics.length ? pv.topic : defaultTopic;
   return (
     <>
-      <div className="pb-list-head" id="pb-topics-h">{t("playbook.opening.topics_head", { n: topics.length, max: MAX_OPENER_TOPICS })}</div>
+      <div className="pb-list-head">
+        <span id="pb-topics-h">{t("playbook.opening.topics_head", { n: topics.length, max: MAX_OPENER_TOPICS })}</span>
+        <span data-topic-hint=""><InfoTip label={t("playbook.opener.leads_ask")}>{t("playbook.opening.lead_page_hint")}</InfoTip></span>
+      </div>
       {topics.length === 0 ? <div className="pb-row pb-row--wide"><span className="pb-muted">{t("playbook.opening.no_topics")}</span></div> : null}
       <SortHelp id="pb-sort-help-topics" announce={m.sort.announce} />
       <div className="pb-sortable" ref={m.sort.listRef} role="list" aria-labelledby="pb-topics-h" data-dragging={m.sort.dragging !== null ? "" : undefined}>
@@ -343,16 +345,26 @@ const addField = (f: FormData, n: number): PlaybookChange | RowRefusal => (val(f
   : { refuse: { [`field.${n}.label`]: t("playbook.field.name_required") } });
 
 /** One group of questions (asked in chat, or filled in the order form) as sortable rows with a column header. */
-function FieldList({ rows, stages, helpId, headId, addId }: { rows: FieldAt[]; stages: PlaybookField["stage"][]; helpId: string; headId: string; addId: string }) {
+/** The column header of the questions; `info`: what each role means, behind an (i) on "Where the answer is used" (then also shown on a phone). */
+function FieldHead({ info }: { info?: ReactNode }) {
+  return (
+    <div className={`pb-row pb-row--item pb-item-head${info ? " pb-item-head--info" : ""}`}>
+      <span className="pb-row__lead" />
+      <span className="pb-row__value" aria-hidden="true">{t("playbook.field.label")}</span>
+      <span className="pb-row__actions">
+        <span className="pb-item__tag"><span aria-hidden="true">{t("playbook.field.where_used")}</span>{info ? <InfoTip label={t("playbook.field.where_used")} wide>{info}</InfoTip> : null}</span>
+        <span className="pb-item__icons" />
+      </span>
+    </div>
+  );
+}
+
+function FieldList({ rows, stages, helpId, headId, addId, head = true }: { rows: FieldAt[]; stages: PlaybookField["stage"][]; helpId: string; headId: string; addId: string; head?: boolean }) {
   const keys = rowKeys(rows.map((r) => r.f.key || r.f.label));
   const m = useMoves({ rows, keys, list: "fields", serverIndex: (pos) => rows[pos].i, what: (r) => r.f.label, helpId });
   return (
     <>
-      <div className="pb-row pb-row--item pb-item-head" aria-hidden="true">
-        <span className="pb-row__lead" />
-        <span className="pb-row__value">{t("playbook.field.label")}</span>
-        <span className="pb-row__actions"><span className="pb-item__tag">{t("playbook.field.where_used")}</span><span className="pb-item__icons" /></span>
-      </div>
+      {head ? <FieldHead /> : null}
       <SortHelp id={helpId} announce={m.sort.announce} />
       <div className="pb-sortable" ref={m.sort.listRef} role="list" aria-labelledby={headId} data-dragging={m.sort.dragging !== null ? "" : undefined}>
         {m.shown.map((r, pos) => {
@@ -392,42 +404,41 @@ function FieldList({ rows, stages, helpId, headId, addId }: { rows: FieldAt[]; s
  * example chat: only the questions the agent starts count.
  */
 function QuestionCounting({ max }: { max: number }) {
+  // Inside the stepper's (i) popover: no box of its own.
   const bubble = (who: "agent" | "buyer", text: string) => (
-    <span style={{ flex: "1 1 auto", minWidth: 0, padding: "6px 10px", borderRadius: 10, fontSize: 13, lineHeight: "18px", background: who === "agent" ? "var(--agent-soft)" : "var(--surface-raised)", border: who === "buyer" ? "1px solid var(--line)" : 0 }}>{text}</span>
+    <span style={{ flex: "1 1 auto", minWidth: 0, padding: "2px 8px", borderRadius: 8, fontSize: 12, lineHeight: "17px", background: who === "agent" ? "var(--agent-soft)" : "var(--surface-raised)", border: who === "buyer" ? "1px solid var(--line)" : 0 }}>{text}</span>
   );
   const mark = (n: number | null, arrow = false) => (
-    <span aria-label={n ? t("playbook.count.counted", { n }) : t("playbook.count.not_counted")} style={{ flex: "0 0 20px", height: 20, borderRadius: 10, display: "inline-grid", placeItems: "center", fontSize: 11, fontWeight: 700, background: n ? "var(--primary)" : "transparent", color: n ? "var(--on-primary)" : "var(--ink-muted)" }}>{n ?? (arrow ? "→" : "–")}</span>
+    <span aria-label={n ? t("playbook.count.counted", { n }) : t("playbook.count.not_counted")} style={{ flex: "0 0 18px", height: 18, marginTop: 1, borderRadius: 9, display: "inline-grid", placeItems: "center", fontSize: 11, fontWeight: 700, background: n ? "var(--primary)" : "transparent", color: n ? "var(--on-primary)" : "var(--ink-muted)" }}>{n ?? (arrow ? "→" : "–")}</span>
   );
   const row = (n: number | null, who: "agent" | "buyer", text: string, arrow = false) => (
-    <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>{mark(n, arrow)}{bubble(who, text)}</div>
+    <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>{mark(n, arrow)}{bubble(who, text)}</div>
   );
   return (
-    <aside className="sas-stack-2" data-testid="question-counting" aria-labelledby="pb-count-h" style={{ gap: 10, padding: 14, borderRadius: 10, border: "1px solid var(--line)" }}>
-      <div className="sas-stack-2" style={{ gap: 2 }}>
-        <strong id="pb-count-h">{t("playbook.count.title", { max })}</strong>
-        <span className="sas-small">{t("playbook.count.sub")}</span>
-      </div>
+    <span data-testid="question-counting" style={{ display: "flex", flexDirection: "column", gap: 5, paddingTop: 8, borderTop: "1px solid var(--line)" }}>
+      <span><strong>{t("playbook.count.title", { max })}</strong> <span className="pb-muted">{t("playbook.count.sub")}</span></span>
       {row(1, "agent", t("playbook.count.ex_agent_1"))}
       {row(null, "buyer", t("playbook.count.ex_buyer_1"))}
       {row(2, "agent", t("playbook.count.ex_agent_2"))}
-      <span className="sas-small" style={{ paddingInlineStart: 28, marginTop: -4 }}>{t("playbook.count.ex_note")}</span>
+      <span className="pb-muted" style={{ paddingInlineStart: 24, fontSize: 12, lineHeight: "16px" }}>{t("playbook.count.ex_note")}</span>
       {row(null, "buyer", t("playbook.count.ex_buyer_2"))}
       {row(null, "agent", t("playbook.count.ex_agent_3"), true)}
-      <div className="sas-stack-2" style={{ gap: 6, paddingTop: 10, borderTop: "1px solid var(--line)", fontSize: 13, lineHeight: "18px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 8, marginTop: 3, borderTop: "1px solid var(--line)" }}>
         <span><b>{t("playbook.count.asap_b")}</b> {t("playbook.count.asap")}</span>
         <span><b>{t("playbook.count.signal_b")}</b> {t("playbook.count.signal")}</span>
         <span><b>{t("playbook.count.pace_b")}</b> {t("playbook.count.pace")}</span>
-        <span className="sas-small">{t("playbook.count.ceiling", { ceiling: QUESTION_CEILING })}</span>
+        <span className="pb-muted">{t("playbook.count.ceiling", { ceiling: QUESTION_CEILING })}</span>
       </div>
-    </aside>
+    </span>
   );
 }
 
 /**
  * What it asks (board PlaybookAsks): "Questions before it recommends" on top
  * (saves on change), one row per question (question, example, role tag; drag
- * or ↑ / ↓; change, delete), Add question, the order-form fields, what each
- * role means behind one link and how the count works.
+ * or ↑ / ↓; change, delete), Add question, the order-form fields. How the
+ * count works is behind the stepper's (i), what each role means behind the (i)
+ * on "Where the answer is used".
  */
 export function AsksRows({ slug, hrefs, edit, p, orderFormHref }: Base & { p: Pick<Playbook, "fields" | "questionBudget">; orderFormHref: string }) {
   const budget = questionBudgetOf(p);
@@ -441,44 +452,37 @@ export function AsksRows({ slug, hrefs, edit, p, orderFormHref }: Base & { p: Pi
   return (
     <PartRows slug={slug} part="asks" hrefs={hrefs} edit={edit}>
       <SavedStepper
-        id="pb-questionBudget" field="questionBudget" label="playbook.questions.budget_short" hint="playbook.questions.budget_hint_short" value={budget}
+        id="pb-questionBudget" field="questionBudget" label="playbook.questions.budget_short" value={budget} infoWide
+        info={<><span>{t("playbook.questions.budget_hint_short")}</span><QuestionCounting max={budget} /></>}
         min={QUESTION_BUDGET.min} max={QUESTION_BUDGET.max} fewer="playbook.questions.fewer" more="playbook.questions.more" testId="question-budget"
       />
       {before > budget ? (
         <div className="pb-rows__note"><div className="sas-alert sas-alert--warning" role="status" data-testid="budget-warning"><Icon name="alert-triangle" /><span>{t(before - budget === 1 ? "playbook.fields.too_many" : "playbook.fields.too_many_other", { n: before, max: budget, extra: before - budget })}</span></div></div>
       ) : null}
       <span className="sas-sr" id="pb-asks-h">{t("playbook.fields")}</span>
-      {main.length === 0 ? <div className="pb-row pb-row--wide"><span className="pb-muted">{t("playbook.fields_empty")}</span></div> : <FieldList rows={main} stages={MAIN_STAGES} helpId="pb-sort-help-asks" headId="pb-asks-h" addId="field.add" />}
+      <FieldHead info={(
+        <span className="sas-stack-2" data-testid="field-roles-info" style={{ display: "flex", gap: 8 }}>
+          <span data-roles-intro="">{t("playbook.field.roles_intro")}</span>
+          <ul data-testid="field-roles" style={{ listStyle: "none", padding: 0 }}>
+            {(["before_quote", "optional", "before_order_form"] as const).map((s) => (
+              <li key={s} data-role={s}><strong>{t(STAGE_LABEL[s])}</strong>: {t(STAGE_HELP[s])}</li>
+            ))}
+          </ul>
+        </span>
+      )} />
+      {main.length === 0 ? <div className="pb-row pb-row--wide"><span className="pb-muted">{t("playbook.fields_empty")}</span></div> : <FieldList rows={main} stages={MAIN_STAGES} helpId="pb-sort-help-asks" headId="pb-asks-h" addId="field.add" head={false} />}
       <AddRow
         id="field.add" label={t("playbook.field.add")} own={[`field.${n}`, "fields"]}
         editor={(e) => <FieldEditor at="field.new" label="" example="" stage="before_quote" stages={MAIN_STAGES} e={e} errAt={`field.${n}`} />}
         newId={`field.${n}`} toChange={(f) => addField(f, n)}
       />
-      <div className="pb-rows__note sas-stack-2" data-testid="roles-disclosure-row">
-        <details className="pb-disclosure" data-testid="roles-disclosure">
-          <summary>{t("playbook.field.roles_link")}</summary>
-          <p className="sas-small" style={{ margin: 0, paddingBlockStart: 10 }} data-roles-intro="">{t("playbook.field.roles_intro")}</p>
-          <ul className="sas-stack-2" data-testid="field-roles" style={{ listStyle: "none", margin: 0, padding: "10px 0 0", gap: 4 }}>
-            {(["before_quote", "optional", "before_order_form"] as const).map((s) => (
-              <li key={s} className="sas-small" data-role={s}><strong style={{ color: "var(--ink)" }}>{t(STAGE_LABEL[s])}</strong>: {t(STAGE_HELP[s])}</li>
-            ))}
-          </ul>
-        </details>
-        <details className="pb-disclosure" data-testid="count-disclosure">
-          <summary>{t("playbook.count.how")}</summary>
-          <div style={{ paddingBlockStart: 10 }}><QuestionCounting max={budget} /></div>
-        </details>
-      </div>
       <div className="pb-rows__note sas-stack-2" data-testid="order-form-fields">
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", alignItems: "flex-start" }}>
-          <span className="sas-stack-2" style={{ flex: "1 1 260px", gap: 2, minWidth: 0 }}>
-            <strong>{t("playbook.stage.before_order_form")}</strong>
-            <span className="sas-small">{t("playbook.fields.order_form_body")}</span>
-          </span>
+        <div className="pb-form-head">
+          <span><strong>{t("playbook.stage.before_order_form")}</strong><InfoTip label={t("playbook.stage.before_order_form")} wide>{t("playbook.fields.order_form_body")}</InfoTip></span>
           <a className="sas-small" href={orderFormHref} style={{ whiteSpace: "nowrap" }}>{t("playbook.fields.order_form_link")}</a>
         </div>
         <details className="pb-order-fields" open={formOpen || undefined}>
-          <summary className="sas-small" style={{ cursor: "pointer" }} id="pb-form-fields-h">{t("playbook.fields.order_form_own", { n: form.length })}</summary>
+          <summary className="sas-small" style={{ cursor: "pointer" }} id="pb-form-fields-h" data-own-fields={form.length}>{t("playbook.fields.order_form_count", { n: form.length })}</summary>
           <span className="sas-hint" style={{ display: "block", paddingBlock: 8 }}>{t("playbook.fields.order_form_own_hint")}</span>
           <div className="pb-rows pb-rows--inset">
             {form.length ? <FieldList rows={form} stages={FORM_STAGES} helpId="pb-sort-help-form" headId="pb-form-fields-h" addId="field.add_form" /> : null}
@@ -531,7 +535,7 @@ export function ObjectionsRows({ slug, hrefs, edit, p, prefill }: Base & {
   return (
     <PartRows slug={slug} part="objections" hrefs={hrefs} edit={edit}>
       <SavedStepper
-        id="pb-objectionAttempts" field="objectionAttempts" label="playbook.objections.tries" hint="playbook.objections.attempts_hint_short" value={objectionAttemptsOf(p)}
+        id="pb-objectionAttempts" field="objectionAttempts" label="playbook.objections.tries" info={t("playbook.objections.attempts_hint_short")} value={objectionAttemptsOf(p)}
         min={MIN_OBJECTION_ATTEMPTS} max={MAX_OBJECTION_ATTEMPTS} fewer="playbook.objections.attempts_fewer" more="playbook.objections.attempts_more" testId="objection-attempts"
       />
       {n === 0 ? <div className="pb-row pb-row--wide"><span className="pb-muted">{t("playbook.objections_empty")}</span></div> : (

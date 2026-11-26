@@ -7,7 +7,8 @@ import { moveOffer, switchOffer, type OfferChange, type OfferType, type StoredOf
 import type { PlaybookPart } from "@/lib/agent/playbook-parts";
 import { EditRow, OtherErrors, PartRows, useFocusTarget, useRowSave, useRows, type ErrorOf } from "./row";
 import { SortHelp, useSortable } from "./sortable";
-import { PlatformFixed } from "./parts";
+import { InfoTip } from "@/components/sas/info-tip";
+import { LockTag } from "./parts";
 import "./playbook.css";
 
 /** `edit`: the row opened first (from `?edit=offer.<type>`). */
@@ -68,8 +69,9 @@ export function OffersRows({ slug, hrefs, edit, offers, quoteValidDays }: Base &
   return (
     <PartRows slug={slug} part="offers" hrefs={hrefs} edit={edit}>
       <OfferList offers={offers} quoteValidDays={quoteValidDays} />
-      <div className="pb-rows__note">
-        <PlatformFixed><span data-offers-rules="">{t("playbook.offers.rules")}</span></PlatformFixed>
+      {/* The platform's own rules: the tag and an (i), as in Never do. */}
+      <div className="pb-rows__note pb-fixed-line" data-platform-fixed="">
+        <LockTag /><InfoTip label={t("playbook.fixed.tag")} wide><span data-offers-rules="">{t("playbook.offers.rules")}</span></InfoTip>
       </div>
     </PartRows>
   );
@@ -156,12 +158,12 @@ function OfferList({ offers, quoteValidDays }: { offers: StoredOffer[]; quoteVal
               {place !== null ? place : <><span aria-hidden="true">–</span><span className="sas-sr">{t("playbook.offers.off")}</span></>}
             </span>
             <span className="pb-offer__icon" aria-hidden="true"><Icon name={ICON[o.type]} /></span>
-            <span className="sas-stack-2" style={{ gap: 2, minWidth: 0 }}>
+            <span className="pb-offer__title">
               <strong className="pb-offer__name">{label}</strong>
-              <span className="sas-small">
-                {t(`playbook.offers.about.${o.type}` as MessageKey, { days: quoteValidDays })}
-                {o.type === "pay_yearly" ? <> {t("playbook.offers.yearly_note")}</> : null}
-              </span>
+              <InfoTip label={label}>
+                <span data-offer-about={o.type}>{t(`playbook.offers.about.${o.type}` as MessageKey, { days: quoteValidDays })}</span>
+                {o.type === "pay_yearly" ? <span data-offer-yearly-note="">{t("playbook.offers.yearly_note")}</span> : null}
+              </InfoTip>
             </span>
           </span>
         )}
@@ -212,7 +214,10 @@ function OfferList({ offers, quoteValidDays }: { offers: StoredOffer[]; quoteVal
 
   return (
     <div data-testid="offers-panel" className="pb-offers">
-      <div className="pb-offers__hint sas-small" id="pb-offers-h">{t("playbook.offers.hint")}</div>
+      <div className="pb-list-head" data-offers-head="">
+        <span id="pb-offers-h">{t("playbook.offers.title")}</span>
+        <InfoTip label={t("playbook.offers.title")} wide><span data-offers-hint="">{t("playbook.offers.hint")}</span></InfoTip>
+      </div>
       <SortHelp id="pb-sort-help-offers" announce={sort.announce} />
       <div className="pb-sortable" ref={sort.listRef} role="list" aria-labelledby="pb-offers-h" data-dragging={sort.dragging !== null ? "" : undefined}>
         {active.map((o, pos) => (
@@ -226,19 +231,19 @@ function OfferList({ offers, quoteValidDays }: { offers: StoredOffer[]; quoteVal
           {off.map((o) => <div key={o.type} role="listitem">{row(o, null, <span aria-hidden="true" />)}</div>)}
         </div>
       ) : null}
-      <div className="pb-row pb-row--item pb-offer--pinned" data-offer="above">
+      <div className="pb-row pb-row--item pb-offer--pinned" data-offer="above" data-info-scope="">
         <span className="pb-row__lead"><Icon name="lock" /></span>
         <div className="pb-row__value">
           <span className="pb-offer-read">
             <span className="pb-offer__place pb-offer__place--off" aria-hidden="true" />
             <span className="pb-offer__icon pb-offer__icon--none" aria-hidden="true" />
-            <span className="sas-stack-2" style={{ gap: 2, minWidth: 0 }}>
+            <span className="pb-offer__title">
               <strong className="pb-offer__name">{t("playbook.offers.above")}</strong>
-              <span className="sas-small">{t("playbook.offers.above_hint")}</span>
+              <InfoTip label={t("playbook.offers.above")}><span data-offer-above-hint="">{t("playbook.offers.above_hint")}</span></InfoTip>
             </span>
           </span>
         </div>
-        <span className="pb-row__actions"><span className="sas-small pb-offer__always">{t("playbook.offers.always_last")}</span></span>
+        <span className="pb-row__actions" data-info-avoid=""><span className="sas-small pb-offer__always">{t("playbook.offers.always_last")}</span></span>
       </div>
       <div id="pb-offers-live" className="sas-sr" aria-live="polite" role="status">{announce}</div>
     </div>

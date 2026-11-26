@@ -113,18 +113,20 @@ describe("Playbook navigation and polish (rendered)", () => {
     expect(asks).toMatch(/aria-current="page" data-part="asks"><span class="pb-menu__name">What it asks</);
     expect(asks).toContain('href="/app/acme/setup/playbook/plays"');
     // 2. What it asks (S2, read first): columns "Question" and "Where the answer is used", "Add question" after the list, the example in full on a second line.
-    expect(asks).toContain('<span class="pb-row__value">Question</span>');
-    expect(asks).toContain('<span class="pb-item__tag">Where the answer is used</span>');
+    expect(asks).toContain('<span class="pb-row__value" aria-hidden="true">Question</span>');
+    expect(asks).toContain('<span class="pb-item__tag"><span aria-hidden="true">Where the answer is used</span>');
     expect(asks).not.toContain(">Field<");
     expect(asks.indexOf("Add question")).toBeGreaterThan(asks.indexOf('data-row="field.1"'));
     expect(asks).toContain(">e.g. Is it one kitchen, or more? And how many fridges and freezers are there in each of them, roughly?</span>");
     // No open fields until a row is changed.
     expect(asks).not.toContain('id="pb-field.0.label"');
     expect(await partHtml(acc, "asks", { edit: "field.0" })).toMatch(/<textarea[^>]*id="pb-field\.0\.example"[^>]*>Is it one kitchen, or more\? And how many fridges and freezers are there in each of them, roughly\?<\/textarea>/);
-    // The role names stay; what each means is behind one link.
-    expect(asks).toMatch(/<details class="pb-disclosure" data-testid="roles-disclosure"><summary>What “Needed for the quote”, “Helps the pitch” and “Filled in the order form” mean<\/summary>/);
-    expect(asks.indexOf('data-testid="roles-disclosure"')).toBeGreaterThan(asks.indexOf("Add question"));
-    expect(asks).toMatch(/<details class="pb-disclosure"[^>]*><summary>How the count works<\/summary>/);
+    // The role names stay; what each means is behind the (i) on the column header, how the count works behind the stepper's (i).
+    expect(asks).toContain('aria-label="About: Where the answer is used"');
+    expect(asks.indexOf('data-testid="field-roles"')).toBeLessThan(asks.indexOf('data-row="field.0"'));
+    expect(asks).toContain('aria-label="About: Questions before it recommends"');
+    expect(asks.indexOf('data-testid="question-counting"')).toBeLessThan(asks.indexOf('data-testid="budget-stepper"'));
+    expect(asks).not.toContain("pb-disclosure");
     // Stepper 2–6: at 3 both buttons work; icons, not text.
     expect(asks).toMatch(/data-testid="budget-stepper"><button type="button" aria-label="Fewer"><svg/);
     expect(asks).not.toMatch(/disabled="" aria-label="(Fewer|More)"/);

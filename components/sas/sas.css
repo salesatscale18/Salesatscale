@@ -2137,3 +2137,20 @@ label.st-voice__row { cursor: pointer; }
 @media (max-width: 767px) { .sas-toast { inset-inline: 16px; inset-block-end: 16px; max-width: none; } }
 /* Test lab › Voice call: Voice settings without a draft (greyed out, with the reason). */
 .lab-call__settings-off { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }
+/* InfoTip (components/sas/info-tip.tsx): a 16px (i) after a label, 24px hit area (44px on touch), and its popover. */
+.sas-info { position: relative; display: inline-flex; vertical-align: middle; margin-inline-start: 2px; text-transform: none; letter-spacing: normal; font-weight: 400; }
+.sas-info__btn { position: relative; display: inline-grid; place-items: center; width: 24px; height: 24px; margin-block: -4px; padding: 0; border: 0; border-radius: var(--radius-pill); background: none; color: var(--ink-muted); cursor: pointer; }
+.sas-info__btn .sas-ico { width: 16px; height: 16px; }
+.sas-info__btn:hover, .sas-info__btn[aria-expanded="true"] { color: var(--primary); background: var(--primary-soft); }
+@media (pointer: coarse) { .sas-info__btn::after { content: ""; position: absolute; inset: -10px; } }
+/* Fixed (placed by the component from the viewport): a panel's overflow does not cut it off; above a phone's preview sheet (z 50). */
+.sas-info__pop { position: fixed; z-index: 60; display: flex; flex-direction: column; gap: 8px; box-sizing: border-box; width: max-content; max-width: min(280px, calc(100vw - 16px)); padding: 10px 12px; background: var(--surface-raised); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-pop); font: 400 13px/19px var(--font-sans); text-align: start; text-transform: none; letter-spacing: normal; white-space: normal; overflow-wrap: anywhere; cursor: auto; animation: sas-info-in 120ms ease-out; }
+.sas-info__pop--wide { max-width: min(360px, calc(100vw - 16px)); }
+/* Never taller than the screen: long content scrolls inside (also read whole through aria-describedby). */
+.sas-info__pop { max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain; }
+.sas-info__pop[hidden] { display: none; }
+.sas-info__pop p, .sas-info__pop ul { margin: 0; }
+.sas-info__pop ul { padding-inline-start: 18px; display: flex; flex-direction: column; gap: 4px; }
+.sas-info__pop .sas-small { font-size: 13px; line-height: 19px; }
+@keyframes sas-info-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sas-info__pop { animation: none; } }
