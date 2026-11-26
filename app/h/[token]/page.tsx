@@ -14,7 +14,7 @@ import { LEAD_COOKIE } from "@/lib/lead-pages/tokens";
 import { loadBuyerChat } from "@/app/chat/[token]/load";
 import { LeadPageHeader } from "@/app/p/[key]/header";
 import { HandoverChat } from "./handover-chat";
-import { HandoverByLine, HandoverFrame, HandoverRing, HandoverText } from "./handover-view";
+import { HandoverByLine, HandoverFrame, HandoverRing, HandoverText, StartOverLink } from "./handover-view";
 import "@/components/sas/sas.css";
 import "@/components/sas/voice/voice-bubble.css";
 import "@/app/chat/[token]/chat.css";
@@ -70,6 +70,8 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
   const first = state.firstName;
   const thanks = first ? tr("buyer.lp.handover.thanks", { name: first }) : null;
   const smsLine = state.sms === "sent" ? <p className="lp-note" data-sms-sent="">{tr("buyer.lp.handover.sms_sent")}</p> : null;
+  // A preview run only (decided in loadHandover): "Start over" back to the empty preview form.
+  const startOver = state.startOver ? <StartOverLink href={state.startOver} label={tr("buyer.lp.preview.start_over")} /> : null;
 
   if (state.variant === "received" || !state.chat) {
     return frame("received", (
@@ -78,6 +80,7 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
         <p className="lp-hand__msg" role="status">
           {handoverReceivedLine(names, first || null, lang)}
         </p>
+        {startOver}
       </>
     ));
   }
@@ -95,12 +98,14 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
         strings={{
           talkNow: tr("buyer.lp.handover.talk_now"), chatWriting: tr("buyer.lp.handover.chat_writing"),
           continueChat: tr("buyer.lp.handover.continue_chat"), preparing: tr("buyer.lp.handover.preparing"),
+          tryAgain: tr("buyer.lp.handover.try_again"), failMicDenied: tr("buyer.lp.handover.fail_mic_denied"),
+          failMicUnavailable: tr("buyer.lp.handover.fail_mic_unavailable"), failCall: tr("buyer.lp.handover.fail_call"),
         }}
         top={top}
         text={(
           <HandoverText thanks={thanks} connecting={handoverConnectingLine(names, lang)} />
         )}
-        note={smsLine}
+        note={<>{smsLine}{startOver}</>}
         foot={byLine}
       />
     </div>

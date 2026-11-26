@@ -16,6 +16,7 @@
   var MAX = 200;
 
   function previewFromHash(hash) { var m = PREVIEW_RE.exec(hash || ""); return m ? m[1] : null; }
+  function freshFromHash(hash) { return /(?:^#|[#&])sas-fresh=1(?:&|$)/.test(hash || ""); }
   function scriptBase(src) { var m = /^(https?:\/\/[^/?#]+)\//i.exec(src || ""); return m ? m[1] : null; }
   function readAd(search, referrer, pageHost) {
     var out = {}, q = new URLSearchParams(search || ""), i, v;
@@ -88,13 +89,15 @@
     var p = typeof body.handover === "string" ? body.handover : typeof body.thanks === "string" ? body.thanks : null;
     return p && /^\/[hp]\/[A-Za-z0-9_.?=&/-]+$/.test(p) ? base + p : null;
   }
-  var core = { previewFromHash: previewFromHash, scriptBase: scriptBase, readAd: readAd, parseKeptAd: parseKeptAd, keepAd: keepAd, readConsent: readConsent, tellPixels: tellPixels, checkLocal: checkLocal, pageUrlOf: pageUrlOf, nextUrl: nextUrl };
+  var core = { previewFromHash: previewFromHash, freshFromHash: freshFromHash, scriptBase: scriptBase, readAd: readAd, parseKeptAd: parseKeptAd, keepAd: keepAd, readConsent: readConsent, tellPixels: tellPixels, checkLocal: checkLocal, pageUrlOf: pageUrlOf, nextUrl: nextUrl };
 
   // ---- where we are ----
   var me = d.currentScript;
   if (!me || !/\/lp\/v1\.js/.test(me.src || "")) me = d.querySelector('script[src*="/lp/v1.js"]');
   var BASE = scriptBase(me && me.src);
   var PREVIEW = previewFromHash(w.location.hash);
+  // "Start over" on a preview: the send makes a new preview run (a new test lead and conversation).
+  var FRESH = !!PREVIEW && freshFromHash(w.location.hash);
 
   // ---- the page's consent banner (asked once) ----
   var consentP = null;
@@ -247,7 +250,7 @@
         if (!x.name || x.type === "submit") continue;
         if (x.type === "checkbox") { if (x.checked) data[x.name] = x.value; } else data[x.name] = x.value;
       }
-      Object.assign(data, ad, { ft: cfg.ft, page_url: pageUrlOf(w.location.href) }, cfg.preview ? { preview: PREVIEW } : {});
+      Object.assign(data, ad, { ft: cfg.ft, page_url: pageUrlOf(w.location.href) }, cfg.preview ? { preview: PREVIEW } : {}, cfg.preview && FRESH ? { fresh: "1" } : {});
       return fetch(api(key, "/submit"), { method: "POST", body: JSON.stringify(data), credentials: "omit", mode: "cors", headers: { "Content-Type": "text/plain" } })
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { s: r.status, ok: r.ok, b: b }; }); });
     }

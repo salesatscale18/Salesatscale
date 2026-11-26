@@ -39,3 +39,21 @@ export const isUnverifiedLead = (lead: { phone: string }): boolean => lead.phone
  */
 export const hasDialablePhone = (lead: { phone: string; buyerRef?: string | null }): boolean =>
   !isSimulatedLead(lead) && !isUnverifiedLead(lead);
+
+/**
+ * Preview runs (lead pages, owner rule 26 Nov): every submission sent with the seller's preview
+ * token makes or resumes a TEST lead of its own, never a real lead. Its phone is a placeholder
+ * "lp:preview:<32 hex>" (an "lp:" placeholder, so every channel treats it as no phone: never
+ * texted, dialled or sent a WhatsApp), the typed number only kept as a claim on the submission,
+ * and the lead is left out of every number (overview, lead page funnels), callbacks and follow-ups.
+ * The seller sees it as "Preview run · {time}".
+ */
+export const PREVIEW_RUN_PHONE_PREFIX = `${UNVERIFIED_PHONE_PREFIX}preview:`;
+
+/** A fresh placeholder phone for a preview run. */
+export function previewRunPhone(): string {
+  return `${PREVIEW_RUN_PHONE_PREFIX}${crypto.randomUUID().replace(/-/g, "")}`;
+}
+
+/** True for a preview run's test lead (also an "lp:" placeholder: isUnverifiedLead is true too). */
+export const isPreviewRunLead = (lead: { phone: string }): boolean => lead.phone.startsWith(PREVIEW_RUN_PHONE_PREFIX);

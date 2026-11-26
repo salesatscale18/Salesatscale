@@ -25,7 +25,7 @@ export const TOPIC_MAX = 120;
 export type FollowUpReason =
   | "replaced" | "opted_out" | "account_paused" | "account_not_live" | "paid" | "buyer_replied"
   | "conversation_closed" | "taken_over" | "cancelled_by_seller" | "dismissed_by_seller"
-  | "whatsapp_window_closed" | "send_failed";
+  | "whatsapp_window_closed" | "send_failed" | "preview_run";
 
 /** An ISO 8601 date-time with an explicit offset (or Z): "2026-11-18T10:00:00+02:00". */
 const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
@@ -215,12 +215,15 @@ export type DueFacts = {
   buyerNamedTime?: boolean;
   /** A call holds the conversation now (lib/voice/one-agent.ts): nothing is posted mid-call; the next run after it sends. */
   callActive?: boolean;
+  /** A lead page preview run (a test lead): never followed up. */
+  previewRun?: boolean;
 };
 
 export type DueDecision = { action: "cancel"; reason: FollowUpReason } | { action: "defer" } | { action: "send" };
 
 /** First matching rule wins: cancellations, then a call on the conversation, then contact hours (not for a time the buyer asked for), then send. */
 export function decideDue(f: DueFacts): DueDecision {
+  if (f.previewRun) return { action: "cancel", reason: "preview_run" };
   if (f.leadOptedOut) return { action: "cancel", reason: "opted_out" };
   if (f.accountStatus === "paused") return { action: "cancel", reason: "account_paused" };
   if (f.needsLiveAccount && f.accountStatus !== "live") return { action: "cancel", reason: "account_not_live" };

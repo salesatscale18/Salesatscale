@@ -48,6 +48,10 @@
   font-size: 15px; cursor: pointer; width: 100%; border: 1px solid var(--line-strong); background: var(--raised); color: var(--ink); text-decoration: none; }
 .lp-btn--primary { background: var(--brand); color: var(--brand-on, #fff); border-color: var(--brand); }
 .lp-btn[disabled], .lp-btn[aria-disabled="true"] { opacity: .55; cursor: default; }
+.lp-btn[aria-busy="true"] { cursor: progress; }
+.lp-spin { width: 16px; height: 16px; border-radius: 999px; border: 2px solid currentColor; border-right-color: transparent; flex: none;
+  animation: lp-spin .9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .lp-spin { animation: none; border-right-color: currentColor; opacity: .6; } }
 .lp-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 
 .lp-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 18px; text-align: center; }
@@ -70,6 +74,13 @@
 .lp-hand__thanks { margin: 0; font-size: 20px; line-height: 26px; font-weight: 700; overflow-wrap: anywhere; }
 .lp-hand__sub { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
 .lp-hand__msg { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; overflow-wrap: anywhere; max-width: 320px; }
+/* "Getting your conversation ready", or why the call did not start (one line, under the thanks). */
+.lp-hand__status { margin: 0; font-size: 15px; line-height: 22px; font-weight: 500; color: var(--ink); overflow-wrap: anywhere; max-width: 320px; }
+.lp-hand__status--fail { font-weight: 400; }
+/* A preview run only: "Start over" (small, under the content). */
+.lp-startover { margin: 0; font-size: 13px; line-height: 18px; text-align: center; }
+.lp-startover a { color: var(--muted); text-decoration: underline; }
+.lp-startover a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .lp-actions { display: flex; flex-direction: column; gap: 10px; align-self: stretch; margin-block-start: 4px; }
 /* The content block (ring, thanks, line, buttons) centred in the space between the header and the by-line (tall phones). */
 .lp-hand__mid { margin-block: auto; display: flex; flex-direction: column; align-items: center; gap: 14px; align-self: stretch; }
@@ -77,5 +88,6 @@
 
 /* The chat, mounted under the hand-over in the same document: off screen and inert until the buyer picks.
    Never display:none (the voice bar and the audio element live in it; the voice owners' rule). */
-.lp-offstage { position: fixed; left: -200vw; top: 0; width: 390px; max-width: 100vw; height: 100vh; overflow: hidden; pointer-events: none;
+/* The real viewport size (not a fixed 390 px): the voice bar measures itself while off screen. */
+.lp-offstage { position: fixed; left: -200vw; top: 0; width: 100vw; height: 100vh; height: 100dvh; overflow: hidden; pointer-events: none;
   opacity: 0; }

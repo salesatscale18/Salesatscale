@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { hasDialablePhone, isUnverifiedLead, UNVERIFIED_EVENTS } from "@/lib/leads/unverified";
+import { hasDialablePhone, isPreviewRunLead, isUnverifiedLead, UNVERIFIED_EVENTS } from "@/lib/leads/unverified";
 import { leadNames, unverifiedClaims } from "@/lib/leads/unverified-claims";
 import { cookies } from "next/headers";
 import { quoteRef } from "@/components/sas/id-text";
@@ -119,6 +119,8 @@ export default async function LeadCardPage({
   const { lead, owner, creator } = row;
   const simulated = isSimulatedLead(lead);
   const unverified = isUnverifiedLead(lead);
+  // A lead page preview run: a test lead with a placeholder phone (also "unverified": no phone of its own), shown as "Preview run · {time}".
+  const previewRun = isPreviewRunLead(lead);
   // The claim of an unverified returning lead (the typed number and the lead that has it).
   const claim = unverified ? (await unverifiedClaims(appDb, account.id, [lead.id])).get(lead.id) ?? null : null;
   const leadHref = (id: string) => `/app/${account.slug}/leads/${id}`;
@@ -291,7 +293,9 @@ export default async function LeadCardPage({
             </div>
             <span className="sas-small">
               {/* A simulated buyer has a buyer ID, not a phone (the placeholder is never shown or formatted as one). */}
-              {simulated
+              {previewRun
+                ? <>{t(`lang.${lead.language as "en" | "he"}`)} · <span className="sas-chip" data-preview-run="">{t("lead.preview_run", { time: formatDateTimeIn(lead.createdAt, tz) })}</span> ·{" "}</>
+                : simulated
                 ? <span data-testid="buyer-ref">{t("sim.header", { id: "" })}<span className="sas-id" dir="ltr">{lead.buyerRef ?? lead.phone.replace(/^sim:/, "")}</span> · {t(`lang.${lead.language as "en" | "he"}`)} ·{" "}</span>
                 : unverified
                 // An unverified returning lead: the number the buyer typed, tagged "not verified" (never the placeholder).
@@ -313,7 +317,7 @@ export default async function LeadCardPage({
               })()}
             </span>
             {/* An unverified returning lead: "Came back from {page} · phone not verified · same number as {lead}". */}
-            {unverified ? (
+            {unverified && !previewRun ? (
               <span className="sas-small" data-unverified-line="">
                 {t("lead.event.lead_page.unverified_claim", { page: claim?.pageName || pageSource?.name || "" })}
                 {claim?.sameAs ? <> · {sameAsLink(claim.sameAs.id, claim.sameAs.fullName)}</> : null}

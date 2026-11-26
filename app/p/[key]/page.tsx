@@ -13,6 +13,8 @@ import { bannerUrlPath, CLICK_ID_KEYS, consentTickedOf, formFieldsOf, initialsOf
 import { isArchived } from "@/lib/lead-pages/archive";
 import { pageByKey, pageCountries, privacyNotice } from "@/lib/lead-pages/service";
 import { formTimingToken, previewTokenValid } from "@/lib/lead-pages/tokens";
+import { FRESH_PARAM, previewFormUrl } from "@/lib/lead-pages/preview-run";
+import { StartOverLink } from "@/app/h/[token]/handover-view";
 import { aboutLine, leadFormText } from "@/lib/lead-pages/form-text";
 import { LeadForm } from "./lead-form";
 import { HostedFormFrame, LeadFormHead } from "./lead-form-view";
@@ -71,6 +73,8 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
 
   const hidden: Record<string, string> = { ft: formTimingToken(page.id, now.getTime()) };
   if (preview) hidden.preview = previewToken;
+  // "Start over" (a preview only): the next send makes a new preview run (lib/lead-pages/preview-run.ts).
+  if (preview && one(sp[FRESH_PARAM]) === "1") hidden[FRESH_PARAM] = "1";
   const ad: Record<string, string> = {};
   if (trackingOf(page.tracking).carryAdDetails) {
     for (const k of UTM_KEYS) { const v = one(sp[`utm_${k}`]).slice(0, 200); if (v) ad[`utm_${k}`] = v; }
@@ -88,6 +92,7 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
   const about = aboutLine(tr, page.openingTopic, lang);
   return shell(
     <>
+      {preview ? <StartOverLink href={previewFormUrl({ ...page, connection: "link" }, previewToken, { fresh: true }) ?? ""} label={tr("buyer.lp.preview.start_over")} /> : null}
       <LeadFormHead about={about} title={text.title} />
       <LeadForm
         action={`/api/lp/${page.publicKey}/submit`}

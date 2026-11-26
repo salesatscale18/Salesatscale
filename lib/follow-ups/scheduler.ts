@@ -9,6 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, gt, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { isPreviewRunLead } from "@/lib/leads/unverified";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -141,6 +142,7 @@ async function processOne(
     // A time the buyer asked for is kept even outside contact hours; only agent-chosen times wait for them.
     buyerNamedTime: buyerNamed,
     callActive: !!call,
+    previewRun: isPreviewRunLead(lead),
   });
   if (decision.action === "cancel") {
     await atomic(db, (q) => [

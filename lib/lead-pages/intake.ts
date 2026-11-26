@@ -15,6 +15,11 @@
  *   number only a claim, its own consent and conversation. The existing lead is not changed
  *   (only a note on its timeline); the buyer sees the same screens as a new buyer.
  *   The same browser again (its cookie) goes back to that unverified lead.
+ * - A preview (the seller's preview token) never touches a real lead or the sas_lp cookie: it makes
+ *   a preview run, a test lead with a placeholder phone (lib/leads/unverified.ts, previewRunPhone),
+ *   the typed number kept only as a claim on the submission. "Open" (no `fresh`): a send with the
+ *   number of this page's latest preview run continues that run (within 10 minutes its hand-over);
+ *   "Start over" (`fresh`): always a new run, so a new test lead and a new conversation.
  * - The public form never gives consent back to an existing lead that has none
  *   (`consentDefaulted`, event lead_page.consent_not_restored).
  * - No SMS here: the page_link SMS goes only from the hand-over render (handover.ts).
@@ -29,7 +34,7 @@ import { leadPageConsentLine } from "@/lib/leads/consent-line";
 import { parseLead } from "@/lib/leads/rules";
 import { applyLeadMarket, leadMarketContext } from "@/lib/leads/market";
 import { upsertLead } from "@/lib/leads/service";
-import { UNVERIFIED_EVENTS, UNVERIFIED_PHONE_PREFIX, unverifiedPhone } from "@/lib/leads/unverified";
+import { PREVIEW_RUN_PHONE_PREFIX, previewRunPhone, UNVERIFIED_EVENTS, UNVERIFIED_PHONE_PREFIX, unverifiedPhone } from "@/lib/leads/unverified";
 import { publicUrl } from "@/lib/orders/token";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { chatNames } from "@/lib/simulator/service";
@@ -115,6 +120,21 @@ async function ownUnverifiedLead(db: Db, accountId: string, cookie: string | nul
   return claim ? lead : null;
 }
 
+/**
+ * This page's latest preview run for the typed number (its latest preview submission with that claim,
+ * on a preview-run lead), with whether that submission is recent enough to reuse its hand-over.
+ */
+async function latestPreviewRun(db: Db, accountId: string, pageId: string, phone: string, now: Date) {
+  const [row] = await db.select({ submissionId: leadPageSubmissions.id, createdAt: leadPageSubmissions.createdAt, id: leads.id, status: leads.status })
+    .from(leadPageSubmissions)
+    .innerJoin(leads, and(eq(leads.id, leadPageSubmissions.leadId), eq(leads.accountId, leadPageSubmissions.accountId)))
+    .where(and(eq(leadPageSubmissions.accountId, accountId), eq(leadPageSubmissions.pageId, pageId), eq(leadPageSubmissions.preview, true),
+      sql`${leadPageSubmissions.answers}->>'claimedPhone' = ${phone}`, like(leads.phone, `${PREVIEW_RUN_PHONE_PREFIX}%`)))
+    .orderBy(desc(leadPageSubmissions.createdAt)).limit(1);
+  if (!row) return null;
+  return { id: row.id, status: row.status, recentSubmissionId: row.createdAt.getTime() > now.getTime() - REPEAT_MS ? row.submissionId : null };
+}
+
 export async function submitLeadPage(db: Db, input: SubmitInput): Promise<SubmitResult> {
   const now = input.now ?? new Date();
   const env = input.env ?? process.env;
@@ -172,8 +192,15 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
   if (!valid.ok) return { kind: "invalid", errors: valid.errors };
   const v = valid.value;
 
-  const cookie = leadCookieFrom(input.headers.get("cookie"));
-  const [existing] = await db.select({ id: leads.id, status: leads.status }).from(leads).where(and(eq(leads.accountId, account.id), eq(leads.phone, v.phone)));
+  // A preview never reads the real-buyer cookie and never looks up (or attaches to) a real lead.
+  const cookie = preview ? null : leadCookieFrom(input.headers.get("cookie"));
+  const [existing] = preview ? [] : await db.select({ id: leads.id, status: leads.status }).from(leads).where(and(eq(leads.accountId, account.id), eq(leads.phone, v.phone)));
+  // "Open": this page's latest preview run for the number goes on; "Start over" (fresh): never.
+  const previewRun = preview && !f.fresh ? await latestPreviewRun(db, account.id, page.id, v.phone, now) : null;
+  if (previewRun?.recentSubmissionId) {
+    const id = previewRun.recentSubmissionId;
+    return { kind: "handover", token: handoverTokenFor(id), submissionId: id, newLeadId: null, repeat: true };
+  }
   const sameBrowser = !!existing && cookieHoldsLead(cookie, existing.id);
   // A known number from another browser: this browser's own unverified lead for that number, when its cookie names one.
   const own = existing && !sameBrowser ? await ownUnverifiedLead(db, account.id, cookie, v.phone) : null;
@@ -186,7 +213,8 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
       .orderBy(desc(leadPageSubmissions.createdAt)).limit(1);
     if (recent) return { kind: "handover", token: handoverTokenFor(recent.id), submissionId: recent.id, newLeadId: null, repeat: true };
   }
-  const perPhone = await rateLimit(db, `lp:submit:phone:${page.id}:${hashKey(v.phone)}`, SUBMIT_LIMITS.phone, now);
+  // Previews send nothing to the number (no SMS): the IP and page limits above are enough for them.
+  const perPhone = preview ? { ok: true as const, retryAfterSeconds: 0 } : await rateLimit(db, `lp:submit:phone:${page.id}:${hashKey(v.phone)}`, SUBMIT_LIMITS.phone, now);
   if (!perPhone.ok) { await reject("rate_phone"); return { kind: "busy", retryAfterSeconds: perPhone.retryAfterSeconds }; }
   // A new unverified returning lead (the number is a claim only): at most 3 per claimed number and page a day.
   const unverified = !!existing && !sameBrowser && !own;
@@ -218,7 +246,17 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
   let created = false;
   let consent: boolean;
   let consentNotRestored = false;
-  if (unverified) {
+  const resume = own ?? previewRun;
+  if (preview && !previewRun) {
+    // A new preview run: a test lead of its own with a placeholder phone (never texted or called), the number only a claim.
+    const ctx = await leadMarketContext(db, account.id);
+    const placed = ctx ? applyLeadMarket(ctx, leadInput, { keyMarketId: page.marketId }) : leadInput;
+    const up = await upsertLead(db, account.id, SYSTEM, { ...placed, phone: previewRunPhone(), sourceRef: null }, "webhook", { keyMarketId: page.marketId, now });
+    if (!up.ok) { logRefusal(page.id, up.reason, input.ip); return { kind: "thanks" }; }
+    leadId = up.lead.id;
+    created = up.created;
+    consent = !!leadInput.consent;
+  } else if (unverified) {
     // A separate lead with a placeholder phone; the existing lead is not changed (only a note on its timeline).
     const ctx = await leadMarketContext(db, account.id);
     const placed = ctx ? applyLeadMarket(ctx, leadInput, { keyMarketId: page.marketId }) : leadInput;
@@ -227,13 +265,14 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
     leadId = up.lead.id;
     created = up.created;
     consent = !!leadInput.consent;
-  } else if (own) {
-    // This browser's own unverified lead: its conversation again. Consent as for any existing lead: never given back.
-    leadId = own.id;
+  } else if (resume) {
+    // This browser's own unverified lead, or this page's preview run for the number: its conversation again.
+    // Consent as for any existing lead: never given back.
+    leadId = resume.id;
     const [had] = await db.select({ id: consentRecords.id }).from(consentRecords)
-      .where(and(eq(consentRecords.accountId, account.id), eq(consentRecords.leadId, own.id))).limit(1);
-    consent = !!leadInput.consent && !!had && own.status !== "opted_out";
-    consentNotRestored = !!leadInput.consent && !had && own.status !== "opted_out";
+      .where(and(eq(consentRecords.accountId, account.id), eq(consentRecords.leadId, resume.id))).limit(1);
+    consent = !!leadInput.consent && !!had && resume.status !== "opted_out";
+    consentNotRestored = !!leadInput.consent && !had && resume.status !== "opted_out";
     if (consent && leadInput.consent) {
       await db.insert(consentRecords).values({ accountId: account.id, leadId, ...leadInput.consent, recordedByUserId: null });
       await db.insert(leadEvents).values({ accountId: account.id, leadId, type: "consent.recorded", actor: "system", data: { source: leadInput.consent.source, wording: leadInput.consent.wording } });
@@ -262,7 +301,7 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
     }
     consent = up.ok && !!leadInput.consent && (created || !leadInput.consentDefaulted);
   }
-  const claimedPhone = unverified || own ? v.phone : null;
+  const claimedPhone = unverified || own || preview ? v.phone : null;
 
   const submissionId = crypto.randomUUID();
   const topic = textIn(page.openingTopic, lang) || null;
@@ -294,6 +333,7 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
       accountId: account.id, leadId, type: LEAD_PAGE_EVENTS.consentNotRestored, actor: "system", data: { pageId: page.id, submissionId },
     })] : []),
   ]);
-  console.info("[lead-pages] submission accepted", { pageId: page.id, created, consent, preview, ...(unverified ? { unverified: true } : {}) });
-  return { kind: "handover", token: handoverTokenFor(submissionId), submissionId, newLeadId: created ? leadId : null, repeat: false };
+  console.info("[lead-pages] submission accepted", { pageId: page.id, created, consent, preview, ...(preview ? { fresh: f.fresh } : {}), ...(unverified ? { unverified: true } : {}) });
+  // A preview run never gets the real-buyer cookie (sas_lp).
+  return { kind: "handover", token: handoverTokenFor(submissionId), submissionId, newLeadId: created && !preview ? leadId : null, repeat: false };
 }

@@ -526,5 +526,10 @@
   "voice.settings.opener": "הגנה על משפט הפתיחה",
   "voice.settings.opener_hint": "הקונה לא יכול לקטוע את הברכה ואת הודעת ההקלטה.",
   "voice.settings.model_default_option": "ברירת המחדל של המודל",
-  "voice.settings.fillers_hint_buyers": "שיחות עם קונים: אומר \"רק רגע\" בזמן שהוא בודק משהו. שיחות ניסיון עם ElevenLabs מדלגות על זה."
+  "voice.settings.fillers_hint_buyers": "שיחות עם קונים: אומר \"רק רגע\" בזמן שהוא בודק משהו. שיחות ניסיון עם ElevenLabs מדלגות על זה.",
+  "buyer.lp.handover.fail_mic_denied": "המיקרופון חסום בדף הזה. אפשר לאשר אותו בדפדפן כדי לדבר, או להתכתב בצ'אט.",
+  "buyer.lp.handover.fail_mic_unavailable": "לא נמצא מיקרופון במכשיר הזה. אפשר להתכתב בצ'אט.",
+  "buyer.lp.handover.fail_call": "לא הצלחנו להתחיל את השיחה. אפשר לנסות שוב או להתכתב בצ'אט.",
+  "buyer.lp.handover.try_again": "לנסות שוב",
+  "buyer.lp.preview.start_over": "להתחיל מחדש"
 }

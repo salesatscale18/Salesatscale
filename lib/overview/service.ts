@@ -4,7 +4,8 @@
  * Read-only: derived from leads, quotes, order forms, orders and lead events.
  */
 import { cache } from "react";
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sql, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, notLike, or, sql, sum } from "drizzle-orm";
+import { PREVIEW_RUN_PHONE_PREFIX } from "@/lib/leads/unverified";
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
 import { finishedCallbacks } from "@/lib/callbacks/service";
@@ -338,7 +339,9 @@ export type CurrencyTotal = { currency: string; oneTimeMinor: number; recurringM
 export type SimulatedFilter = { includeSimulated?: boolean };
 /** Overview filters: simulated buyers, and the market switcher's choice (null or missing = all markets; by the lead's market). */
 export type OverviewFilter = SimulatedFilter & { market?: Pick<Market, "id" | "isHome"> | null };
-const realOnly = (opts: SimulatedFilter) => and(eq(leads.isTest, false), opts.includeSimulated ? undefined : isNull(leads.buyerRef))!;
+/** Lead page preview runs (test leads with an "lp:preview:" placeholder phone) are never in the numbers. */
+const notPreviewRun = notLike(leads.phone, `${PREVIEW_RUN_PHONE_PREFIX}%`);
+const realOnly = (opts: SimulatedFilter) => and(eq(leads.isTest, false), notPreviewRun, opts.includeSimulated ? undefined : isNull(leads.buyerRef))!;
 
 /**
  * What happened in (from, to]: each step counted by when it happened, not as

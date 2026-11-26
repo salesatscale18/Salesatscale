@@ -4811,5 +4811,15 @@
   "playbook.play.edit_in_offers": "Edit in Offers",
   "draft.limit.change_in_offers": "Change in Playbook › Offers",
   "playbook.offers.locked": "{name} is always on",
-  "playbook.offers.locked_why": "Always on: it stays in the list and can't be switched off."
+  "playbook.offers.locked_why": "Always on: it stays in the list and can't be switched off.",
+  "buyer.lp.handover.fail_mic_denied": "The microphone is blocked for this page. Allow it in your browser to talk, or chat in writing.",
+  "buyer.lp.handover.fail_mic_unavailable": "No microphone was found on this device. You can chat in writing.",
+  "buyer.lp.handover.fail_call": "The call could not start. Try again, or chat in writing.",
+  "buyer.lp.handover.try_again": "Try again",
+  "buyer.lp.preview.start_over": "Start over",
+  "lead.preview_run": "Preview run · {time}",
+  "lead.preview_run_plain": "Preview run",
+  "lead_pages.latest.preview_run": "Preview run",
+  "lead_pages.link.start_over": "Start over",
+  "followup.reason.preview_run": "it was a preview run"
 }

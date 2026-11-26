@@ -282,7 +282,11 @@ describe("lead pages (c): the seller's own form", () => {
     expect((await send(draft.publicKey, { name: "Early Buyer", phone: "+972547200016" }, { referer: `${SITE}/draft` })).status).toBe(404);
     const test = await send(draft.publicKey, { name: "Test Buyer", phone: "+972547200017", consent: "yes", preview: previewTokenFor(draft.id, new Date()) }, { referer: `${SITE}/draft` });
     expect(test.status).toBe(303);
-    expect((await subsOf((await leadOf("+972547200017")).id))[0]).toMatchObject({ via: "own_form", preview: true });
+    // A preview run: a test lead with a placeholder phone (never the typed number), the number kept as a claim.
+    expect(await leadOf("+972547200017")).toBeUndefined();
+    const [testSub] = await db.select().from(leadPageSubmissions).where(eq(leadPageSubmissions.pageId, draft.id));
+    expect(testSub).toMatchObject({ via: "own_form", preview: true, answers: { claimedPhone: "+972547200017" } });
+    expect((await db.select().from(leads).where(eq(leads.id, testSub.leadId)))[0].phone).toMatch(/^lp:preview:[0-9a-f]{32}$/);
     expect((await leadPageReadiness(db, await account(), await fresh(draft))).find((c) => c.key === "own_form_lead")?.done).toBe(true);
   });
 

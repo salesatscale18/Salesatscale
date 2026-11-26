@@ -25,6 +25,11 @@ export function previewFromHash(hash: string): string | null {
   return m ? m[1] : null;
 }
 
+/** The preview's "Start over" in the fragment ("#sas-preview=<token>&sas-fresh=1"): the next send makes a new preview run. */
+export function freshFromHash(hash: string): boolean {
+  return /(?:^#|[#&])sas-fresh=1(?:&|$)/.test(hash || "");
+}
+
 /** The origin ("https://app.example.com") the script was loaded from, or null. */
 export function scriptBase(src: string | null | undefined): string | null {
   const m = /^(https?:\/\/[^/?#]+)\//i.exec(src || "");

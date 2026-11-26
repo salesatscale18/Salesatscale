@@ -190,8 +190,9 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     expect(html).toContain("Continue to the chat");
     expect(html).not.toContain("Talk now");
     expect(html).not.toContain("Chat in writing");
-    // The buttons wait for the ring (2 s) and the mounted chat.
-    expect(html).toMatch(/data-handover-continue=""[^>]*disabled=""|disabled=""[^>]*data-handover-continue=""/);
+    // The buttons show and work at once (owner, 26 Nov): no minimum wait, the ring calm.
+    expect(html).not.toMatch(/data-handover-continue=""[^>]*disabled=""|disabled=""[^>]*data-handover-continue=""/);
+    expect(html).toContain('data-ring="done"');
     expect(html).toContain('class="lp-offstage" inert="" aria-hidden="true" data-handover-chat="handover"');
     expect(html).toContain("You asked about Fridge monitoring.");
     expect(html).toContain("Conversation by Sales at Scale");
