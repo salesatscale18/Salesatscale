@@ -19,6 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, exists, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
+import { callHasLines } from "@/lib/voice/call-lines";
 import { atomic } from "@/db/atomic";
 import {
   agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, voiceSessions,
@@ -1358,7 +1359,8 @@ export class ClassicVoiceEngine {
       row = await this.writeFinalRow(reason);
     }
     const { durationSec, costMicros, answerMsAvg } = row;
-    if (row.connected && row.ended && this.loaded) {
+    // Not for a call in which nothing was said (owner, 26 Nov: no "0:00" line for a call that never connected; lib/voice/call-lines.ts).
+    if (row.connected && row.ended && this.loaded && await callHasLines(this.db, this.loaded.account.id, this.sessionId).catch(() => true)) {
       // Like the other operational notes in a thread (system messages): when and how long.
       const { conv, account } = this.loaded;
       try {

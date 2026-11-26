@@ -63,6 +63,7 @@ export const CLASSIC_CHANGES: readonly string[] = [
   "engine.ts: the opener is asked for at once on connect (20 Nov); today's wait for a chat turn in flight (waitForTextTurn) is not part of Classic.",
   "engine.ts: update_deal_state's stage goes through the 20 Nov stage table plus its reconciliations (classicStageText).",
   "engine.ts: CALL_ENDED_TEXT is today's voiceCallEndedLine (same text).",
+  "engine.ts: no end line for a call in which nothing was said (no stored line: lib/voice/call-lines.ts; owner, 26 Nov 2026), as in Current.",
   "instructions.ts: the stable prompt and per-turn context are today's chat text with the 20 Nov tables applied in Classic (classicStablePrompt, classicTurnContext), never throwing; unmatched replacements are returned.",
   "instructions.ts: loads the buyer's stored zone (local time, follow-up and callback times) and the team's call log line, as today's chat turn does.",
   "voice-block.ts: applyClassicReplacements added (records instead of throwing); the 20 Nov tables and voice block are unchanged.",

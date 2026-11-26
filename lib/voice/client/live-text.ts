@@ -20,6 +20,8 @@
  * Pure (the clock is passed in, ms), unit-tested; lib/voice/client/voice-client.ts feeds it.
  */
 
+import { cutLine } from "@/lib/voice/cut-line";
+
 /** The pace before a line of this call was measured (owner: about 2.6 words a second). */
 export const FALLBACK_WORDS_PER_SEC = 2.6;
 /** A measured pace is kept within this range (a short or odd line must not run the next one away). */
@@ -242,11 +244,23 @@ export class LiveSpeech {
         this.measure(t);
       }
       let text: string;
-      if (done) text = t.cutAt !== null && t.source === "full" && !t.finalAfterCut && t.cutPlayedMs > 0 ? this.paced(t, t.cutPlayedMs) : t.text;
-      else if (t.cutAt !== null) text = this.paced(t, t.cutPlayedMs);
+      if (t.cutAt !== null && !t.finalAfterCut) text = this.cutText(t, done);
+      else if (done) text = t.text;
       else text = this.paced(t, this.played(t, now));
       return { key: t.id, text, finals: [...t.finals], done, cut: t.cutAt !== null, since: t.since, doneAt: t.doneAt };
     });
+  }
+
+  /**
+   * A cut line before the relay's own cut line came: what was played, as the relay will store it (one "…" after the
+   * last word: lib/voice/cut-line.ts). Audio-out: the transcript received so far. A text-out line cut before any of it
+   * played settles on the line as written (the engine keeps it so); a line heard whole stays whole.
+   */
+  private cutText(t: Turn, done: boolean): string {
+    if (t.source === "delta") return t.text ? cutLine(t.text) : "";
+    if (t.cutPlayedMs <= 0) return done ? t.text : "";
+    const said = this.paced(t, t.cutPlayedMs);
+    return !said || said === t.text.trim() ? said : cutLine(said);
   }
 
   private paced(t: Turn, playedMs: number): string {

@@ -26,7 +26,7 @@ import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { isSimulatedLead, WEB_CHAT_CHANNELS } from "@/lib/simulator/rules";
 import type { ChatContext } from "@/lib/simulator/service";
-import { isEmptyShortCall } from "@/lib/agent/thread-markers";
+import { isEmptyShortCall, isUnsaidCall } from "@/lib/agent/thread-markers";
 import { createVoiceSession, STALE_PENDING_SEC } from "./service";
 import { maxCallSeconds, voiceMode } from "./settings";
 
@@ -266,14 +266,21 @@ export async function buyerCallRows(db: Db, accountId: string, conversationIds: 
     .from(voiceSessions)
     .where(and(eq(voiceSessions.accountId, accountId), inArray(voiceSessions.conversationId, conversationIds), eq(voiceSessions.status, "ended"), eq(voiceSessions.isTest, false)))
     .orderBy(asc(voiceSessions.createdAt));
-  const ended = rows.filter((r) => r.connectedAt && r.endedAt);
-  // The buyer's lines in each call (spoken or typed): a short call without any is one row.
-  const said = ended.length
-    ? await db.select({ id: messages.voiceSessionId }).from(messages)
-      .where(and(eq(messages.accountId, accountId), inArray(messages.voiceSessionId, ended.map((r) => r.id)), eq(messages.actor, "buyer")))
+  const connected = rows.filter((r) => r.connectedAt && r.endedAt);
+  // Each call's lines (any actor): a call in which nothing was said is no call (isUnsaidCall); the buyer's lines
+  // (spoken or typed) decide whether a short call is one row.
+  const said = connected.length
+    ? await db.select({ id: messages.voiceSessionId, actor: messages.actor }).from(messages)
+      .where(and(eq(messages.accountId, accountId), inArray(messages.voiceSessionId, connected.map((r) => r.id))))
     : [];
   const turns = new Map<string, number>();
-  for (const s of said) if (s.id) turns.set(s.id, (turns.get(s.id) ?? 0) + 1);
+  const lines = new Map<string, number>();
+  for (const s of said) {
+    if (!s.id) continue;
+    lines.set(s.id, (lines.get(s.id) ?? 0) + 1);
+    if (s.actor === "buyer") turns.set(s.id, (turns.get(s.id) ?? 0) + 1);
+  }
+  const ended = connected.filter((r) => !isUnsaidCall({ status: "ended", lines: lines.get(r.id) ?? 0 }));
   return ended.map((r) => ({
     id: r.id, startedAt: r.connectedAt!.toISOString(), at: r.endedAt!.toISOString(), durationSec: r.durationSec ?? 0,
     empty: isEmptyShortCall(r.durationSec, turns.get(r.id) ?? 0),

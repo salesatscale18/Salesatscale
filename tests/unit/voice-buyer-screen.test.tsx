@@ -14,6 +14,8 @@ import { composerAfterVoice } from "@/lib/voice/client/buyer-ui";
 import { HINT_KEY, claimFirstHint, resetHintForTests, runHint, type HintPhase } from "@/lib/voice/client/first-hint";
 import { FALLBACK_WORDS_PER_SEC, LiveSpeech, placeLiveLines, wordPrefix, wordsForPlayed } from "@/lib/voice/client/live-text";
 import { parseServerMessage } from "@/lib/voice/protocol";
+import { cutLine } from "@/lib/voice/cut-line";
+import { cutLine as engineCutLine } from "@/lib/voice/engine";
 import { voiceReducer, INITIAL_SNAPSHOT } from "@/lib/voice/client/state";
 import type { MirrorState, TabCommand } from "@/lib/voice/client/tab-link";
 import type { VoiceClient } from "@/lib/voice/client/voice-client";
@@ -239,9 +241,9 @@ describe("live text: barge-in", () => {
     for (let i = 0; i < 45; i++) s.audio(100, i * 100, 0);
     s.flush(1500);
     const cut = s.lines(1500)[0];
-    expect(cut).toMatchObject({ text: "Thanks for waiting, I", cut: true, done: false });
+    expect(cut).toMatchObject({ text: "Thanks for waiting, I…", cut: true, done: false });
     // Time passes: nothing more shows (the dropped audio never played).
-    expect(s.lines(4000)[0].text).toBe("Thanks for waiting, I");
+    expect(s.lines(4000)[0].text).toBe("Thanks for waiting, I…");
     s.transcript({ id: "a1", role: "agent", text: "Thanks for waiting, I…", final: true }, 1800);
     expect(s.lines(1800)[0]).toMatchObject({ text: "Thanks for waiting, I…", done: true, finals: ["Thanks for waiting, I have the price for the blue chairs now.", "Thanks for waiting, I…"] });
   });
@@ -265,7 +267,7 @@ describe("live text: barge-in", () => {
     s.mark("a5", undefined);
     s.audio(100, 1100, 1100);
     const l = s.lines(5000);
-    expect(l[0]).toMatchObject({ key: "a2", text: "Let me check the price of", done: true, cut: true });
+    expect(l[0]).toMatchObject({ key: "a2", text: "Let me check the price of…", done: true, cut: true });
   });
 });
 
@@ -302,5 +304,46 @@ describe("the protocol's agent_audio (backward compatible)", () => {
     expect(parseServerMessage('{"t":"agent_audio"}')).toBeNull();
     const s = { ...INITIAL_SNAPSHOT, phase: "live" as const };
     expect(voiceReducer(s, { type: "server", msg: { t: "agent_audio", id: "a1" }, now: 0 })).toBe(s);
+  });
+});
+
+describe("a cut line: one \"…\" right after the last word played", () => {
+  it("sentence punctuation before it goes; no double ellipsis; the stored form is the same function", () => {
+    expect(cutLine("Your total today is ₪100.00.")).toBe("Your total today is ₪100.00…");
+    expect(cutLine("…₪100.00.")).toBe("…₪100.00…");
+    expect(cutLine("Thanks, one moment,")).toBe("Thanks, one moment…");
+    expect(cutLine("word,")).toBe("word…");
+    for (const p of [".", ",", ";", ":", "!", "?", " -", " –", " —"]) expect(cutLine(`Sure${p}`)).toBe("Sure…");
+    expect(cutLine("Already cut…")).toBe("Already cut…");
+    expect(cutLine("Already cut...")).toBe("Already cut…");
+    expect(cutLine("Already cut.…")).toBe("Already cut…");
+    expect(cutLine("  spaced out   ")).toBe("spaced out…");
+    // Hebrew (and Arabic marks): the same rule, right to left in the bubble.
+    expect(cutLine("המחיר הוא ₪100.00.")).toBe("המחיר הוא ₪100.00…");
+    expect(cutLine("רגע, אני בודקת,")).toBe("רגע, אני בודקת…");
+    expect(cutLine("מה שלומך?")).toBe("מה שלומך…");
+    expect(cutLine("سعر،")).toBe("سعر…");
+    // Inside the line nothing changes (a decimal point, a comma between words).
+    expect(cutLine("₪1,250.50 a month")).toBe("₪1,250.50 a month…");
+    expect(engineCutLine).toBe(cutLine);
+  });
+
+  it("the live text shows the cut the same way: displayed and stored match", () => {
+    const s = new LiveSpeech();
+    s.state("speaking");
+    s.mark("a7", undefined);
+    s.transcript({ id: "a7", role: "agent", text: "Your total today is ₪100.00.", final: false }, 0);
+    for (let i = 0; i < 20; i++) s.audio(100, i * 100, 0);
+    s.flush(800);
+    const shown = s.lines(800)[0].text;
+    expect(shown).toBe("Your total today is ₪100.00…");
+    expect(shown).toBe(cutLine("Your total today is ₪100.00."));
+    // Text-out: the words played, then "…" (as the engine's heard line is stored).
+    const r = new LiveSpeech();
+    r.transcript({ id: "a8", role: "agent", text: "Sure, the price is ₪100.00. Shall I send it?", final: true }, 0);
+    r.mark("a8", 4000);
+    for (let i = 0; i < 40; i++) r.audio(100, i * 100, 0);
+    r.flush(2200);
+    expect(r.lines(2200)[0].text).toBe("Sure, the price is ₪100.00…");
   });
 });

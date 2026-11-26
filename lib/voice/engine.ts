@@ -60,6 +60,8 @@ import { SpeechPlayer, type SpeechJob } from "@/lib/voice-rt-eleven/player";
 import { RT_SPEECH_STREAM_LINE } from "@/lib/voice-rt-eleven/speech-line";
 import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { medianOf, type RtElevenUsage } from "@/lib/voice-rt-eleven/summary";
+import { cutLine } from "@/lib/voice/cut-line";
+import { callHasLines } from "@/lib/voice/call-lines";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -560,8 +562,8 @@ export function grownFrom(next: string, prev: string): boolean {
   return !!b && a.length > b.length && a.startsWith(`${b} `);
 }
 
-/** A line the buyer cut short, as stored: the words actually said, ending with "…". */
-export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "")}…`;
+/** A line the buyer cut short, as stored: the words actually said, then one "…" (lib/voice/cut-line.ts). */
+export { cutLine };
 
 type Loaded = { session: VoiceSession; conv: Conversation; lead: Lead; version: AgentVersion; account: SellerAccount };
 
@@ -3264,7 +3266,8 @@ export class VoiceEngine {
     const { durationSec, costMicros, answerMsAvg } = row;
     // The end line only when this write ended the row: a row the stale close ended has its own line, and one it
     // could not end is left to the stale close (which adds it).
-    if (row.connected && row.ended && this.loaded) {
+    // And only for a call in which something was said: one that never connected gets no "0:00" line (lib/voice/call-lines.ts).
+    if (row.connected && row.ended && this.loaded && await callHasLines(this.db, this.loaded.account.id, this.sessionId).catch(() => true)) {
       // Like the other operational notes in a thread (system messages): when and how long.
       const { conv, account } = this.loaded;
       try {

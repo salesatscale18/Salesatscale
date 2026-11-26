@@ -260,7 +260,11 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
   // "{buyer} opened the chat" only on a web chat (the lead event is per lead).
   const shownEvents = webChat ? events : events.filter((e) => e.type !== "chat.opened");
   // A short call with nothing from the buyer is one row (its summary): the buyer's lines in each call decide.
-  const callRows = calls.map((c) => ({ ...c, buyerTurns: thread.filter(({ message: m }) => m.actor === "buyer" && m.voiceSessionId === c.id).length }));
+  const callRows = calls.map((c) => ({
+    ...c, buyerTurns: thread.filter(({ message: m }) => m.actor === "buyer" && m.voiceSessionId === c.id).length,
+    // A call in which nothing was said shows no row (isUnsaidCall).
+    lines: thread.filter(({ message: m }) => m.voiceSessionId === c.id).length,
+  }));
   const markers = [...threadMarkers(conv.id, thread, shownEvents, authors), ...voiceMarkers(callRows), ...smsMarkers(conv.id, webChat, sms)].sort((a, b) => a.at.getTime() - b.at.getTime());
   // A capped chat says it once: the "Handed to a person: AI limit reached" marker replaces the system line
   // that conversations capped before W5 stored (new ones no longer store it).

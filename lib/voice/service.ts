@@ -202,7 +202,9 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string | null, 
     const [last] = await db.select({ at: messages.createdAt }).from(messages)
       .where(and(eq(messages.accountId, s.accountId), eq(messages.conversationId, s.conversationId), eq(messages.voiceSessionId, s.id)))
       .orderBy(desc(messages.createdAt)).limit(1);
-    const at = new Date(Math.max(lastBeat, (last?.at.getTime() ?? 0) + 1));
+    // Nothing was said in the call (no line of it stored): no end line (lib/voice/call-lines.ts, owner 26 Nov).
+    if (!last) continue;
+    const at = new Date(Math.max(lastBeat, last.at.getTime() + 1));
     await db.insert(messages).values({ accountId: s.accountId, conversationId: s.conversationId, actor: "system", body: CALL_ENDED_TEXT(s.durationSec), language: "en", createdAt: at });
   }
   for (const { id } of staleOld) {
