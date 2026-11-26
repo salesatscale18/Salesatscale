@@ -28,6 +28,7 @@ import { resultForModel, runTool, type ToolContext, type ToolResult, type TurnMe
 import type { OfferCall } from "@/lib/agent/offer-records";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
+import { endsWithQuestion } from "@/lib/agent/core/facts";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { RealtimeUsageAccumulator, type VoiceCallTimes, type VoiceCallUsageRecord } from "@/lib/ai/models";
 import { realtimeCallCost } from "./eleven-realtime";
@@ -36,7 +37,7 @@ import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, t
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
 import {
-  callTurnExtras, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
+  afterQuestionGuardFor, callTurnExtras, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
   openerProtectionFor, resolveVoiceSettings, turnTakingFor, versionModelId, voiceFamilyOf,
 } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
@@ -334,6 +335,20 @@ export function isBookkeepingOnly(result: Record<string, unknown>): boolean {
   return result.ok === true && saved.length === 0 && !result.recorded && !result.objection_recorded && !result.rejected_placeholder && !result.kept_as_buyer_said;
 }
 
+/**
+ * The after-question guard (TEST calls only while AFTER_QUESTION_GUARD_FOR_BUYER_CALLS is off; every model family).
+ * The fault (Gemini 3.8 Live test call 449eb784): the agent asks the buyer a question, then saves details with
+ * update_deal_state after its audio, and with BLOCKING tools continues by itself after the result: a short "…" or the
+ * same question reworded. An output filter in the engine (no instruction): such a continuation is not played, not
+ * stored and not counted. Only these tools count as bookkeeping; any other tool's continuation is spoken as always.
+ */
+export const BOOKKEEPING_TOOLS: readonly string[] = ["update_deal_state"];
+/**
+ * A continuation counts only when it starts within this long of the last bookkeeping result (the model continues at
+ * once; anything later is left alone: never the answer to a buyer whose words reached the engine late).
+ */
+export const AFTER_QUESTION_CONTINUATION_MS = 5_000;
+
 /** A line in English or Hebrew (other languages are not judged: the model decides). */
 const JUDGEABLE = /[A-Za-z֐-׿]/;
 
@@ -603,6 +618,20 @@ export class VoiceEngine {
     chars: 0,
     times: [] as RtTimes[],
   };
+  /**
+   * The after-question guard (BOOKKEEPING_TOOLS). `afterQ`: the tool calls since the agent's last spoken output, with
+   * the results still out, and (once all are in) whether that output ended with a question, the agent's text then
+   * and when. `afterQDrop`: the continuation being dropped now. `lastSaid`: the agent's latest spoken output since the
+   * buyer last spoke ("" once they speak).
+   */
+  private afterQ: { tools: string[]; pending: number; question: boolean; said: string; turnId: string | null; turnText: string; at: number } | null = null;
+  private afterQDrop: { tools: string[]; turnId: string | null; turnText: string; text: string; raw: string; audioMs: number; audio: boolean } | null = null;
+  /** A drop ended before its response did (the buyer spoke, a note): that response's turn-done still ends the agent's line as said. */
+  private afterQDoneFor: string | null = null;
+  /** After a drop ended at a tool call (Gemini's transcript is the whole turn so far): the dropped words are cut from it. */
+  private afterQSkip: { turnId: string; keep: string; from: string } | null = null;
+  private afterQDrops = 0;
+  private lastSaid = "";
   /** The call's recording (null: not recorded). */
   private recorder: CallRecorder | null = null;
   /** The call clock (ms since connect) when the call ended: the recording's end. */
@@ -1416,6 +1445,8 @@ export class VoiceEngine {
    * `response`: it goes with a request for the model's response (requestResponse); the trace says which.
    */
   private noteSent(kind: string, response = false) {
+    // What the model says next answers this (the opener, a note, a warning, a typed line): never dropped as a continuation.
+    this.afterQReset(false);
     this.log.info(voiceLine(this.sessionId, `note sent: ${kind}`));
     this.trace(`${response ? "response request" : "note"} kind=${kind}`);
   }
@@ -1657,6 +1688,19 @@ export class VoiceEngine {
         this.log.info(voiceLine(this.sessionId, `provider ${clip(e.name, 40)}: ${clip(e.detail, 300)}`));
         return;
       case "audio": {
+        // The after-question guard: the model's own continuation after its question and a bookkeeping call is not
+        // played, not recorded and not counted (the trace still shows the response).
+        if (this.afterQDrop || this.afterQArmed()) {
+          const starting = !this.afterQDrop;
+          if (starting) this.startAfterQDrop(true);
+          this.afterQDrop!.audioMs += pcmDurationMs(e.pcm.byteLength);
+          this.traceAudio(e.pcm.byteLength, this.agentTurn?.text.length ?? 0);
+          if (starting) this.trace(`after-question continuation: dropping tools=${this.afterQDrop!.tools.join(",")}`);
+          this.connAudio = true;
+          return;
+        }
+        // New spoken output: tool calls from here on are counted after it.
+        this.afterQ = null;
         const turn = this.ensureAgentTurn();
         this.traceAudio(e.pcm.byteLength, turn.heardAudio ? turn.text.length : 0);
         turn.heardAudio = true;
@@ -1685,6 +1729,11 @@ export class VoiceEngine {
         // A transcription marker ("<no speech detected>") is no text: never shown, stored or a caption.
         const said = this.clean(e.text);
         if (!said) return;
+        // The after-question guard: the words of a continuation being dropped are never shown or stored.
+        if (this.afterQDrop) {
+          this.afterQDropText(maskCardNumbers(said).text);
+          return;
+        }
         // Transcript of the response that already ended: it goes with that response's row, never into a new turn.
         if (e.late && !this.agentTurn) {
           void this.enqueue(() => this.storeLateTranscript(maskCardNumbers(said).text));
@@ -1693,9 +1742,17 @@ export class VoiceEngine {
         // The rest of the transcript of a response already stored as cut (typed text cut it; the provider's
         // transcript of that response keeps coming, from its start): the same utterance, not a new one.
         if (!this.agentTurn && this.cutText && maskCardNumbers(said).text.startsWith(this.cutText)) return;
+        // The continuation's words came before its audio: it is dropped from here.
+        if (this.afterQArmed() && this.afterQContinuationText(maskCardNumbers(said).text)) {
+          this.startAfterQDrop(true);
+          this.trace(`after-question continuation: dropping tools=${this.afterQDrop!.tools.join(",")} (words before audio)`);
+          this.afterQDropText(maskCardNumbers(said).text);
+          return;
+        }
         const turn = this.ensureAgentTurn();
         turn.awaitingContinuation = false;
-        turn.text = maskCardNumbers(said).text;
+        turn.text = this.afterQSkipped(turn, maskCardNumbers(said).text);
+        this.lastSaid = turn.text;
         if (e.final) turn.finalText = true;
         if (!e.final) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(turn.text), final: false, atMs: turn.startMs });
         return;
@@ -1708,6 +1765,7 @@ export class VoiceEngine {
           if (e.final) this.buyerTurn = null;
           return;
         }
+        this.afterQReset(true);
         this.buyerActivity();
         this.markHeard();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
@@ -1721,6 +1779,8 @@ export class VoiceEngine {
         return;
       }
       case "speech-started":
+        // The after-question guard stops at the buyer's first speech (whatever follows is never dropped).
+        this.afterQReset(true);
         // The opening line is protected: no buyer audio reached the model, and nothing here counts as a barge-in.
         if (this.openerGuard) {
           this.trace("buyer speech started (opener protected: ignored)");
@@ -1750,6 +1810,7 @@ export class VoiceEngine {
         // Whether the agent's audio of the current response had already gone out when the model called the tool.
         const r = this.traceResp && !this.traceResp.closedBy ? this.traceResp : null;
         this.traceCallAt.set(e.callId, this.clock.now());
+        this.afterQTool(e.name);
         if (this.speaker) this.rt.responseTools.push(e.name);
         const dup = this.duplicateOf(e.callId, e.name, e.args);
         this.trace(`tool call received name=${clip(e.name, 40)} id=${clip(e.callId, 200).slice(-8)} r=${r ? r.n : "-"} afterSpeech=${r ? `yes sinceAudioMs=${Math.round(this.clock.now() - r.at)}` : "no"}${dup ? " dup=yes" : ""}`);
@@ -1770,6 +1831,20 @@ export class VoiceEngine {
         this.trace(`turn done interrupted=${e.interrupted ? "yes" : "no"} ${this.traceRespSummary()}`);
         this.traceResp = null;
         if (!this.agentTurn) this.cutText = null;
+        // The after-question guard: the dropped continuation ended (one we cancelled ends "interrupted"). The agent's
+        // line before it is stored as said: whole, unless the buyer cut into it; its late transcript (which would
+        // carry the dropped words) is not taken.
+        if (this.afterQDrop || (this.afterQDoneFor !== null && this.afterQDoneFor === this.agentTurn?.id)) {
+          this.endAfterQDrop("done");
+          this.afterQDoneFor = null;
+          const cut = !!this.agentTurn?.interrupted;
+          void this.enqueue(async () => {
+            await this.handleTurnDone(cut);
+            this.lateTarget = null;
+          });
+          return;
+        }
+        this.afterQDoneFor = null;
         void this.enqueue(() => this.handleTurnDone(!!e.interrupted));
         return;
       case "usage":
@@ -1838,6 +1913,8 @@ export class VoiceEngine {
         return;
       }
       case "trace":
+        // The buyer's voice (speech stopped, Gemini's voice activity): the after-question guard stops there too.
+        if (e.what.startsWith("buyer ")) this.afterQReset(true);
         // Text output: the buyer's speech end starts the turn's clock (think = until the reply text is complete).
         if (this.speaker && e.what === "buyer speech stopped") {
           this.rt.heardAt = this.clock.now();
@@ -1853,6 +1930,124 @@ export class VoiceEngine {
         this.onResponseText(e);
         return;
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // The after-question guard (BOOKKEEPING_TOOLS): an output filter, never an instruction
+  // -------------------------------------------------------------------------
+
+  /** This call runs the guard: test calls, or buyer calls once AFTER_QUESTION_GUARD_FOR_BUYER_CALLS is on. */
+  private afterQOn(): boolean {
+    return !!this.loaded && afterQuestionGuardFor(this.loaded.session.isTest);
+  }
+
+  /** A tool call from the model: one more call since the agent's last spoken output (a drop under way ends: what follows the result is a new continuation). */
+  private afterQTool(name: string) {
+    if (this.afterQDrop) this.endAfterQDrop("tool");
+    const w = (this.afterQ ??= { tools: [], pending: 0, question: false, said: "", turnId: null, turnText: "", at: 0 });
+    w.tools.push(name);
+    w.pending++;
+    w.question = false;
+  }
+
+  /**
+   * A call's result went to the model (or never will: cancelled). Once every result is in, the model may continue by
+   * itself: whether the agent's last spoken output ended with a question is taken now, before it can.
+   */
+  private afterQResult() {
+    const w = this.afterQ;
+    if (!w || w.pending <= 0) return;
+    w.pending--;
+    if (w.pending) return;
+    w.said = this.lastSaid;
+    w.question = endsWithQuestion(this.lastSaid.trim());
+    w.turnId = this.agentTurn?.id ?? null;
+    w.turnText = this.agentTurn?.text ?? "";
+    w.at = this.clock.now();
+  }
+
+  /**
+   * The model's output starting now is its own continuation after it asked the buyer a question and then only saved
+   * details: every call since that question was bookkeeping and has its result, the buyer has not spoken and the
+   * engine asked for nothing since (both clear `afterQ`), and it comes right after the results.
+   */
+  private afterQArmed(): boolean {
+    const w = this.afterQ;
+    return !!w && !w.pending && w.question && w.tools.length > 0 && w.tools.every((t) => BOOKKEEPING_TOOLS.includes(t))
+      && this.clock.now() - w.at <= AFTER_QUESTION_CONTINUATION_MS && this.afterQOn();
+  }
+
+  /** The buyer spoke (speech start, words, a typed line) or the engine put something in (a note, a response request): the guard stops. */
+  private afterQReset(buyer: boolean) {
+    if (this.afterQDrop) this.endAfterQDrop(buyer ? "buyer" : "note");
+    this.afterQ = null;
+    this.afterQSkip = null;
+    if (buyer) this.lastSaid = "";
+  }
+
+  /** A transcript while armed (before any audio of it) is the continuation's own: a new turn, or the turn's text grown past what it said. */
+  private afterQContinuationText(text: string): boolean {
+    const w = this.afterQ!;
+    const turn = this.agentTurn;
+    if (!turn || turn.id !== w.turnId) return true;
+    return text.startsWith(w.turnText) && text.trim().length > w.turnText.trim().length;
+  }
+
+  /**
+   * The continuation is dropped from here: its audio and words go nowhere. The agent's turn keeps what it said before
+   * (a whole line: the model went on past it), and is stored when the dropped response ends. Audio output: the
+   * provider's own cancel where it has one (OpenAI response.cancel; Gemini has none: its audio is simply not played).
+   */
+  private startAfterQDrop(audio: boolean) {
+    const w = this.afterQ!;
+    this.afterQ = null;
+    this.afterQSkip = null;
+    this.lastSaid = w.said;
+    const turn = this.agentTurn;
+    const keep = turn && turn.id === w.turnId ? w.turnText : "";
+    this.afterQDrop = { tools: [...new Set(w.tools)], turnId: turn?.id ?? null, turnText: keep, text: "", raw: "", audioMs: 0, audio };
+    if (turn) {
+      if (turn.text !== keep) {
+        turn.text = keep;
+        // Words of the continuation already shown (it wrote before it spoke): the line as it was.
+        if (keep) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(keep), final: false, atMs: turn.startMs });
+      }
+      if (keep) turn.finalText = true;
+      turn.awaitingContinuation = false;
+    }
+    if (audio) this.conn?.cancelResponse?.();
+  }
+
+  /** Words of the continuation being dropped (the whole text so far): only their length is kept, for the log. */
+  private afterQDropText(text: string) {
+    const d = this.afterQDrop!;
+    d.raw = text;
+    d.text = d.turnText && text.startsWith(d.turnText) ? text.slice(d.turnText.length) : text;
+  }
+
+  /**
+   * The drop ends: the dropped response ended, called a tool, the buyer spoke, the engine put something in, or the
+   * call stops. One log line (lengths only, never words).
+   */
+  private endAfterQDrop(by: "done" | "tool" | "buyer" | "note" | "stop") {
+    const d = this.afterQDrop;
+    if (!d) return;
+    this.afterQDrop = null;
+    this.afterQDrops++;
+    this.log.info(voiceLine(this.sessionId, `after-question continuation dropped len=${d.text.trim().length} audioMs=${d.audio ? Math.round(d.audioMs) : "-"} tools=${d.tools.join(",")}`));
+    // Gemini's transcript is the whole turn so far: once the turn goes on (a tool call), the dropped words are cut from it.
+    if (by === "tool" && d.turnId && d.raw && d.raw.startsWith(d.turnText)) this.afterQSkip = { turnId: d.turnId, keep: d.turnText, from: d.raw };
+    // Ended before its response did: that response's turn-done, for the same turn, still ends the agent's line as said.
+    if (d.audio && (by === "buyer" || by === "note")) this.afterQDoneFor = d.turnId;
+  }
+
+  /** The agent's transcript as stored: the words of a dropped continuation left out (afterQSkip). */
+  private afterQSkipped(turn: AgentTurn, text: string): string {
+    const sk = this.afterQSkip;
+    if (!sk) return text;
+    if (sk.turnId === turn.id && text.startsWith(sk.from)) return `${sk.keep} ${text.slice(sk.from.length)}`.trim();
+    this.afterQSkip = null;
+    return text;
   }
 
   // -------------------------------------------------------------------------
@@ -1893,6 +2088,15 @@ export class VoiceEngine {
       return;
     }
     if (!text) return;
+    // The after-question guard: the model's own continuation after its spoken question and a bookkeeping call is not
+    // handed to the speaker (never spoken, stored or counted); its tool calls go with the agent's next line.
+    if (this.afterQArmed()) {
+      this.startAfterQDrop(false);
+      this.trace(`after-question continuation: dropping tools=${this.afterQDrop!.tools.join(",")} (not spoken)`);
+      this.afterQDropText(text);
+      this.endAfterQDrop("done");
+      return;
+    }
     this.startSpeech(this.clean(text));
   }
 
@@ -1909,6 +2113,9 @@ export class VoiceEngine {
     turn.text = said;
     turn.finalText = true;
     turn.awaitingContinuation = false;
+    // Spoken output: the after-question guard counts tool calls from here, against this line.
+    this.afterQ = null;
+    this.lastSaid = said;
     const now = this.clock.now();
     const from = this.rt.heardAt;
     const toolRounds = this.rt.toolRounds;
@@ -2064,7 +2271,10 @@ export class VoiceEngine {
    * left out), marked not to start speech (scheduling SILENT on Gemini) and naming the call it duplicates.
    */
   private answerDuplicate(callId: string, name: string, first: RecentToolCall) {
-    if (this.cancelledCalls.has(callId)) return;
+    if (this.cancelledCalls.has(callId)) {
+      this.afterQResult();
+      return;
+    }
     const { say_this: _say, message: _msg, scheduling: _sch, ...data } = first.result ?? { ok: true };
     void _say;
     void _msg;
@@ -2073,6 +2283,7 @@ export class VoiceEngine {
     if (this.conn) this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=0ms chars=${JSON.stringify(result).length} dup=yes`);
     this.traceCallAt.delete(callId);
     this.conn?.sendToolResult(callId, name, result);
+    this.afterQResult();
   }
 
   /**
@@ -2331,6 +2542,8 @@ export class VoiceEngine {
     const { conv, account } = this.loaded;
     const masked = maskCardNumbers(raw.replace(/\s+/g, " ").trim().slice(0, 4000));
     if (!masked.text) return;
+    // A buyer line (a typed one comes only here): the after-question guard stops.
+    this.afterQReset(true);
     // A later transcript of the buyer's last spoken line of THIS call (the same utterance) updates its row: one row per
     // buyer turn. The provider says so (`revises`), or the text is that line grown (a running transcript) shortly after.
     const prev = this.lastBuyerLine;
@@ -2765,6 +2978,7 @@ export class VoiceEngine {
     }
     this.traceCallAt.delete(callId);
     turn.awaitingContinuation = true;
+    this.afterQResult();
     this.send({ t: "tool", id: callId, name, label, status: r.outcome });
   }
 
@@ -3140,6 +3354,9 @@ export class VoiceEngine {
     this.reconnecting = true;
     this.setState("reconnecting");
     this.closeModel();
+    // A new connection: the after-question guard starts over.
+    this.afterQReset(false);
+    this.afterQDoneFor = null;
     await this.finalizeAgentTurn("stop");
     // Text output: a reply already handed to our speaker goes on playing (the model is not needed for it).
     if (!this.player?.active) this.agentSpeaking = false;
@@ -3197,14 +3414,16 @@ export class VoiceEngine {
       ...(this.lastError ? { lastError: this.lastError } : {}),
     };
     usage = usage ? { ...usage, endDetail } : ({ ...EMPTY_USAGE, endDetail } as VoiceCallUsageRecord);
+    this.endAfterQDrop("stop");
     this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${durationSec} activeSec=${activeSec} by=${endDetail.by}`
       + `${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""}${this.modelClose ? ` model=${this.modelClose.code ?? "-"}/"${this.modelClose.reason}"@${this.modelClose.msAfterConnect ?? "?"}ms` : ""}`
-      + `${this.diagnostics.size ? ` diagnostics=${[...this.diagnostics].map(([k, n]) => `${k}:${n}`).join(",")}` : ""}${this.profile ? ` engine=${this.profile.engine}` : ""}`));
+      + `${this.diagnostics.size ? ` diagnostics=${[...this.diagnostics].map(([k, n]) => `${k}:${n}`).join(",")}` : ""}${this.profile ? ` engine=${this.profile.engine}` : ""}`
+      + `${this.afterQDrops ? ` afterQ=${this.afterQDrops}` : ""}`));
     const answerMsAvg = this.answerMsAvg();
     const rtu = (usage as { rtEleven?: RtElevenUsage }).rtEleven;
     if (rtu) {
       const ms = (v: number | null) => (v === null ? "-" : `${v}ms`);
-      this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} rt summary turns=${rtu.turns} median think=${ms(rtu.medianThinkMs)} speak=${ms(rtu.medianSpeakMs)} total=${ms(rtu.medianAnswerMs)} toolRounds=${rtu.medianToolRounds ?? "-"} dropped=${rtu.droppedTexts} bargeIns=${rtu.bargeIns} chars=${rtu.spokenChars} speakModel=${rtu.speakModel || "-"} costMicros=${costMicros} (realtime ${rtu.realtimeCostMicros} + speak ${rtu.speakCostMicros}${rtu.speakRateKnown ? "" : ", speech rate unknown"})`));
+      this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} rt summary turns=${rtu.turns} median think=${ms(rtu.medianThinkMs)} speak=${ms(rtu.medianSpeakMs)} total=${ms(rtu.medianAnswerMs)} toolRounds=${rtu.medianToolRounds ?? "-"} dropped=${rtu.droppedTexts}${this.afterQDrops ? ` afterQ=${this.afterQDrops}` : ""} bargeIns=${rtu.bargeIns} chars=${rtu.spokenChars} speakModel=${rtu.speakModel || "-"} costMicros=${costMicros} (realtime ${rtu.realtimeCostMicros} + speak ${rtu.speakCostMicros}${rtu.speakRateKnown ? "" : ", speech rate unknown"})`));
     }
     const set = {
       status: "ended" as const, endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec,

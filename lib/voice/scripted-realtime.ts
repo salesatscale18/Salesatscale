@@ -53,6 +53,8 @@ export type ScriptStep = (
   | { kind: "expectBuyer"; line: string }
   /** Several tool calls in ONE model response (parallel tool calls): all are emitted, then all results awaited. */
   | { kind: "tools"; calls: { name: string; args: unknown | ((ctx: ScriptCtx) => unknown) }[] }
+  /** The model's response ends here (its final transcript and turn-done; text output: its text), without a buyer turn. */
+  | { kind: "endResponse" }
 ) & {
   /** The step runs only when this holds (a branch on an earlier tool result); otherwise it is skipped. */
   when?: (ctx: ScriptCtx) => boolean;
@@ -64,6 +66,11 @@ export const tool = (name: string, args: unknown | ((ctx: ScriptCtx) => unknown)
 export const expectBuyer = (line: string): ScriptStep => ({ kind: "expectBuyer", line });
 /** Several tool calls in one model response (their arguments are worked out before any of them runs). */
 export const tools = (...calls: { name: string; args: unknown | ((ctx: ScriptCtx) => unknown) }[]): ScriptStep => ({ kind: "tools", calls });
+/**
+ * The response ends here, before the next step (no buyer turn): e.g. a spoken question as a response of its own, then
+ * the model's next response (a tool call and words after its result) with nothing from the buyer in between.
+ */
+export const endResponse = (): ScriptStep => ({ kind: "endResponse" });
 /** A step that runs only when `when` holds. */
 export const onlyIf = (when: (ctx: ScriptCtx) => boolean, step: ScriptStep): ScriptStep => ({ ...step, when });
 
@@ -595,6 +602,13 @@ export type ScriptedOptions = {
    * dropped everywhere.
    */
   markers?: "with_text" | "only";
+  /**
+   * OpenAI-style responses (audio output): a tool call ends the model's response (its final transcript, then turn-done),
+   * the words after the result are a new response with a transcript of its own, and cancelResponse() stops the response
+   * being spoken (it ends cut: turn-done interrupted). Absent: Gemini-style, as always (one turn across tool calls,
+   * its transcript the whole turn so far; cancelResponse() changes nothing).
+   */
+  openaiResponses?: boolean;
 };
 
 /** The marker the scripted model emits in `markers` mode. */
@@ -618,6 +632,7 @@ export class ScriptedRealtime implements RealtimeModel {
     const script = (cfg.scenario && scripts[cfg.scenario]) || this.opts.defaultScript || DEFAULT_SCRIPT;
     const c = new ScriptedConnection(cfg, onEvent, script, {
       clock: this.opts.clock ?? systemClock, wordMs: this.opts.wordMs ?? 250, speechRms: this.opts.speechRms ?? 0.02, tone: this.opts.tone ?? true, markers: this.opts.markers,
+      ...(this.opts.openaiResponses ? { openaiResponses: true } : {}),
       // A resumed call (reconnect) carries on after the script position it had.
       resumed: this.connections.length > 0,
       startAt: this.connections.at(-1)?.position ?? 0,
@@ -666,7 +681,7 @@ export class ScriptedConnection implements RealtimeConnection {
     readonly cfg: RealtimeSessionConfig,
     private emit: (e: RealtimeEvent) => void,
     private script: Script,
-    private o: { clock: Clock; wordMs: number; speechRms: number; tone: boolean; markers?: "with_text" | "only"; resumed: boolean; startAt: number; results?: Record<string, Record<string, unknown>[]> },
+    private o: { clock: Clock; wordMs: number; speechRms: number; tone: boolean; markers?: "with_text" | "only"; openaiResponses?: boolean; resumed: boolean; startAt: number; results?: Record<string, Record<string, unknown>[]> },
   ) {
     this.position = o.startAt;
     this.vad = new EnergyVad({ threshold: o.speechRms, minSpeechMs: 200, endSilenceMs: 700 });
@@ -727,6 +742,15 @@ export class ScriptedConnection implements RealtimeConnection {
     this.sent.responses.push(instructions);
     this.interjections.push(instructions);
     this.wake();
+  }
+
+  /** How often the engine asked to cancel the current response (tests read it). */
+  cancels = 0;
+  /** OpenAI-style (`openaiResponses`): the response being spoken stops and ends cut. Otherwise only counted (Gemini has no cancel). */
+  cancelResponse(): void {
+    if (this.closed) return;
+    this.cancels++;
+    if (this.o.openaiResponses && this.agentSpeaking) this.interrupted = true;
   }
 
   /** Notes from the app (the order form's step): recorded, never answered (tests and the harness read them). */
@@ -812,7 +836,10 @@ export class ScriptedConnection implements RealtimeConnection {
         this.position++;
         continue;
       }
-      if (step.kind === "expectBuyer") {
+      if (step.kind === "endResponse") {
+        this.endTurn();
+        this.position++;
+      } else if (step.kind === "expectBuyer") {
         this.endTurn();
         const turn = await this.nextBuyerTurn();
         if (this.closed || !turn) return;
@@ -847,6 +874,8 @@ export class ScriptedConnection implements RealtimeConnection {
         this.emit({ type: "tool-call", callId, name: step.name, args });
         // Text output: a tool call ends the model's response (its text with it), as on OpenAI realtime.
         if (this.textOutput) this.endTextResponse(1);
+        // OpenAI-style audio: the response that made the call ends with it.
+        else if (this.o.openaiResponses) this.endTurn();
         await this.until(() => this.toolResults.has(callId));
         if (this.closed) return;
         const r = this.toolResults.get(callId);

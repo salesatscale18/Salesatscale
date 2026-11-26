@@ -474,6 +474,16 @@ export const THINKING_EFFORT_FOR_BUYER_CALLS: boolean = false;
  * owner decision of 26 Nov 2026 (proven on test calls): every call, unless the version turned it off.
  */
 export const OPENER_PROTECTION_FOR_BUYER_CALLS: boolean = true;
+/**
+ * The after-question guard (lib/voice/engine.ts, every model family) on BUYER calls. Off: test calls only. An
+ * engine-side output filter, never an instruction: the model's own continuation after it asked the buyer a question
+ * and then only saved details (update_deal_state) is not played, stored or counted.
+ */
+export const AFTER_QUESTION_GUARD_FOR_BUYER_CALLS: boolean = false;
+/** Whether a call runs the after-question guard (test calls only unless AFTER_QUESTION_GUARD_FOR_BUYER_CALLS is on). */
+export function afterQuestionGuardFor(isTest: boolean, forBuyers: boolean = AFTER_QUESTION_GUARD_FOR_BUYER_CALLS): boolean {
+  return isTest || forBuyers;
+}
 
 /**
  * Google's automaticActivityDetection (Gemini Live `realtimeInputConfig.automaticActivityDetection`, sent raw through

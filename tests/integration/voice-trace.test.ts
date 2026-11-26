@@ -19,7 +19,9 @@ import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/serv
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const SCRIPTED = { VOICE_REALTIME: "scripted" };
-const SENTENCE = "Two sites, got it. Which matters more to you, price or setup time?";
+// Not a question: after a question and a bookkeeping call the second sentence would be dropped on a test call (the
+// after-question guard, tests/integration/voice-after-question.test.ts); this test pins the trace of the repeat itself.
+const SENTENCE = "Two sites, got it. Price or setup time, whichever matters more to you.";
 
 describe("voice model event trace (scripted model)", () => {
   let t: Awaited<ReturnType<typeof createTestDb>>;
