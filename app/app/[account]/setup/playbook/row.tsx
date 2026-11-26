@@ -113,10 +113,15 @@ export function useRowSave(onDone: () => void, onFail?: () => void) {
  * error at the row when it is refused. Focus moves into the fields on open and
  * back to "Change" on close. `extra`: more buttons in the read state (Remove).
  */
-export function EditRow({ id, label, read, editor, toChange, own, hint, readHint, info, infoLabel, infoWide, wide, changeLabel, extra, editable = true, item, lead, aside, rowAttrs, after, focusAfter }: {
+export function EditRow({ id, label, read, editor, toChange, own, hint, readHint, info, infoLabel, infoWide, wide, changeLabel, extra, editable = true, item, lead, aside, rowAttrs, after, focusAfter, keepRead }: {
   id: string;
   label: ReactNode;
   read: ReactNode;
+  /**
+   * `read` stays as the row's header while it is open, and the fields open under it (an offer: Change edits its
+   * numbers, not its name). Without it the fields take the read value's place (a list item edits its own text).
+   */
+  keepRead?: boolean;
   /** The fields; `e(key)` gives the row's own error for an input (also for aria-invalid). */
   editor?: (e: ErrorOf) => ReactNode;
   /** The change to save from the row's form; null keeps it open (nothing to save); a refusal shows its message at the row. */
@@ -172,15 +177,17 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, readHint
   const ownKeys = own ?? [];
   const e: ErrorOf = (key) => (errors && owns(ownKeys, key) ? errors[key] : undefined);
   return (
-    <div className={`pb-row${wide || item ? " pb-row--wide" : ""}${item ? " pb-row--item" : ""}`} data-row={id} data-open={open ? "" : undefined} aria-busy={pending || undefined} data-info-scope="" {...rowAttrs}>
+    <div className={`pb-row${wide || item ? " pb-row--wide" : ""}${item ? " pb-row--item" : ""}`} data-row={id} data-open={open ? "" : undefined} data-keep-read={keepRead ? "" : undefined} aria-busy={pending || undefined} data-info-scope="" {...rowAttrs}>
       {wide || item ? <span className="sas-sr" id={labelId}>{label}</span> : info ? (
         <span className="pb-row__label pb-row__label--info"><span id={labelId}>{label}</span><InfoTip label={infoLabel ?? String(label)} wide={infoWide}>{info}</InfoTip></span>
       ) : <span className="pb-row__label" id={labelId}>{label}</span>}
       {item && lead !== undefined ? <span className="pb-row__lead">{open ? null : lead}</span> : null}
       <div className="pb-row__value">
         {open && editor ? (
+          <>
+          {keepRead ? <div className="pb-row__head">{read}</div> : null}
           <form
-            ref={formRef} className="pb-row__form" aria-labelledby={labelId} noValidate
+            ref={formRef} className={`pb-row__form${keepRead ? " pb-row__form--under" : ""}`} aria-labelledby={labelId} noValidate
             onSubmit={(ev) => {
               ev.preventDefault();
               const change = toChange?.(new FormData(ev.currentTarget)) ?? null;
@@ -197,6 +204,7 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, readHint
               <button type="button" className={buttonClass("secondary", "sm")} disabled={pending} onClick={() => { setErrors(null); close(); }}>{t("playbook.row.cancel")}</button>
             </span>
           </form>
+          </>
         ) : (
           <>
             {read}

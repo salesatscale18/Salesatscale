@@ -150,7 +150,7 @@ function OfferList({ offers, quoteValidDays }: { offers: StoredOffer[]; quoteVal
     const at = `offer.${o.type}`;
     return (
       <EditRow
-        id={at} label={label} item={{ what: label }} own={[at]} lead={lead}
+        id={at} label={label} item={{ what: label }} own={[at]} lead={lead} keepRead
         rowAttrs={{ "data-offer": o.type, "data-on": o.on ? "1" : "0" }}
         read={(
           <span className="pb-offer-read">
@@ -163,6 +163,7 @@ function OfferList({ offers, quoteValidDays }: { offers: StoredOffer[]; quoteVal
               <InfoTip label={label}>
                 <span data-offer-about={o.type}>{t(`playbook.offers.about.${o.type}` as MessageKey, { days: quoteValidDays })}</span>
                 {o.type === "pay_yearly" ? <span data-offer-yearly-note="">{t("playbook.offers.yearly_note")}</span> : null}
+                {o.type === "smaller_start" ? <span data-offer-locked-why="">{t("playbook.offers.locked_why")}</span> : null}
               </InfoTip>
             </span>
           </span>
@@ -175,7 +176,10 @@ function OfferList({ offers, quoteValidDays }: { offers: StoredOffer[]; quoteVal
         extra={(
           <span className="pb-offer__end">
             {o.type === "smaller_start" ? (
-              <span className="sas-small pb-offer__always">{t("playbook.offers.always_on")}</span>
+              /* It cannot be switched off (offer-settings: always on, a switch is refused): a lock in the switch's place. */
+              <span className="pb-offer__lock" role="img" aria-label={t("playbook.offers.locked", { name: label })} title={t("playbook.offers.always_on")} data-offer-lock="">
+                <Icon name="lock" />
+              </span>
             ) : (
               <FocusSwitch
                 focusId={`${at}.switch`} checked={o.on} disabled={busy} aria-label={t("playbook.offers.switch", { name: label })}

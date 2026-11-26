@@ -128,7 +128,8 @@ describe("Playbook › Offers part and the Limits discounts row", () => {
     for (const x of [
       "What the agent may offer after a price objection, one at a time, in this order.",
       "After a price objection the agent gets one offer at a time, in this order.",
-      "Decide now", "3% off at most", "General discount", "10% off at most", "A smaller first step", "No discount", "Always on",
+      "Decide now", "3% off at most", "General discount", "10% off at most", "A smaller first step", "No discount",
+      "Always on: it stays in the list and can't be switched off.",
       "A saving when the buyer signs while the quote is valid (7 days).",
       "Spoken condition for now: the quote can't record a yearly term yet.",
       "Anything above these", "A bigger request waits for your approval.", "Always last",
@@ -137,14 +138,69 @@ describe("Playbook › Offers part and the Limits discounts row", () => {
     // Switches: one per offer but the always-on one; off rows read "Off".
     expect((html.match(/role="switch"/g) ?? []).length).toBe(4);
     expect(html).toMatch(/aria-label="Offer More units"/);
-    expect(html).not.toMatch(/<form class="pb-row__form"/);
+    expect(html).not.toMatch(/<form class="pb-row__form/);
     expect(html).toContain('aria-label="More for Decide now"');
+  });
+
+  it("the switch column: a switch on every offer that can be switched off, a lock (named, with its reason in the (i)) on the always-on one", async () => {
+    const html = await render(PartPage, { part: "offers" });
+    const rowOf = (type: string) => html.match(new RegExp(`<div class="pb-row[^"]*" data-row="offer\\.${type}"[\\s\\S]*?(?=<div role="listitem"|<div class="pb-row pb-row--item pb-offer--pinned")`))?.[0] ?? "";
+    for (const type of ["decide_now", "general", "more_units", "pay_yearly"]) {
+      const row = rowOf(type);
+      expect(row, type).toMatch(/role="switch"/);
+      expect(row, type).not.toContain("data-offer-lock");
+    }
+    const smaller = rowOf("smaller_start");
+    expect(smaller).not.toMatch(/role="switch"/);
+    expect(smaller).toMatch(/<span class="pb-offer__lock" role="img" aria-label="A smaller first step is always on"[^>]*data-offer-lock=""/);
+    // The lock sits where the switch sits: first in the row's end column, before the ⋯ menu.
+    expect(smaller.indexOf("data-offer-lock=\"\"")).toBeGreaterThan(smaller.indexOf('class="pb-offer__end"'));
+    expect(smaller.indexOf("data-offer-lock=\"\"")).toBeLessThan(smaller.indexOf('data-offer-menu="smaller_start"'));
+    expect(smaller).toContain('data-offer-locked-why="">Always on: it stays in the list and can&#x27;t be switched off.');
+    expect(text(smaller)).not.toContain("Always on ");
+    // Only the always-on row carries the reason.
+    expect((html.match(/data-offer-locked-why/g) ?? []).length).toBe(1);
+    // The lock takes the switch's width (sas.css: .sas-switch is 40px wide).
+    expect(css).toMatch(/\.pb-offer__lock \{[^}]*width: 40px; height: 22px;/);
+    expect(css).toMatch(/\.sas-switch \{[^}]*width: 40px; height: 22px;/);
+  });
+
+  it("an open row keeps its header (place, icon, name, (i)) and opens its fields under it", async () => {
+    for (const type of ["general", "decide_now", "more_units", "pay_yearly"]) {
+      const html = await render(PartPage, { part: "offers" }, { edit: `offer.${type}` });
+      if (type === "general") save("offers-open-general", html);
+      const row = html.match(new RegExp(`<div class="pb-row[^"]*" data-row="offer\\.${type}" data-open=""[\\s\\S]*?</form>`))?.[0] ?? "";
+      expect(row, type).not.toBe("");
+      const head = row.indexOf('class="pb-row__head"');
+      const form = row.indexOf("<form");
+      expect(head, type).toBeGreaterThan(-1);
+      expect(head, type).toBeLessThan(form);
+      const header = row.slice(head, form);
+      expect(header, type).toContain(`<strong class="pb-offer__name">${type === "general" ? "General discount" : type === "decide_now" ? "Decide now" : type === "more_units" ? "More units" : "Pay yearly"}</strong>`);
+      expect(header, type).toContain('class="pb-offer__icon"');
+      // Active rows keep their number; rows that are off keep their "–".
+      expect(header, type).toMatch(type === "general" || type === "decide_now" ? /class="pb-offer__place">\d</ : /class="pb-offer__place pb-offer__place--off">/);
+      expect(header, type).toContain(`data-offer-about="${type}"`);
+      expect(row, type).toContain('<form class="pb-row__form pb-row__form--under"');
+      expect(row, type).toContain(`id="pb-offer.${type}.pct"`);
+      expect(row, type).toContain("data-keep-read=\"\"");
+    }
+    // The fields are indented to the name (place 24px + 10px + icon 32px + 10px).
+    expect(css).toContain(".pb-offers .pb-row__form--under { padding-inline-start: 76px; }");
+    // Its value keeps the column after the handle while open (also on a phone).
+    expect(css).toMatch(/\.pb-row--item\[data-open\]\[data-keep-read\]:has\(> \.pb-row__lead\) > \.pb-row__value \{ grid-column: 2 \/ -1;/);
+  });
+
+  it("other list parts still edit their item in place (the field replaces the item's own text)", async () => {
+    const html = await render(PartPage, { part: "never" }, { edit: "never.0" });
+    expect(html).not.toContain("data-keep-read");
+    expect(html).not.toContain("pb-row__head");
   });
 
   it("one row open: its numbers only, with Save / Cancel (more units also has its units)", async () => {
     const html = await render(PartPage, { part: "offers" }, { edit: "offer.more_units" });
     save("offers-open", html);
-    expect(html.match(/<form class="pb-row__form"/g)?.length).toBe(1);
+    expect(html.match(/<form class="pb-row__form/g)?.length).toBe(1);
     expect(html).toMatch(/data-row="offer\.more_units" data-open=""/);
     expect(html).toContain('id="pb-offer.more_units.pct"');
     expect(html).toContain('id="pb-offer.more_units.units"');

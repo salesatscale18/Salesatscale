@@ -471,11 +471,11 @@ describe("Playbook S1 against the database", () => {
         for (const x of readTexts) expect(text).toContain(x);
         if (!edit) return;
         // Read first: no open fields, a Change per row.
-        expect(html).not.toMatch(/<form class="pb-row__form"/);
+        expect(html).not.toMatch(/<form class="pb-row__form[ "]/);
         expect(html).toMatch(/>Change<\/button>|aria-label="Change: /);
         const open = await render(PartPage, { part }, { edit });
         save(`part-${part}-edit`, open);
-        expect(open.match(/<form class="pb-row__form"/g)?.length).toBe(1);
+        expect(open.match(/<form class="pb-row__form[ "]/g)?.length).toBe(1);
         expect(open).toMatch(new RegExp(`data-row="${edit.replace(".", "\\.")}" data-open=""`));
         for (const x of editTexts) expect(open).toContain(x);
       });
