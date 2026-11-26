@@ -1,18 +1,17 @@
 /**
  * The seller's offers list (Playbook › Limits): derivation from the discount
  * limit, the derived maxDiscountBp, server-side validation, the form rows, the
- * Compare rows and the panel's markup.
+ * Compare rows (their own "Offers" area) and the one-row changes of the
+ * Offers part (switch, move, numbers). The part's markup: tests/integration/offers-part.test.tsx.
  */
 import { describe, expect, it } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
 import type { Playbook } from "@/db/schema";
 import { defaultPlaybook, parsePlaybookRows, playbookRowsFromForm } from "@/lib/agent/playbook";
 import {
-  maxDiscountBpFromOffers, maxDiscountBpOf, offersOf, parseOfferRows, syncPlaybookOffers, withDiscountLimit,
+  applyOfferChange, maxDiscountBpFromOffers, maxDiscountBpOf, moveOffer, offersOf, parseOfferRows, switchOffer, syncPlaybookOffers, withDiscountLimit,
   type PlaybookWithOffers, type StoredOffer,
 } from "@/lib/agent/offer-settings";
 import { diffVersions } from "@/lib/agent/version-diff";
-import { activeFirst, generalLimit, moveActive, offerRowsFor, OffersPanel, switchRow, type OfferRow } from "@/app/app/[account]/setup/playbook/offers";
 
 const types = (l: readonly { type: string }[]) => l.map((o) => o.type);
 
@@ -138,7 +137,7 @@ describe("the playbook form: offers rows replace the single limit", () => {
   });
 });
 
-describe("Compare versions: offers in Limits", () => {
+describe("Compare versions: offers in their own Offers area, in words", () => {
   const opts = { platformDetails: false, voiceModel: { before: "google/gemini-3.8-live", after: "google/gemini-3.8-live" } };
   const v = (playbook: Playbook) => ({ playbook, model: "m", effort: "medium", voiceSettings: null });
   const text = (segs: { text: string }[] | null) => (segs ?? []).map((s) => s.text).join("");
@@ -154,8 +153,8 @@ describe("Compare versions: offers in Limits", () => {
     ] };
     const rows = diffVersions(v(a), v(b), opts);
     expect(rows.map((r) => [r.area, r.item, r.kind, text(r.before), text(r.after), r.positions ?? null])).toEqual([
-      ["limits", "Offers the agent may make · Pay yearly", "changed", "Off · 8% off at most", "On · 8% off at most", null],
-      ["limits", "Offers the agent may make · More units", "moved", "More units", "More units", { before: 2, after: 3 }],
+      ["offers", "Pay yearly", "changed", "Off · 8% off at most", "On · 8% off at most", null],
+      ["offers", "More units", "moved", "More units", "More units", { before: 2, after: 3 }],
     ]);
   });
 
@@ -166,51 +165,43 @@ describe("Compare versions: offers in Limits", () => {
   });
 });
 
-describe("the Offers panel", () => {
-  const rows = offerRowsFor(defaultPlaybook("Acme", 500));
+describe("Offers part: one row at a time", () => {
+  const list = offersOf(defaultPlaybook("Acme", 500));
 
-  it("active rows are numbered in order; off rows sit below, greyed, without a number; the approval row is pinned last", () => {
-    const html = renderToStaticMarkup(<OffersPanel rows={rows} onChange={() => {}} errors={{}} quoteValidDays={7} />);
-    const order = [...html.matchAll(/data-offer="([a-z_]+)" data-on="(\d)"/g)].map((m) => [m[1], m[2]]);
-    expect(order).toEqual([["smaller_start", "1"], ["general", "1"], ["more_units", "0"], ["decide_now", "0"], ["pay_yearly", "0"]]);
-    expect(html.indexOf('data-offer="above"')).toBeGreaterThan(html.indexOf('data-offer="pay_yearly"'));
-    const places = [...html.matchAll(/class="pb-offer__place[^"]*">([^<]*)</g)].map((m) => m[1]);
-    expect(places.slice(0, 2)).toEqual(["1", "2"]);
-    expect(html).toContain("Offers the agent may make");
-    expect(html).toContain("After a price objection the agent gets one offer at a time, in this order.");
-    expect(html).toContain("Spoken condition for now: the quote can&#x27;t record a yearly term yet.");
-    expect(html).toContain("A saving when the buyer signs while the quote is valid (7 days).");
-    expect(html).toContain("Always on");
-    expect(html).toContain("Anything above these");
-    // Off rows: no handle and no number; the handle is a focusable button with its keyboard hint.
-    expect((html.match(/class="pb-offer__grip"/g) ?? []).length).toBe(2);
-    expect(html).toContain('aria-label="Move General discount. Use the up and down arrow keys to change its place."');
-    expect(html).toContain('name="offerOrder" value="smaller_start,general,more_units,decide_now,pay_yearly"');
-    expect(html).toContain('aria-live="polite"');
-  });
-
-  it("move up / down, switching on and off keep active rows first", () => {
-    const allOn = rows.map((r) => ({ ...r, on: true }));
-    expect(types(moveActive(allOn, "general", -1))).toEqual(["general", "smaller_start", "more_units", "decide_now", "pay_yearly"]);
-    expect(types(moveActive(allOn, "smaller_start", -1))).toEqual(types(allOn));
-    const on = switchRow(rows, "decide_now", true);
+  it("switching on puts the row last among the active ones; off puts it first among the rows that are off; a smaller first step stays on", () => {
+    const on = switchOffer(list, "decide_now", true);
     expect(on.map((r) => [r.type, r.on])).toEqual([["smaller_start", true], ["general", true], ["decide_now", true], ["more_units", false], ["pay_yearly", false]]);
-    const off = switchRow(on, "general", false);
+    const off = switchOffer(on, "general", false);
     expect(off.map((r) => [r.type, r.on])).toEqual([["smaller_start", true], ["decide_now", true], ["general", false], ["more_units", false], ["pay_yearly", false]]);
-    // A smaller first step cannot be switched off.
-    expect(switchRow(rows, "smaller_start", false)).toEqual(rows);
-    expect(generalLimit(rows)).toBe("5");
-    expect(generalLimit(off)).toBe("");
+    expect(switchOffer(list, "smaller_start", false)).toEqual(list);
+    // The limit without approval follows General (the never-do "Covered by Limits" check and publish read it).
+    expect(maxDiscountBpFromOffers(list)).toBe(500);
+    expect(maxDiscountBpFromOffers(off)).toBe(0);
   });
 
-  it("after a refused save the rows come back as sent", () => {
-    const sent = [{ type: "pay_yearly", on: "1", pct: "9" }, { type: "smaller_start" }, { type: "bogus", on: "1" }];
-    const back: OfferRow[] = offerRowsFor(defaultPlaybook("Acme", 500), sent);
-    expect(back.map((r) => [r.type, r.on, r.pct])).toEqual([
-      ["pay_yearly", true, "9"], ["smaller_start", true, ""], ["general", false, "5"], ["more_units", false, "5"], ["decide_now", false, "3"],
-    ]);
-    expect(activeFirst(back)).toEqual(back);
+  it("a move changes the place among the active rows only; off rows never move", () => {
+    const allOn = list.map((r) => ({ ...r, on: true }));
+    expect(types(moveOffer(allOn, "general", 0))).toEqual(["general", "smaller_start", "more_units", "decide_now", "pay_yearly"]);
+    expect(types(moveOffer(allOn, "smaller_start", 4))).toEqual(["general", "more_units", "decide_now", "pay_yearly", "smaller_start"]);
+    expect(moveOffer(list, "more_units", 0)).toEqual(list);
+  });
+
+  it("applyOfferChange: the whole list as rows for the validator; out-of-date or impossible changes refused", () => {
+    const r = applyOfferChange(list, { kind: "offer", type: "more_units", pct: "7", units: "12" });
+    expect(r.ok && r.rows.find((x) => x.type === "more_units")).toEqual({ type: "more_units", on: "0", pct: "7", units: "12" });
+    expect(r.ok && types(r.rows)).toEqual(types(list));
+    const parsed = r.ok ? parseOfferRows(r.rows, {}) : [];
+    expect(parsed.find((o) => o.type === "more_units")).toEqual({ type: "more_units", on: false, percentBp: 700, minUnits: 12 });
+    // A bad percent goes to the validator (its message at offer.<type>.pct).
+    const bad = applyOfferChange(list, { kind: "offer", type: "general", pct: "75" });
+    const errors: Record<string, string> = {};
+    if (bad.ok) parseOfferRows(bad.rows, errors);
+    expect(errors).toEqual({ "offer.general.pct": "Enter a percentage from 0 to 50." });
+    expect(applyOfferChange(list, { kind: "offerSwitch", type: "smaller_start", on: false })).toEqual({ ok: false, errors: { offers: "A smaller first step is always in the list." } });
+    expect(applyOfferChange(list, { kind: "offer", type: "smaller_start", pct: "5" }).ok).toBe(false);
+    expect(applyOfferChange(list, { kind: "offerMove", type: "pay_yearly", to: 0 }).ok).toBe(false);
+    expect(applyOfferChange(list, { kind: "offerMove", type: "general", to: 2 }).ok).toBe(false);
+    const moved = applyOfferChange(list, { kind: "offerMove", type: "general", to: 0 });
+    expect(moved.ok && types(moved.rows)).toEqual(["general", "smaller_start", "more_units", "decide_now", "pay_yearly"]);
   });
 });
-
-
