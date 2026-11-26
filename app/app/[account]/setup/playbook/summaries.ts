@@ -11,17 +11,18 @@ import { questionBudgetOf } from "@/lib/agent/core/stage";
 import { objectionAttemptsOf } from "@/lib/agent/core/objections";
 import { unpaidRemindersOf, type PlaybookWithUnpaid } from "@/lib/orders/unpaid-reminders";
 import type { PlaybookPart } from "@/lib/agent/playbook-parts";
+import { activeOffers, offersOf, type StoredOffer } from "@/lib/agent/offer-settings";
 import type { PlaysSummary } from "./plays/overview";
 
 export const PART_LABEL: Record<PlaybookPart, MessageKey> = {
   agent: "playbook.part.agent", opening: "playbook.part.opening", asks: "playbook.part.asks", plays: "playbook.part.plays", objections: "playbook.part.objections",
-  close: "playbook.part.close", limits: "playbook.part.limits", never: "playbook.part.never", after: "playbook.part.after",
+  offers: "playbook.part.offers", close: "playbook.part.close", limits: "playbook.part.limits", never: "playbook.part.never", after: "playbook.part.after",
 };
 
 /** One line under the part's name in its view (UX: one line each; the rest sits behind the part's "How … works" disclosure). */
 export const PART_SUB: Record<PlaybookPart, MessageKey> = {
   agent: "playbook.part_sub.agent", opening: "playbook.part_sub.opening", asks: "playbook.part_sub.asks", plays: "playbook.part_sub.plays", objections: "playbook.part_sub.objections",
-  close: "playbook.part_sub.close", limits: "playbook.part_sub.limits", never: "playbook.part_sub.never", after: "playbook.part_sub.after",
+  offers: "playbook.part_sub.offers", close: "playbook.part_sub.close", limits: "playbook.part_sub.limits", never: "playbook.part_sub.never", after: "playbook.part_sub.after",
 };
 
 export type PartLine = { summary: string; short: string };
@@ -50,6 +51,19 @@ export function afterLine(p: Playbook): { summary: string; short: string } {
   return { summary: `${reminders} · ${team}`, short: t("playbook.sum.after_short", { a: step(u.first), b: step(u.second), c: step(u.team) }) };
 }
 
+/**
+ * Offers: the active offers in the agent's order, with their most off
+ * ("A smaller first step · More units 5% · General discount 5%"), and their count.
+ */
+export function offersLine(p: Pick<Playbook, "maxDiscountBp"> & { offers?: unknown }): PartLine {
+  const active = activeOffers(offersOf(p));
+  const one = (o: StoredOffer) => {
+    const name = t(`playbook.offers.type.${o.type}` as MessageKey);
+    return o.type === "smaller_start" ? name : t("playbook.sum.offer_pct", { name, pct: (o.percentBp ?? 0) / 100 });
+  };
+  return { summary: active.map(one).join(" · "), short: count(active.length, "playbook.sum.offers_one", "playbook.sum.offers") };
+}
+
 /** The part lines for home (summary) and the part menu (short). */
 export function partLines(p: Playbook, ctx: { plays: PlaysSummary }): Record<PlaybookPart, PartLine> {
   const gender = agentGenderOf(p);
@@ -61,7 +75,6 @@ export function partLines(p: Playbook, ctx: { plays: PlaysSummary }): Record<Pla
   const asks = chatQuestions(p).length;
   const objections = p.objections.length;
   const ways = [p.outcomes.orderForm, p.outcomes.bankTransfer, p.outcomes.meeting].filter(Boolean).length;
-  const pct = p.maxDiscountBp / 100;
   const handOff = oneLine(p.handOffWhen);
   return {
     agent: { summary: [p.agentName, t(`playbook.sum.speaks.${gender}` as MessageKey), tone].filter(Boolean).join(" · "), short: p.agentName },
@@ -75,10 +88,12 @@ export function partLines(p: Playbook, ctx: { plays: PlaysSummary }): Record<Pla
       summary: `${count(objections, "playbook.sum.objections_one", "playbook.sum.objections", "playbook.sum.objections_none")} · ${t(objectionAttemptsOf(p) === 1 ? "playbook.sum.attempts_one" : "playbook.sum.attempts", { n: objectionAttemptsOf(p) })}`,
       short: count(objections, "playbook.sum.objections_one", "playbook.sum.objections", "playbook.sum.objections_none"),
     },
+    offers: offersLine(p),
     close: { summary: closeLine(p.outcomes), short: count(ways, "playbook.sum.ways_one", "playbook.sum.ways", "playbook.sum.ways_none") },
     limits: {
-      summary: handOff ? `${t("playbook.sum.discount", { pct })} · ${t("playbook.sum.hands_over", { text: handOff })}` : t("playbook.sum.discount", { pct }),
-      short: t("playbook.sum.discount_short", { pct }),
+      // Discounts live in Offers (set per offer); Limits is the hand-over rules.
+      summary: handOff ? `${t("playbook.sum.limits")} · ${t("playbook.sum.hands_over", { text: handOff })}` : t("playbook.sum.limits"),
+      short: t("playbook.sum.limits_short"),
     },
     never: { summary: count(p.neverDo.length, "playbook.sum.rules_one", "playbook.sum.rules", "playbook.sum.rules_none"), short: count(p.neverDo.length, "playbook.sum.rules_one", "playbook.sum.rules", "playbook.sum.rules_none") },
     after: afterLine(p),

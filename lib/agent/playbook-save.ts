@@ -13,7 +13,7 @@ import { UNPAID_DEFAULTS, UNPAID_STEPS, unpaidRemindersOf, type PlaybookWithUnpa
 import { readOpener } from "./core/opener";
 import { questionBudgetOf } from "./core/stage";
 import { objectionAttemptsOf } from "./core/objections";
-import { hasStoredOffers, offersOf, type PlaybookWithOffers } from "./offer-settings";
+import { applyOfferChange, hasStoredOffers, isOfferType, offersOf, type OfferChange, type PlaybookWithOffers } from "./offer-settings";
 import type { LlmClient } from "./llm";
 import type { Actor } from "@/lib/accounts/audit";
 
@@ -68,7 +68,7 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
  * the approved exceptions still shown (null: keep every stored one).
  */
 async function saveRowsInput(db: Db, accountId: string, input: PlaybookRowsInput, keptExceptions: ReadonlySet<string> | null, opts: SaveOpts): Promise<PlaybookFormSave> {
-  const current: PlaybookWithUnpaid = (await ensureDraftVersion(db, accountId)).playbook;
+  const current: PlaybookWithUnpaid & PlaybookWithOffers = (await ensureDraftVersion(db, accountId)).playbook;
   const built = buildRowsDraft(current, input, keptExceptions);
   if (!built.ok) return { ok: false, errors: built.errors, values: input };
   await saveDraftPlaybook(db, accountId, withoutDefaultUnpaid(built.value));
@@ -82,7 +82,7 @@ async function saveRowsInput(db: Db, accountId: string, input: PlaybookRowsInput
  * `current` (pure): every value as parsed, with what the form did not show
  * kept as stored. Only the editor's keys are written (EDITOR_KEYS).
  */
-function buildRowsDraft(current: PlaybookWithUnpaid, input: PlaybookRowsInput, keptExceptions: ReadonlySet<string> | null): { ok: true; value: PlaybookWithUnpaid } | { ok: false; errors: PlaybookErrors } {
+function buildRowsDraft(current: PlaybookWithUnpaid & PlaybookWithOffers, input: PlaybookRowsInput, keptExceptions: ReadonlySet<string> | null): { ok: true; value: PlaybookWithUnpaid } | { ok: false; errors: PlaybookErrors } {
   const parsed = parsePlaybookRows(input);
   if (!parsed.ok) return parsed;
   const stored = current.exceptions ?? [];
@@ -108,7 +108,7 @@ function buildRowsDraft(current: PlaybookWithUnpaid, input: PlaybookRowsInput, k
   // Automatic name versions are kept; they are stale (and remade) when the name changed (lib/agent/names-auto.ts).
   const keepAuto = current.agentNameAuto;
   // Offers (23 Nov): the rows sent replace the list; a form without them keeps a stored list, its General row moved to the limit sent.
-  const keepOffers = input.offers !== undefined ? offers : hasStoredOffers(current) ? offersOf({ offers: (current as PlaybookWithOffers).offers, maxDiscountBp: rest.maxDiscountBp }) : undefined;
+  const keepOffers = input.offers !== undefined ? offers : hasStoredOffers(current) ? offersOf({ offers: current.offers, maxDiscountBp: rest.maxDiscountBp }) : undefined;
   return {
     ok: true,
     value: {
@@ -243,9 +243,12 @@ export type EntryPart = (typeof ENTRY_PARTS)[number];
  * among the questions of its own group: see moveField);
  * `setDefault`: the opener's default topic; `removeException`: one approved
  * exception (they are never typed); `part`: a part's whole editor as form
- * entries (the one-page form's inputs, read by playbookRowsFromForm).
+ * entries (the one-page form's inputs, read by playbookRowsFromForm);
+ * `offer` / `offerSwitch` / `offerMove`: one row of Offers (its numbers, its
+ * switch, its place among the active offers; lib/agent/offer-settings.ts).
  */
 export type PlaybookChange =
+  | OfferChange
   | { kind: "set"; values: Partial<Record<ScalarKey, string>>; outcomes?: Playbook["outcomes"]; openerQuestion?: { en: string; he: string } }
   | { [L in ListKey]: { kind: "add"; list: L; item: ListItem[L] } }[ListKey]
   | { [L in ListKey]: { kind: "edit"; list: L; index: number; item: ListItem[L] } }[ListKey]
@@ -310,9 +313,17 @@ const NOT_FOUND = "This row changed in the meantime. Reload the page and try aga
  * Applies one change to the editor's input. Pure. The opener's default topic
  * follows its row when topics move or are removed (as the editor's radio did).
  * An index outside the list is refused (the page was out of date).
+ * An Offers change starts from `stored`'s list (stored, or derived from its
+ * discount limit; without `stored`, from the limit in `input`) and sends the
+ * whole list as rows, which parsePlaybookRows checks.
  */
-export function applyPlaybookChange(input: PlaybookRowsInput, change: PlaybookChange): { ok: true; input: PlaybookRowsInput } | { ok: false; errors: PlaybookErrors } {
+export function applyPlaybookChange(input: PlaybookRowsInput, change: PlaybookChange, stored?: { maxDiscountBp: number; offers?: unknown }): { ok: true; input: PlaybookRowsInput } | { ok: false; errors: PlaybookErrors } {
   switch (change.kind) {
+    case "offer": case "offerSwitch": case "offerMove": {
+      const list = offersOf(stored ?? { maxDiscountBp: Math.round(Number(input.maxDiscount) * 100) || 0 });
+      const r = applyOfferChange(list, change);
+      return r.ok ? { ok: true, input: { ...input, offers: r.rows } } : r;
+    }
     case "set": {
       const next: PlaybookRowsInput = { ...input };
       for (const k of SCALAR_KEYS) if (typeof change.values[k] === "string") (next as Record<ScalarKey, string | undefined>)[k] = change.values[k];
@@ -387,8 +398,8 @@ export type PlaybookChangeSave = { ok: true } | { ok: false; errors: PlaybookErr
  * so the caller can say which part needs the fix (partOfKey).
  */
 export async function savePlaybookChange(db: Db, accountId: string, change: PlaybookChange, opts: SaveOpts = {}): Promise<PlaybookChangeSave> {
-  const current: PlaybookWithUnpaid = (await ensureDraftVersion(db, accountId)).playbook;
-  const applied = applyPlaybookChange(storedRowsInput(current), change);
+  const current: PlaybookWithUnpaid & PlaybookWithOffers = (await ensureDraftVersion(db, accountId)).playbook;
+  const applied = applyPlaybookChange(storedRowsInput(current), change, current);
   if (!applied.ok) return applied;
   let kept: ReadonlySet<string> | null = null;
   if (change.kind === "removeException") {
@@ -473,6 +484,16 @@ export function readPlaybookChange(raw: unknown): PlaybookChange | null {
       const entries = r.entries.filter((e): e is [string, string] => Array.isArray(e) && e.length === 2 && typeof e[0] === "string" && typeof e[1] === "string").slice(0, 2000);
       return { kind: "part", part: r.part as EntryPart, entries };
     }
+    case "offer": {
+      const pct = str(r.pct, 20);
+      if (!isOfferType(r.type) || pct === null) return null;
+      const units = str(r.units, 20);
+      return { kind: "offer", type: r.type, pct, ...(units !== null ? { units } : {}) };
+    }
+    case "offerSwitch":
+      return isOfferType(r.type) && typeof r.on === "boolean" ? { kind: "offerSwitch", type: r.type, on: r.on } : null;
+    case "offerMove":
+      return isOfferType(r.type) && typeof r.to === "number" && Number.isInteger(r.to) ? { kind: "offerMove", type: r.type, to: r.to } : null;
     default:
       return null;
   }

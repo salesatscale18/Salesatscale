@@ -14,7 +14,16 @@ export function changedKeys(change: PlaybookChange): string[] {
   switch (change.kind) {
     case "set":
       // S2: the first question (Opening) is a `set` of the opener's question.
-      return [...Object.keys(change.values).map((k) => SCALAR_TO_KEY[k]), ...(change.outcomes ? ["outcomes"] : []), ...(change.openerQuestion ? ["opener"] : [])];
+      // The older single limit also moves the General discount of a stored offers list (offers, 23 Nov).
+      return [
+        ...Object.keys(change.values).flatMap((k) => (k === "maxDiscount" ? [SCALAR_TO_KEY[k], "offers"] : [SCALAR_TO_KEY[k]])),
+        ...(change.outcomes ? ["outcomes"] : []), ...(change.openerQuestion ? ["opener"] : []),
+      ];
+    // Offers: one row's numbers or switch, or its place. Only the General discount is also the limit without approval.
+    case "offer": case "offerSwitch":
+      return change.type === "general" ? ["offers", "maxDiscountBp"] : ["offers"];
+    case "offerMove":
+      return ["offers"];
     case "add": case "edit": case "delete": case "move":
       return [change.list === "openerTopics" ? "opener" : change.list];
     case "setDefault":

@@ -190,27 +190,16 @@ export function CloseRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbook, "
 // ---------------------------------------------------------------------------
 
 /**
- * The discount limit, kept as ONE small isolated row: the Offers work will
- * replace it with its own panel.
+ * Discounts (board PlaybookLimits): set per offer since the Offers part, so
+ * Limits only says where they live and links there. Nothing to change here.
  */
-export function MaxDiscountRow({ maxDiscountBp }: { maxDiscountBp: number }) {
-  const pct = String(maxDiscountBp / 100);
+export function DiscountsRow({ offersHref }: { offersHref: string }) {
   return (
     <EditRow
-      id="maxDiscount" label={t("playbook.max_discount")} own={["maxDiscount"]}
-      read={<span data-max-discount={pct}>{t("playbook.limits.discount_read", { pct })}</span>}
-      hint={t("playbook.max_discount_hint")} info={t("playbook.max_discount_hint")}
-      editor={(e) => (
-        <>
-          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <label className="sas-sr" htmlFor="pb-maxDiscount">{t("playbook.max_discount")}</label>
-            <input className="sas-input sas-num" style={{ width: 80 }} id="pb-maxDiscount" name="maxDiscount" inputMode="decimal" defaultValue={pct} {...aria("pb-maxDiscount", e("maxDiscount"))} />
-            <span className="sas-small">{t("playbook.max_discount_unit")}</span>
-          </span>
-          <Err id="pb-maxDiscount" msg={e("maxDiscount")} />
-        </>
-      )}
-      toChange={(form) => ({ kind: "set", values: { maxDiscount: val(form, "maxDiscount") } })}
+      id="discounts" label={t("playbook.limits.discounts")} editable={false}
+      info={<><p>{t("playbook.part_sub.offers")}</p><p>{t("playbook.offers.above_hint")}</p></>}
+      read={<span data-discounts-read="">{t("playbook.limits.discounts_read")} <span className="pb-muted">· {t("playbook.limits.discounts_where")}</span></span>}
+      extra={<a className="pb-link" href={offersHref} data-offers-link="">{t("playbook.limits.discounts_open")}</a>}
     />
   );
 }
@@ -239,9 +228,9 @@ function HandoffAlways() {
   );
 }
 
-/** Limits (board PlaybookLimits): the discount limit, when to offer a call, when to hand over, approved exceptions. */
+/** Limits (board PlaybookLimits): when to offer a call, when to hand over, approved exceptions, and where discounts live (Offers). */
 export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
-  p: Pick<Playbook, "maxDiscountBp" | "offerMeetingWhen" | "handOffWhen" | "exceptions">;
+  p: Pick<Playbook, "offerMeetingWhen" | "handOffWhen" | "exceptions">;
   /** O1: the notice that unknown questions no longer hand off, with the link to that play (null: not shown). */
   handOffNotice: { playHref: string } | null;
 }) {
@@ -264,7 +253,6 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
   );
   return (
     <PartRows slug={slug} part="limits" hrefs={hrefs} edit={edit}>
-      <MaxDiscountRow maxDiscountBp={p.maxDiscountBp} />
       {text("offerMeetingWhen", "playbook.meeting_when")}
       {text(
         "handOffWhen", "playbook.handoff_when", <span className="sas-hint" data-handoff-always="">{t("playbook.handoff_always")}</span>,
@@ -299,6 +287,7 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
           </ul>
         )}
       />
+      <DiscountsRow offersHref={hrefs.offers} />
     </PartRows>
   );
 }

@@ -18,7 +18,9 @@ describe("parts: order, groups, keys", () => {
   });
   it("Previous / Next follow the menu, none at the ends", () => {
     expect(partNeighbours("agent")).toEqual({ previous: null, next: "opening" });
-    expect(partNeighbours("close")).toEqual({ previous: "objections", next: "limits" });
+    // Offers (its own part since the offers list) sits between Objections and How a deal closes.
+    expect(partNeighbours("offers")).toEqual({ previous: "objections", next: "close" });
+    expect(partNeighbours("close")).toEqual({ previous: "offers", next: "limits" });
     expect(partNeighbours("after")).toEqual({ previous: "never", next: null });
   });
   it("every error key of the validator names its part (moves: who takes calls → Agent, attempts → Objections)", () => {
@@ -26,7 +28,7 @@ describe("parts: order, groups, keys", () => {
       ["agentName", "agent"], ["agentNameLocal.he", "agent"], ["agentGender", "agent"], ["callRole", "agent"], ["tone", "agent"],
       ["goal", "close"], ["opener.topic.2.he", "opening"], ["opener.topics", "opening"], ["opener.question.en", "opening"],
       ["field.3.label", "asks"], ["fields", "asks"], ["questionBudget", "asks"], ["objection.0.answer", "objections"], ["objections", "objections"],
-      ["objectionAttempts", "objections"], ["maxDiscount", "limits"], ["offerMeetingWhen", "limits"], ["handOffWhen", "limits"], ["exceptions", "limits"],
+      ["objectionAttempts", "objections"], ["maxDiscount", "offers"], ["offer.general.pct", "offers"], ["offers", "offers"], ["offerMeetingWhen", "limits"], ["handOffWhen", "limits"], ["exceptions", "limits"],
       ["never.4", "never"], ["never", "never"], ["unpaid.second.days", "after"], ["play.too_expensive.fact.0.text", "plays"],
     ];
     for (const [k, part] of cases) expect(partOfKey(k), k).toBe(part);
@@ -51,7 +53,9 @@ describe("summaries from the saved draft", () => {
     expect(l.objections).toEqual({ summary: "1 objection · 1 attempt each", short: "1 objection" });
     expect(l.close.summary).toBe("Order form with card or bank transfer · or a booked call");
     expect(l.close.short).toBe("3 ways");
-    expect(l.limits).toEqual({ summary: "Up to 7.5% discount without approval · hands over when: The buyer is upset.", short: "Up to 7.5% discount" });
+    // Discounts are set per offer (Offers: the list derived from the 7.5% limit); Limits is the hand-over rules.
+    expect(l.offers).toEqual({ summary: "A smaller first step · General discount 7.5%", short: "2 offers" });
+    expect(l.limits).toEqual({ summary: "Discounts set per offer · hands over when: The buyer is upset.", short: "Hand-over rules" });
     expect(l.never).toEqual({ summary: "2 rules", short: "2 rules" });
     expect(l.after).toEqual({ summary: "Reminders after 2 and 5 days · tells your team after 7 days", short: "2 / 5 / 7 days" });
   });
@@ -63,7 +67,8 @@ describe("summaries from the saved draft", () => {
     expect(l.asks.summary).toBe("No questions yet · recommends after 3");
     expect(l.objections.summary).toBe("No objections yet · 2 attempts each");
     expect(l.close).toEqual({ summary: "No way to close is on", short: "None on" });
-    expect(l.limits.summary).toBe("Up to 5% discount without approval");
+    expect(l.limits.summary).toBe("Discounts set per offer");
+    expect(l.offers.summary).toBe("A smaller first step · General discount 5%");
     expect(l.never.summary).toBe("No extra rules yet");
   });
   it("the ways a deal closes and the reminders, each combination", () => {

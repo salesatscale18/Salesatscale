@@ -1,109 +1,130 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { Icon, type IconName } from "@/components/sas/icon";
-import { buttonClass } from "@/components/sas/primitives";
 import { t, type MessageKey } from "@/lib/i18n";
-import { isOfferType, offerRowsOf, offersOf, type OfferRowInput, type OfferType } from "@/lib/agent/offer-settings";
+import { moveOffer, switchOffer, type OfferChange, type OfferType, type StoredOffer } from "@/lib/agent/offer-settings";
+import type { PlaybookPart } from "@/lib/agent/playbook-parts";
+import { EditRow, OtherErrors, PartRows, useFocusTarget, useRowSave, useRows, type ErrorOf } from "./row";
+import { SortHelp, useSortable } from "./sortable";
+import { InfoTip } from "@/components/sas/info-tip";
+import { LockTag } from "./parts";
+import "./playbook.css";
 
-/** One row in the editor: the switch and the numbers as typed. */
-export type OfferRow = { type: OfferType; on: boolean; pct: string; units: string };
+/** `edit`: the row opened first (from `?edit=offer.<type>`). */
+type Base = { slug: string; hrefs: Record<PlaybookPart, string>; edit?: string | null };
 
 const ICON: Record<OfferType, IconName> = {
   smaller_start: "layers", more_units: "package", decide_now: "hourglass", general: "tags", pay_yearly: "calendar",
 };
 const name = (type: OfferType) => t(`playbook.offers.type.${type}` as MessageKey);
+const val = (form: FormData, key: string) => String(form.get(key) ?? "");
+const aria = (id: string, msg?: string) => ({ "aria-invalid": msg ? (true as const) : undefined, "aria-describedby": msg ? `${id}-error` : undefined });
 
-/** Active rows first (their order is the offer order), then the rows that are off. */
-export function activeFirst(rows: readonly OfferRow[]): OfferRow[] {
-  return [...rows.filter((r) => r.on), ...rows.filter((r) => !r.on)];
+/** An offer's numbers as read: "5% off at most", "5% off from 10 units", "No discount". */
+export function offerNumbers(o: StoredOffer): string {
+  if (o.type === "smaller_start") return t("playbook.offers.no_discount");
+  const pct = (o.percentBp ?? 0) / 100;
+  return o.type === "more_units" ? t("playbook.offers.read_units", { pct, units: o.minUnits ?? 0 }) : t("playbook.offers.read_pct", { pct });
+}
+
+/** An offer's numbers, changed in its row (the server checks them again: parseOfferRows). */
+function NumbersEditor({ o, e }: { o: StoredOffer; e: ErrorOf }) {
+  const at = `offer.${o.type}`;
+  return (
+    <span className="pb-offer__nums">
+      <span className="pb-offer__num">
+        <input
+          className="sas-input sas-num" id={`pb-${at}.pct`} name="pct" inputMode="decimal" defaultValue={String((o.percentBp ?? 0) / 100)}
+          aria-label={t("playbook.offers.pct_label", { name: name(o.type) })} {...aria(`pb-${at}.pct`, e(`${at}.pct`))}
+        />
+        <span aria-hidden="true">{t(o.type === "more_units" ? "playbook.offers.pct_unit_short" : "playbook.offers.pct_unit")}</span>
+      </span>
+      {o.type === "more_units" ? (
+        <span className="pb-offer__num">
+          <input
+            className="sas-input sas-num" id={`pb-${at}.units`} name="units" inputMode="numeric" defaultValue={String(o.minUnits ?? "")}
+            aria-label={t("playbook.offers.units_label", { name: name(o.type) })} {...aria(`pb-${at}.units`, e(`${at}.units`))}
+          />
+          <span aria-hidden="true">{t("playbook.offers.units_unit")}</span>
+        </span>
+      ) : null}
+      {e(`${at}.pct`) ? <span className="sas-error" id={`pb-${at}.pct-error`}>{e(`${at}.pct`)}</span> : null}
+      {e(`${at}.units`) ? <span className="sas-error" id={`pb-${at}.units-error`}>{e(`${at}.units`)}</span> : null}
+    </span>
+  );
 }
 
 /**
- * The editor's starting rows: what was sent after a refused save (unknown or
- * repeated types dropped, missing ones taken from the stored list), else the
- * playbook's list (stored, or derived from its discount limit).
+ * Offers (board PlaybookOffers; the list approved 23 Nov, board OfferTool):
+ * the offers the agent may make after a price objection, one at a time, in
+ * this order. Read first; each change saves ONE row (savePlaybookChange):
+ * an offer's numbers (Change), its switch, or its place among the active
+ * ones (drag the handle, ↑ / ↓ on the focused handle, or ⋯ Move up / Move
+ * down). Rows that are off sit below without a number; "Anything above
+ * these" (the seller's approval) is pinned last. `offers`: the stored list,
+ * or the one derived from the discount limit (offersOf).
  */
-export function offerRowsFor(p: { maxDiscountBp: number; offers?: unknown }, sent?: OfferRowInput[]): OfferRow[] {
-  const stored: OfferRow[] = offerRowsOf(offersOf(p)).map((r) => ({ type: r.type as OfferType, on: r.on === "1", pct: r.pct, units: r.units }));
-  if (!sent) return stored;
-  const out: OfferRow[] = [];
-  for (const r of sent) {
-    if (!isOfferType(r.type) || out.some((x) => x.type === r.type)) continue;
-    const s = stored.find((x) => x.type === r.type)!;
-    out.push({ type: r.type, on: r.type === "smaller_start" || r.on === "1", pct: r.pct ?? s.pct, units: r.units ?? s.units });
-  }
-  for (const s of stored) if (!out.some((x) => x.type === s.type)) out.push({ ...s, on: s.type === "smaller_start" });
-  return activeFirst(out);
-}
-
-/** The General discount as the old single limit read it (the never-do "Covered by Limits" check): its percent when on. */
-export function generalLimit(rows: readonly OfferRow[]): string {
-  const g = rows.find((r) => r.type === "general");
-  return g?.on ? g.pct : "";
-}
-
-/** Moves the active row `type` by one place (rows that are off never move). */
-export function moveActive(rows: readonly OfferRow[], type: OfferType, by: -1 | 1): OfferRow[] {
-  const active = rows.filter((r) => r.on);
-  const i = active.findIndex((r) => r.type === type);
-  const j = i + by;
-  if (i < 0 || j < 0 || j >= active.length) return [...rows];
-  const next = [...active];
-  [next[i], next[j]] = [next[j], next[i]];
-  return [...next, ...rows.filter((r) => !r.on)];
-}
-
-/** Moves the active row `type` to place `to` (0-based among the active rows). */
-function moveTo(rows: readonly OfferRow[], type: OfferType, to: number): OfferRow[] {
-  const active = rows.filter((r) => r.on);
-  const i = active.findIndex((r) => r.type === type);
-  if (i < 0 || i === to) return [...rows];
-  const next = active.filter((r) => r.type !== type);
-  next.splice(Math.max(0, Math.min(to, next.length)), 0, active[i]);
-  return [...next, ...rows.filter((r) => !r.on)];
-}
-
-/** Switching a row on puts it last among the active ones; switching it off puts it first among the rows that are off. */
-export function switchRow(rows: readonly OfferRow[], type: OfferType, on: boolean): OfferRow[] {
-  const row = rows.find((r) => r.type === type);
-  if (!row || row.type === "smaller_start") return [...rows];
-  const rest = rows.filter((r) => r.type !== type);
-  const active = rest.filter((r) => r.on);
-  const off = rest.filter((r) => !r.on);
-  return on ? [...active, { ...row, on: true }, ...off] : [...active, { ...row, on: false }, ...off];
+export function OffersRows({ slug, hrefs, edit, offers, quoteValidDays }: Base & { offers: StoredOffer[]; quoteValidDays: number }) {
+  return (
+    <PartRows slug={slug} part="offers" hrefs={hrefs} edit={edit}>
+      <OfferList offers={offers} quoteValidDays={quoteValidDays} />
+      {/* The platform's own rules: the tag and an (i), as in Never do. */}
+      <div className="pb-rows__note pb-fixed-line" data-platform-fixed="">
+        <LockTag /><InfoTip label={t("playbook.fixed.tag")} wide><span data-offers-rules="">{t("playbook.offers.rules")}</span></InfoTip>
+      </div>
+    </PartRows>
+  );
 }
 
 /**
- * "Offers the agent may make" (Playbook › Limits; board OfferTool). The rows'
- * order is the offer order: drag the handle (mouse or touch), use the arrow
- * keys on the focused handle, or the ⋯ menu's Move up / Move down. The form
- * sends `offerOrder` and `offer.<type>.on|pct|units`; the server checks them
- * again (parseOfferRows).
+ * The switch and the drag handle take focus back after their save (the shared
+ * rule, focus.ts via useFocusTarget): a switched row moves between the active
+ * and the off rows, and a moved row is re-rendered, so focus would fall to the page.
  */
-export function OffersPanel({ rows, onChange, errors, quoteValidDays }: {
-  rows: OfferRow[];
-  onChange: (rows: OfferRow[]) => void;
-  errors: Record<string, string>;
-  quoteValidDays: number;
-}) {
-  const [announce, setAnnounce] = useState("");
+function FocusSwitch({ focusId, ...props }: { focusId: string } & InputHTMLAttributes<HTMLInputElement>) {
+  const ref = useRef<HTMLInputElement>(null);
+  useFocusTarget(focusId, ref);
+  return <input ref={ref} type="checkbox" role="switch" className="sas-switch" {...props} />;
+}
+
+function FocusHandle({ focusId, props }: { focusId: string; props: ReturnType<ReturnType<typeof useSortable>["handleProps"]> }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useFocusTarget(focusId, ref);
+  return <button ref={ref} {...props}><span className="pb-handle__dots" aria-hidden="true" /></button>;
+}
+
+function OfferList({ offers, quoteValidDays }: { offers: StoredOffer[]; quoteValidDays: number }) {
+  const rowsCtx = useRows();
+  const sig = JSON.stringify(offers);
+  // While a switch or a move saves, the rows show in their new order; a refusal puts them back.
+  const [optimistic, setOptimistic] = useState<{ sig: string; list: StoredOffer[] } | null>(null);
+  const [touched, setTouched] = useState<OfferType | null>(null);
   const [menu, setMenu] = useState<OfferType | null>(null);
-  const [dragging, setDragging] = useState<OfferType | null>(null);
-  const items = useRef(new Map<OfferType, HTMLLIElement>());
-  const handles = useRef(new Map<OfferType, HTMLButtonElement>());
-  const active = rows.filter((r) => r.on);
+  const [announce, setAnnounce] = useState("");
+  // Where focus goes once a switch or a move is saved (its switch, or its handle).
+  const focusNext = useRef<string | null>(null);
+  const save = useRowSave(() => { if (focusNext.current) rowsCtx.focusTo(focusNext.current); }, () => setOptimistic(null));
+  const shown = optimistic && optimistic.sig === sig ? optimistic.list : offers;
+  const active = shown.filter((o) => o.on);
+  const off = shown.filter((o) => !o.on);
+  const busy = save.pending || rowsCtx.open !== null;
 
-  const said = (next: OfferRow[], type: OfferType) => {
-    const act = next.filter((r) => r.on);
-    const n = act.findIndex((r) => r.type === type) + 1;
-    setAnnounce(t("playbook.offers.position", { name: name(type), n, of: act.length }));
+  const run = (type: OfferType, list: StoredOffer[], change: OfferChange) => {
+    setTouched(type);
+    focusNext.current = `offer.${type}.${change.kind === "offerSwitch" ? "switch" : "handle"}`;
+    setOptimistic({ sig, list });
+    save.run(change);
   };
-  const move = (type: OfferType, by: -1 | 1) => {
-    const next = moveActive(rows, type, by);
-    onChange(next);
-    said(next, type);
+  const moveTo = (type: OfferType, to: number) => {
+    if (busy) return;
+    run(type, moveOffer(shown, type, to), { kind: "offerMove", type, to });
   };
+  const sort = useSortable({
+    count: active.length, busy, helpId: "pb-sort-help-offers",
+    what: (i) => name(active[i].type),
+    onMove: (from, to) => moveTo(active[from].type, to),
+  });
 
   // Close the ⋯ menu on Escape or a click elsewhere.
   useEffect(() => {
@@ -118,158 +139,113 @@ export function OffersPanel({ rows, onChange, errors, quoteValidDays }: {
     return () => { document.removeEventListener("keydown", close); document.removeEventListener("pointerdown", close); };
   }, [menu]);
 
-  const onHandleKey = (ev: KeyboardEvent<HTMLButtonElement>, type: OfferType) => {
-    if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
-      ev.preventDefault();
-      move(type, ev.key === "ArrowUp" ? -1 : 1);
-    }
+  const status = (type: OfferType): ReactNode => {
+    if (type !== touched) return null;
+    if (save.pending) return <span className="sas-small pb-pending" role="status">{t("playbook.saving")}</span>;
+    return save.errors ? <OtherErrors errors={save.errors} own={[]} /> : null;
   };
 
-  // Drag with pointer events (mouse, pen and touch): the row moves to where the pointer is among the active rows.
-  const onDown = (ev: PointerEvent<HTMLButtonElement>, type: OfferType) => {
-    if (ev.button !== 0) return;
-    ev.currentTarget.setPointerCapture(ev.pointerId);
-    setDragging(type);
-  };
-  const onMove = (ev: PointerEvent<HTMLButtonElement>, type: OfferType) => {
-    if (dragging !== type) return;
-    const others = active.filter((r) => r.type !== type);
-    let to = others.length;
-    for (let k = 0; k < others.length; k++) {
-      const box = items.current.get(others[k].type)?.getBoundingClientRect();
-      if (box && ev.clientY < box.top + box.height / 2) { to = k; break; }
-    }
-    if (active.findIndex((r) => r.type === type) !== to) onChange(moveTo(rows, type, to));
-  };
-  const onUp = (ev: PointerEvent<HTMLButtonElement>, type: OfferType) => {
-    if (dragging !== type) return;
-    if (ev.currentTarget.hasPointerCapture(ev.pointerId)) ev.currentTarget.releasePointerCapture(ev.pointerId);
-    setDragging(null);
-    said(rows, type);
-  };
-
-  const err = (key: string) => (errors[key] ? <span className="sas-error" id={`pb-${key}-error`}>{errors[key]}</span> : null);
-  const invalid = (key: string) => (errors[key] ? { "aria-invalid": true as const, "aria-describedby": `pb-${key}-error` } : {});
-
-  const numbers = (r: OfferRow) => {
-    if (r.type === "smaller_start") return <span className="sas-small">{t("playbook.offers.no_discount")}</span>;
-    const at = `offer.${r.type}`;
+  const row = (o: StoredOffer, place: number | null, lead: ReactNode) => {
+    const label = name(o.type);
+    const at = `offer.${o.type}`;
     return (
-      <>
-        <span className="pb-offer__num">
-          <input
-            className="sas-input sas-num" id={`pb-${at}.pct`} name={`${at}.pct`} inputMode="decimal" value={r.pct}
-            aria-label={t("playbook.offers.pct_label", { name: name(r.type) })} {...invalid(`${at}.pct`)}
-            onChange={(ev) => onChange(rows.map((x) => (x.type === r.type ? { ...x, pct: ev.target.value } : x)))}
-          />
-          <span aria-hidden="true">{t(r.type === "more_units" ? "playbook.offers.pct_unit_short" : "playbook.offers.pct_unit")}</span>
-        </span>
-        {r.type === "more_units" ? (
-          <span className="pb-offer__num">
-            <input
-              className="sas-input sas-num" id={`pb-${at}.units`} name={`${at}.units`} inputMode="numeric" value={r.units}
-              aria-label={t("playbook.offers.units_label", { name: name(r.type) })} {...invalid(`${at}.units`)}
-              onChange={(ev) => onChange(rows.map((x) => (x.type === r.type ? { ...x, units: ev.target.value } : x)))}
-            />
-            <span aria-hidden="true">{t("playbook.offers.units_unit")}</span>
+      <EditRow
+        id={at} label={label} item={{ what: label }} own={[at]} lead={lead}
+        rowAttrs={{ "data-offer": o.type, "data-on": o.on ? "1" : "0" }}
+        read={(
+          <span className="pb-offer-read">
+            <span className={`pb-offer__place${place === null ? " pb-offer__place--off" : ""}`}>
+              {place !== null ? place : <><span aria-hidden="true">–</span><span className="sas-sr">{t("playbook.offers.off")}</span></>}
+            </span>
+            <span className="pb-offer__icon" aria-hidden="true"><Icon name={ICON[o.type]} /></span>
+            <span className="pb-offer__title">
+              <strong className="pb-offer__name">{label}</strong>
+              <InfoTip label={label}>
+                <span data-offer-about={o.type}>{t(`playbook.offers.about.${o.type}` as MessageKey, { days: quoteValidDays })}</span>
+                {o.type === "pay_yearly" ? <span data-offer-yearly-note="">{t("playbook.offers.yearly_note")}</span> : null}
+              </InfoTip>
+            </span>
           </span>
-        ) : null}
-      </>
+        )}
+        aside={<span className="pb-offer__read-nums sas-small" data-offer-numbers="">{o.on || o.type === "smaller_start" ? offerNumbers(o) : t("playbook.offers.off")}</span>}
+        editable={o.type !== "smaller_start"}
+        editor={o.type === "smaller_start" ? undefined : (e) => <NumbersEditor o={o} e={e} />}
+        hint={t(`playbook.offers.about.${o.type}` as MessageKey, { days: quoteValidDays })}
+        toChange={(form) => ({ kind: "offer", type: o.type, pct: val(form, "pct"), ...(o.type === "more_units" ? { units: val(form, "units") } : {}) })}
+        extra={(
+          <span className="pb-offer__end">
+            {o.type === "smaller_start" ? (
+              <span className="sas-small pb-offer__always">{t("playbook.offers.always_on")}</span>
+            ) : (
+              <FocusSwitch
+                focusId={`${at}.switch`} checked={o.on} disabled={busy} aria-label={t("playbook.offers.switch", { name: label })}
+                onChange={(ev) => {
+                  const on = ev.target.checked;
+                  const next = switchOffer(shown, o.type, on);
+                  setAnnounce(on ? t("playbook.offers.position", { name: label, n: next.filter((x) => x.on).findIndex((x) => x.type === o.type) + 1, of: next.filter((x) => x.on).length }) : t("playbook.offers.off_label", { name: label }));
+                  run(o.type, next, { kind: "offerSwitch", type: o.type, on });
+                }}
+              />
+            )}
+            {place !== null ? (
+              <span className="pb-offer__menu" data-offer-menu={o.type}>
+                <button
+                  type="button" className="pb-icon-btn" aria-haspopup="menu" aria-expanded={menu === o.type} disabled={busy}
+                  aria-label={t("playbook.offers.menu", { name: label })} onClick={() => setMenu(menu === o.type ? null : o.type)}
+                ><Icon name="ellipsis" /></button>
+                {menu === o.type ? (
+                  <span className="pb-offer__pop" role="menu" aria-label={t("playbook.offers.menu", { name: label })}>
+                    <button type="button" role="menuitem" disabled={place === 1} autoFocus={place !== 1} onClick={() => { setMenu(null); setAnnounce(t("playbook.offers.position", { name: label, n: place - 1, of: active.length })); moveTo(o.type, place - 2); }}>
+                      <Icon name="arrow-up" />{t("playbook.offers.move_up")}
+                    </button>
+                    <button type="button" role="menuitem" disabled={place === active.length} autoFocus={place === 1} onClick={() => { setMenu(null); setAnnounce(t("playbook.offers.position", { name: label, n: place + 1, of: active.length })); moveTo(o.type, place); }}>
+                      <Icon name="arrow-down" />{t("playbook.offers.move_down")}
+                    </button>
+                  </span>
+                ) : null}
+              </span>
+            ) : <span className="pb-offer__menu" aria-hidden="true" />}
+          </span>
+        )}
+        after={status(o.type)}
+      />
     );
   };
 
   return (
-    <div className="sas-stack-2" data-testid="offers-panel">
-      <div className="sas-stack-2" style={{ gap: 2 }}>
-        <span className="sas-input-label" id="pb-offers-h">{t("playbook.offers.title")}</span>
-        <span className="sas-hint">{t("playbook.offers.hint")}</span>
+    <div data-testid="offers-panel" className="pb-offers">
+      <div className="pb-list-head" data-offers-head="">
+        <span id="pb-offers-h">{t("playbook.offers.title")}</span>
+        <InfoTip label={t("playbook.offers.title")} wide><span data-offers-hint="">{t("playbook.offers.hint")}</span></InfoTip>
       </div>
-      <input type="hidden" name="offerOrder" value={rows.map((r) => r.type).join(",")} />
-      <ol className="pb-offers" aria-labelledby="pb-offers-h">
-        {rows.map((r) => {
-          const pos = r.on ? active.indexOf(r) : -1;
-          const label = name(r.type);
-          const at = `offer.${r.type}`;
-          return (
-            <li
-              key={r.type} ref={(el) => { if (el) items.current.set(r.type, el); else items.current.delete(r.type); }}
-              className={`pb-offer${r.on ? "" : " pb-offer--off"}${dragging === r.type ? " pb-offer--drag" : ""}`}
-              data-offer={r.type} data-on={r.on ? "1" : "0"}
-            >
-              <span className="pb-offer__handle">
-                {r.on ? (
-                  <button
-                    type="button" className="pb-offer__grip" ref={(el) => { if (el) handles.current.set(r.type, el); else handles.current.delete(r.type); }}
-                    aria-label={t("playbook.offers.handle", { name: label })}
-                    onKeyDown={(ev) => onHandleKey(ev, r.type)} onPointerDown={(ev) => onDown(ev, r.type)} onPointerMove={(ev) => onMove(ev, r.type)}
-                    onPointerUp={(ev) => onUp(ev, r.type)} onPointerCancel={(ev) => onUp(ev, r.type)}
-                  ><Icon name="grip" /></button>
-                ) : null}
-              </span>
-              <span className={`pb-offer__place${r.on ? "" : " pb-offer__place--off"}`}>{r.on ? pos + 1 : <><span aria-hidden="true">–</span><span className="sas-sr">{t("playbook.offers.off")}</span></>}</span>
-              <span className="pb-offer__main">
-                <span className="pb-offer__icon" aria-hidden="true"><Icon name={ICON[r.type]} /></span>
-                <span className="sas-stack-2" style={{ gap: 2, minWidth: 0 }}>
-                  <strong>{label}</strong>
-                  <span className="sas-small">
-                    {t(`playbook.offers.about.${r.type}` as MessageKey, { days: quoteValidDays })}
-                    {r.type === "pay_yearly" ? <> {t("playbook.offers.yearly_note")}</> : null}
-                  </span>
-                </span>
-              </span>
-              <span className="pb-offer__nums">{numbers(r)}</span>
-              <span className="pb-offer__end">
-                {r.type === "smaller_start" ? (
-                  <span className="sas-small pb-offer__always">{t("playbook.offers.always_on")}</span>
-                ) : (
-                  <>
-                    <input type="hidden" name={`${at}.on`} value={r.on ? "1" : "0"} />
-                    <input
-                      type="checkbox" role="switch" className="sas-switch" checked={r.on} aria-label={t("playbook.offers.switch", { name: label })}
-                      onChange={(ev) => { const next = switchRow(rows, r.type, ev.target.checked); onChange(next); if (ev.target.checked) said(next, r.type); else setAnnounce(t("playbook.offers.off_label", { name: label })); }}
-                    />
-                  </>
-                )}
-                {r.on ? (
-                  <span className="pb-offer__menu" data-offer-menu={r.type}>
-                    <button
-                      type="button" className={buttonClass("ghost", "sm")} aria-haspopup="menu" aria-expanded={menu === r.type}
-                      aria-label={t("playbook.offers.menu", { name: label })} onClick={() => setMenu(menu === r.type ? null : r.type)}
-                    ><Icon name="ellipsis" /></button>
-                    {menu === r.type ? (
-                      <span className="pb-offer__pop" role="menu" aria-label={t("playbook.offers.menu", { name: label })}>
-                        <button type="button" role="menuitem" disabled={pos === 0} autoFocus={pos !== 0} onClick={() => { setMenu(null); move(r.type, -1); handles.current.get(r.type)?.focus(); }}>
-                          <Icon name="arrow-up" />{t("playbook.offers.move_up")}
-                        </button>
-                        <button type="button" role="menuitem" disabled={pos === active.length - 1} autoFocus={pos === 0} onClick={() => { setMenu(null); move(r.type, 1); handles.current.get(r.type)?.focus(); }}>
-                          <Icon name="arrow-down" />{t("playbook.offers.move_down")}
-                        </button>
-                      </span>
-                    ) : null}
-                  </span>
-                ) : <span className="pb-offer__menu" aria-hidden="true" />}
-              </span>
-              {errors[`${at}.pct`] || errors[`${at}.units`] ? <span className="pb-offer__err">{err(`${at}.pct`)}{err(`${at}.units`)}</span> : null}
-            </li>
-          );
-        })}
-        <li className="pb-offer pb-offer--pinned" data-offer="above">
-          <span className="pb-offer__handle pb-offer__lock" aria-hidden="true"><Icon name="lock" /></span>
-          <span className="pb-offer__place pb-offer__place--off" aria-hidden="true" />
-          <span className="pb-offer__main">
+      <SortHelp id="pb-sort-help-offers" announce={sort.announce} />
+      <div className="pb-sortable" ref={sort.listRef} role="list" aria-labelledby="pb-offers-h" data-dragging={sort.dragging !== null ? "" : undefined}>
+        {active.map((o, pos) => (
+          <div key={o.type} role="listitem" data-sort-row="" className="pb-sortable__item">
+            {row(o, pos + 1, <FocusHandle focusId={`offer.${o.type}.handle`} props={sort.handleProps(pos)} />)}
+          </div>
+        ))}
+      </div>
+      {off.length ? (
+        <div role="list" aria-label={t("playbook.offers.off_head")} className="pb-offers__off">
+          {off.map((o) => <div key={o.type} role="listitem">{row(o, null, <span aria-hidden="true" />)}</div>)}
+        </div>
+      ) : null}
+      <div className="pb-row pb-row--item pb-offer--pinned" data-offer="above" data-info-scope="">
+        <span className="pb-row__lead"><Icon name="lock" /></span>
+        <div className="pb-row__value">
+          <span className="pb-offer-read">
+            <span className="pb-offer__place pb-offer__place--off" aria-hidden="true" />
             <span className="pb-offer__icon pb-offer__icon--none" aria-hidden="true" />
-            <span className="sas-stack-2" style={{ gap: 2, minWidth: 0 }}>
-              <strong>{t("playbook.offers.above")}</strong>
-              <span className="sas-small">{t("playbook.offers.above_hint")}</span>
+            <span className="pb-offer__title">
+              <strong className="pb-offer__name">{t("playbook.offers.above")}</strong>
+              <InfoTip label={t("playbook.offers.above")}><span data-offer-above-hint="">{t("playbook.offers.above_hint")}</span></InfoTip>
             </span>
           </span>
-          <span className="pb-offer__nums" />
-          <span className="pb-offer__end"><span className="sas-small pb-offer__always">{t("playbook.offers.always_last")}</span></span>
-        </li>
-      </ol>
-      <span className="pb-fixed pb-offers__rules" data-offers-rules=""><span className="pb-fixed__text"><Icon name="info" /> {t("playbook.offers.rules")}</span></span>
+        </div>
+        <span className="pb-row__actions" data-info-avoid=""><span className="sas-small pb-offer__always">{t("playbook.offers.always_last")}</span></span>
+      </div>
       <div id="pb-offers-live" className="sas-sr" aria-live="polite" role="status">{announce}</div>
-      {err("offers")}
     </div>
   );
 }

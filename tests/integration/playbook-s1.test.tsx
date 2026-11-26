@@ -426,7 +426,9 @@ describe("Playbook S1 against the database", () => {
       expect(row("asks")).toContain('data-gap="examples">2 questions have no example question.');
       expect(row("objections")).toContain("2 objections · 3 attempts each");
       expect(row("close")).toContain("Order form with card or bank transfer · or a booked call");
-      expect(row("limits")).toContain("Up to 10% discount without approval · hands over when: The buyer is upset.");
+      // Discounts are set per offer (the Offers part, after Objections); Limits is the hand-over rules.
+      expect(row("offers")).toContain("A smaller first step · General discount 10%");
+      expect(row("limits")).toContain("Discounts set per offer · hands over when: The buyer is upset.");
       expect(row("never")).toContain("4 rules");
       expect(row("after")).toContain("Reminders after 2 and 5 days · your team is not told");
       expect(html).toContain('data-testid="worth-a-look"');
@@ -447,10 +449,11 @@ describe("Playbook S1 against the database", () => {
     const PARTS: [string, string, string[], string[]][] = [
       ["agent", "name", ["Speaks as", "Who takes calls", "our sales manager", "Female"], ['id="pb-agentName"', "Names in other languages", ">Save</button>", ">Cancel</button>"]],
       ["close", "goal", ["Sales goal", "A sale can end with", "Order form and card payment"], ['id="pb-goal"']],
-      ["limits", "handOffWhen", ["Discount without approval", "10% maximum", "Offer a call when", "Hand over to a person when", "Approved exceptions", "Installation is free from 3 sites"], ['id="pb-handOffWhen"', "When the buyer asks for a person, the agent says yes"]],
+      ["limits", "handOffWhen", ["Discounts", "Set per offer", "in Offers", "Offer a call when", "Hand over to a person when", "Approved exceptions", "Installation is free from 3 sites"], ['id="pb-handOffWhen"', "When the buyer asks for a person, the agent says yes"]],
       ["never", "never.1", ["Never name a competitor.", "Add rule", "Covered by Limits"], ['id="pb-never.1"']],
       ["opening", "topic.1", ["What leads ask about · 3 of 6", "alerts at night", "Make default", "First question", "How do you check them today?", "Each lead page picks one of these topics", "Preview"], ['id="pb-opener.topic.1.en"', 'id="pb-opener.topic.1.he"']],
       ["asks", "field.0", ["Questions before it recommends", "Where the answer is used", "Needed for the quote", "e.g. How many fridges?"], ['id="pb-field.0.label"', 'id="pb-field.0.stage"']],
+      ["offers", "offer.general", ["A smaller first step", "General discount", "10% off at most", "Anything above these", "Always last"], ['id="pb-offer.general.pct"', "% off at most"]],
       ["objections", "objection.0", ["Tries per objection", "Buyer says", "Approved answer", "From: Call 2"], ['id="pb-objection.0.answer"', 'id="pb-objection.0.source"']],
       // S3: the wording the buyer gets is the part's preview ("What the buyer gets").
       ["after", "", ["Signed, not paid yet", "What the buyer gets"], []],
@@ -483,7 +486,7 @@ describe("Playbook S1 against the database", () => {
       save("part-plays", plays);
       expect(plays).toMatch(/aria-current="page" data-part="plays"/);
       expect(plays).toContain('data-testid="draft-bar"');
-      await expect(render(PartPage, { part: "offers" })).rejects.toThrow("NEXT_NOT_FOUND");
+      await expect(render(PartPage, { part: "bogus" })).rejects.toThrow("NEXT_NOT_FOUND");
       await expect(render(PartPage, { part: "plays" })).rejects.toThrow("NEXT_NOT_FOUND");
       const home = await render(HomePage, {});
       expect(home).toContain(">What it asks<");
@@ -491,12 +494,13 @@ describe("Playbook S1 against the database", () => {
       expect(home).not.toContain("What the agent must learn");
     });
 
-    it("the discount limit is one isolated row in Limits (Offers will replace it)", async () => {
+    it("the discount limit left Limits: one read row points to Offers, where each offer has its own limit", async () => {
       const html = await render(PartPage, { part: "limits" });
-      expect(html.match(/data-row="maxDiscount"/g)?.length).toBe(1);
+      expect(html).not.toContain('data-row="maxDiscount"');
+      expect(html.match(/data-row="discounts"/g)?.length).toBe(1);
+      expect(html).toMatch(/href="\/app\/polar\/setup\/playbook\/offers"[^>]*data-offers-link=""/);
       const src = fs.readFileSync(path.join(process.cwd(), "app/app/[account]/setup/playbook/part-rows.tsx"), "utf8");
-      expect(src).toContain("export function MaxDiscountRow(");
-      expect(src.match(/<MaxDiscountRow /g)?.length).toBe(1);
+      expect(src).not.toContain("MaxDiscountRow");
     });
   });
 });

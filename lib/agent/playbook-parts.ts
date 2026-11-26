@@ -6,7 +6,7 @@
  */
 
 /** In menu order: Previous / Next follow it. */
-export const PLAYBOOK_PARTS = ["agent", "opening", "asks", "plays", "objections", "close", "limits", "never", "after"] as const;
+export const PLAYBOOK_PARTS = ["agent", "opening", "asks", "plays", "objections", "offers", "close", "limits", "never", "after"] as const;
 export type PlaybookPart = (typeof PLAYBOOK_PARTS)[number];
 
 export type PartGroup = "who" | "conversation" | "rules" | "after";
@@ -14,7 +14,7 @@ export type PartGroup = "who" | "conversation" | "rules" | "after";
 /** Home and the part menu show the parts in these groups, in this order. */
 export const PART_GROUPS: readonly { group: PartGroup; parts: readonly PlaybookPart[] }[] = [
   { group: "who", parts: ["agent"] },
-  { group: "conversation", parts: ["opening", "asks", "plays", "objections", "close"] },
+  { group: "conversation", parts: ["opening", "asks", "plays", "objections", "offers", "close"] },
   { group: "rules", parts: ["limits", "never"] },
   { group: "after", parts: ["after"] },
 ];
@@ -42,7 +42,9 @@ export function partOfKey(key: string): PlaybookPart | null {
   if (/^opener(\.|$)/.test(k)) return "opening";
   if (/^(field|fields|questionBudget)(\.|$)/.test(k)) return "asks";
   if (/^(objection|objections|objectionAttempts)(\.|$)/.test(k)) return "objections";
-  if (/^(maxDiscount|offerMeetingWhen|handOffWhen|exception|exceptions)(\.|$)/.test(k)) return "limits";
+  // Offers (its own part since the offers list): its rows, its order, and the older single discount limit.
+  if (/^(offer|offers|offerOrder|maxDiscount)(\.|$)/.test(k)) return "offers";
+  if (/^(offerMeetingWhen|handOffWhen|exception|exceptions)(\.|$)/.test(k)) return "limits";
   if (/^(never|neverDo)(\.|$)/.test(k)) return "never";
   if (/^unpaid(\.|$)/.test(k)) return "after";
   if (/^plays?(\.|$)/.test(k)) return "plays";
@@ -51,12 +53,13 @@ export function partOfKey(key: string): PlaybookPart | null {
 
 /** The old one-page sections (#pb-<id>-h-s, #pb-<id>-h) and the part each became. */
 const OLD_SECTIONS: Record<string, PlaybookPart> = {
-  agent: "agent", goal: "close", opener: "opening", fields: "asks", plays: "plays", obj: "objections", lim: "limits", never: "never", after: "after",
+  agent: "agent", goal: "close", opener: "opening", fields: "asks", plays: "plays", obj: "objections", offers: "offers", lim: "limits", never: "never", after: "after",
 };
 
 /**
  * Where an old link's anchor lands now: "#pb-lim-h-s" → limits, "#pb-opener-h" → opening,
- * an input's anchor ("#pb-maxDiscount", "#pb-never.2") → its part, "#plays" → plays. Null: stay on home.
+ * "#pb-offers-h" (the offers list inside the old Limits) → offers, an input's anchor
+ * ("#pb-maxDiscount" → offers, "#pb-never.2") → its part, "#plays" → plays. Null: stay on home.
  */
 export function partForAnchor(hash: string): PlaybookPart | null {
   const id = decodeURIComponent(hash.replace(/^#/, "")).trim();

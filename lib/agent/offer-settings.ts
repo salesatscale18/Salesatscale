@@ -198,3 +198,64 @@ export function parseOfferRows(rows: readonly OfferRowInput[], errors: Record<st
   for (const t of DEFAULT_ORDER) if (!seen.has(t) && t !== "smaller_start") out.push({ ...defaultOffer(t, 0), on: false });
   return sortActiveFirst(out);
 }
+
+// ---------------------------------------------------------------------------
+// One row change (Playbook › Offers: read first, one row at a time)
+// ---------------------------------------------------------------------------
+
+/**
+ * One change to the offers list, as the Offers part saves it (one row at a
+ * time): an offer's numbers, its switch, or its place among the active ones.
+ */
+export type OfferChange =
+  | { kind: "offer"; type: OfferType; pct: string; units?: string }
+  | { kind: "offerSwitch"; type: OfferType; on: boolean }
+  | { kind: "offerMove"; type: OfferType; to: number };
+
+/** Switching a row on puts it last among the active ones; switching it off puts it first among the rows that are off. Pure. */
+export function switchOffer<T extends { type: OfferType; on: boolean }>(list: readonly T[], type: OfferType, on: boolean): T[] {
+  const row = list.find((r) => r.type === type);
+  if (!row || row.type === "smaller_start") return [...list];
+  const rest = list.filter((r) => r.type !== type);
+  return [...rest.filter((r) => r.on), { ...row, on }, ...rest.filter((r) => !r.on)];
+}
+
+/** Moves the active row `type` to place `to` (0-based among the active rows); rows that are off never move. Pure. */
+export function moveOffer<T extends { type: OfferType; on: boolean }>(list: readonly T[], type: OfferType, to: number): T[] {
+  const active = list.filter((r) => r.on);
+  const i = active.findIndex((r) => r.type === type);
+  if (i < 0 || i === to) return [...list];
+  const next = active.filter((r) => r.type !== type);
+  next.splice(Math.max(0, Math.min(to, next.length)), 0, active[i]);
+  return [...next, ...list.filter((r) => !r.on)];
+}
+
+const ROW_CHANGED = "This row changed in the meantime. Reload the page and try again.";
+
+/**
+ * The editor's rows after one change to the stored (or derived) list, for
+ * parseOfferRows to check (numbers as typed: a bad percent is refused there,
+ * at `offer.<type>.pct`). Pure. Switching the always-on row, changing its
+ * numbers, or moving a row that is off or to a place outside the active rows
+ * is refused.
+ */
+export function applyOfferChange(list: readonly StoredOffer[], change: OfferChange): { ok: true; rows: OfferRowInput[] } | { ok: false; errors: Record<string, string> } {
+  const rows = offerRowsOf(list).map((r) => ({ type: r.type as OfferType, on: r.on === "1", pct: r.pct, units: r.units }));
+  const at = `offer.${change.type}`;
+  const row = rows.find((r) => r.type === change.type);
+  if (!row) return { ok: false, errors: { [at]: ROW_CHANGED } };
+  const back = (xs: typeof rows): OfferRowInput[] => xs.map((x) => ({ type: x.type, on: x.on ? "1" : "0", pct: x.pct, units: x.units }));
+  switch (change.kind) {
+    case "offer":
+      if (change.type === "smaller_start") return { ok: false, errors: { [at]: ROW_CHANGED } };
+      return { ok: true, rows: back(rows.map((r) => (r.type === change.type ? { ...r, pct: change.pct, ...(change.type === "more_units" ? { units: change.units ?? r.units } : {}) } : r))) };
+    case "offerSwitch":
+      if (change.type === "smaller_start") return { ok: false, errors: { offers: "A smaller first step is always in the list." } };
+      return { ok: true, rows: back(switchOffer(rows, change.type, change.on)) };
+    case "offerMove": {
+      const active = rows.filter((r) => r.on);
+      if (!row.on || !Number.isInteger(change.to) || change.to < 0 || change.to >= active.length) return { ok: false, errors: { [at]: ROW_CHANGED } };
+      return { ok: true, rows: back(moveOffer(rows, change.type, change.to)) };
+    }
+  }
+}

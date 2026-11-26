@@ -38,6 +38,7 @@ const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, saveDraftPlaybook } = await import("@/lib/agent/service");
 const { defaultPlaybook } = await import("@/lib/agent/playbook");
 const { QUESTION_CEILING } = await import("@/lib/agent/core/stage");
+const { QUOTE_VALID_DAYS } = await import("@/lib/quotes/service");
 const { t } = await import("@/lib/i18n");
 const { HANDOFF_ALWAYS } = await import("@/app/app/[account]/setup/playbook/part-rows");
 const { default: HomePage } = await import("@/app/app/[account]/setup/playbook/page");
@@ -86,10 +87,17 @@ const MOVED: Record<string, [Key, Record<string, string | number>?][]> = {
     ["playbook.fields.order_form_body"],
   ],
   objections: [["playbook.objections.attempts_hint_short"]],
-  limits: [["playbook.max_discount_hint"], ["playbook.exceptions_read"], ["playbook.handoff_always_list"], ...HANDOFF_ALWAYS.map((k) => [k] as [Key])],
+  // Discounts: set per offer; the row's (i) says what Offers are and that a bigger request waits for approval.
+  limits: [["playbook.part_sub.offers"], ["playbook.offers.above_hint"], ["playbook.exceptions_read"], ["playbook.handoff_always_list"], ...HANDOFF_ALWAYS.map((k) => [k] as [Key])],
   never: [["playbook.never_hint"]],
   after: [["playbook.unpaid.hint"], ["playbook.preview.after_note"]],
   close: [],
+  // Offers: the list's explanation, each offer's (and the pay-yearly note), "Anything above these" and the platform's rules.
+  offers: [
+    ["playbook.offers.hint"], ["playbook.offers.about.smaller_start"], ["playbook.offers.about.more_units"],
+    ["playbook.offers.about.decide_now", { days: QUOTE_VALID_DAYS }], ["playbook.offers.about.general"], ["playbook.offers.about.pay_yearly"],
+    ["playbook.offers.yearly_note"], ["playbook.offers.above_hint"], ["playbook.offers.rules"],
+  ],
 };
 /** Grey helper patterns that must not be in a read state (outside the popovers). */
 const GREY = ["pb-row__hint", "pb-hint-line", "pb-disclosure", "pb-unpaid__hint", 'class="sas-hint"'];
@@ -184,11 +192,20 @@ describe("Playbook: explanations behind an (i)", () => {
     expect(splitPopovers(open).rest).toContain('data-handoff-always=""');
   });
 
-  it("an open row shows its helper under the field, as before (Limits › Discount without approval)", async () => {
-    const html = await part("limits", { edit: "maxDiscount" });
-    save("limits-edit", html);
+  it("an open row shows its helper under the field, as before (Offers › General discount)", async () => {
+    const html = await part("offers", { edit: "offer.general" });
+    save("offers-edit", html);
     const { rest } = splitPopovers(html);
-    expect(rest).toMatch(/<span class="sas-hint">Above this, the quote waits for your approval\.<\/span>/);
+    expect(rest).toMatch(/<span class="sas-hint">A plain saving, with nothing asked in return\.<\/span>/);
+  });
+
+  it("Limits › Discounts: label and (i), value, Open; no discount field", async () => {
+    const html = await part("limits");
+    const row = html.slice(html.indexOf('data-row="discounts"'));
+    expect(row).toContain('aria-label="About: Discounts"');
+    expect(decode(row)).toContain("Set per offer · in Offers");
+    expect(row).toMatch(/data-offers-link="">Open<\/a>/);
+    expect(html).not.toContain('id="pb-maxDiscount"');
   });
 
   it("What it asks: the order-form block is its title, (i), link and a count of the seller's own fields", async () => {
