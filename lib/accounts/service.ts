@@ -10,13 +10,14 @@
  * writes here are ordered so a partial failure leaves a recoverable state
  * (e.g. an account without an invite can be re-invited).
  */
-import { and, asc, desc, eq, inArray, isNotNull, isNull, like, max, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, like, max, or } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import {
   accountInvites, accountMembers, auditLog, sellerAccounts, users,
   type AccountInvite, type SellerAccount, type User,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "./audit";
+import { accountClosedSql, accountOpenSql } from "./closed";
 import { ensureHomeMarket, setMarketPriceList, updateMarket } from "@/lib/markets/service";
 import { CALLING_CODES, countryName, standardVatBp } from "@/lib/markets/rules";
 import { createPriceList } from "@/lib/pricing/price-lists";
@@ -170,16 +171,26 @@ export async function renewInvite(db: Db, actor: Actor, accountId: string, invit
   return createInvite(db, actor, accountId, { email: old.email, name: old.inviteeName, isOwner: old.isOwner }, now);
 }
 
-/** The admin accounts list: only the columns it shows. */
-export async function listAccounts(db: Db) {
+/**
+ * The admin accounts list: only the columns it shows. Closed accounts
+ * (lib/accounts/closed.ts) are left out unless `includeClosed`.
+ */
+export async function listAccounts(db: Db, opts: { includeClosed?: boolean } = {}) {
   return db
     .select({
       id: sellerAccounts.id, slug: sellerAccounts.slug, tradeName: sellerAccounts.tradeName, market: sellerAccounts.market,
       languages: sellerAccounts.languages, plan: sellerAccounts.plan, status: sellerAccounts.status,
-      createdAt: sellerAccounts.createdAt,
+      createdAt: sellerAccounts.createdAt, closed: accountClosedSql().mapWith(Boolean),
     })
     .from(sellerAccounts)
+    .where(opts.includeClosed ? undefined : accountOpenSql())
     .orderBy(asc(sellerAccounts.tradeName));
+}
+
+/** How many accounts are closed (for the admin list's "Show closed (n)"). */
+export async function countClosedAccounts(db: Db): Promise<number> {
+  const [row] = await db.select({ n: count() }).from(sellerAccounts).where(accountClosedSql());
+  return Number(row?.n ?? 0);
 }
 
 export async function getAccountById(db: Db, id: string) {
@@ -280,13 +291,16 @@ export async function resumeAccount(db: Db, actor: Actor, accountId: string) {
   return row ?? null;
 }
 
-/** Accounts the user is a member of, with their role. */
-export async function listUserAccounts(db: Db, userId: string) {
+/**
+ * Accounts the user is a member of, with their role. Closed accounts
+ * (lib/accounts/closed.ts) are left out unless `includeClosed`.
+ */
+export async function listUserAccounts(db: Db, userId: string, opts: { includeClosed?: boolean } = {}) {
   return db
     .select({ account: sellerAccounts, member: accountMembers })
     .from(accountMembers)
     .innerJoin(sellerAccounts, eq(sellerAccounts.id, accountMembers.accountId))
-    .where(eq(accountMembers.userId, userId))
+    .where(and(eq(accountMembers.userId, userId), opts.includeClosed ? undefined : accountOpenSql()))
     .orderBy(asc(sellerAccounts.tradeName));
 }
 

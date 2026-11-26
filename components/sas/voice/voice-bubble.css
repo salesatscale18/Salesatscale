@@ -47,13 +47,15 @@
   .vb-wave i { transition: none; }
 }
 
-/* The voice bar (board VoiceBubbleBack 1): [Mute] · [Speaker] · bubble · [Text], centred on the composer's strip. */
+/* The voice bar (board VoiceBubbleBack 1): [Mute] · [Speaker] · bubble · [Text] across the composer's strip. */
 /* Pure CSS, nothing measured in script, so it lays out right at any width, also after being rendered in a hidden or
    off-screen container of another width (the lead page hand-over). Five tracks: four equal slots for the controls
-   and the bubble's track (its 60 px and a little room for its rings) at the exact centre. Mute · bubble · Text sit in
-   slots 2 · centre · 4; with Speaker, Mute moves to slot 1 and Speaker takes slot 2. So the nearest control on each
-   side is at the same distance from the bubble, nothing can overflow the strip (the slots shrink with it; a 44 px
-   circle fits a slot down to a 280 px wide strip), and the bar never needs a phone-only rule.
+   and the bubble's track (its 60 px and a little room for its rings) at the exact centre. The outer controls sit at
+   the strip's edges, mirrored: Mute at the start of slot 1 (the start gutter), Text at the end of slot 4 (the end
+   gutter); Speaker, where shown, centred in slot 2, between Mute and the bubble. So the bar reads balanced with or
+   without Speaker, the bubble stays centred, nothing can overflow the strip (the slots shrink with it; a 44 px
+   circle fits a slot down to a 280 px wide strip), RTL mirrors through the grid (start/end are logical), and the bar
+   never needs a phone-only rule.
    Row 1 is the short labels' row ("What you say appears as text…", "You are muted", "1 min left"), in normal flow,
    its height kept whether or not one shows (the bar never jumps). The row gap is at least how far the speaking ring
    reaches above the bubble (inset 17 px, scaled to 1.14: about 24 px), so a label can never cover a ring. */
@@ -62,10 +64,9 @@
 .vb-bar__note { grid-row: 1; grid-column: 1 / -1; align-self: end; min-width: 0; max-width: 100%; display: flex; justify-content: center; }
 .vb-bar__note .vb-flash { max-width: 100%; }
 .vb-bar > .vb { grid-row: 2; grid-column: 3; }
-.vb-bar > [data-bar-mute] { grid-row: 2; grid-column: 2; }
-.vb-bar--speaker > [data-bar-mute] { grid-column: 1; }
+.vb-bar > [data-bar-mute] { grid-row: 2; grid-column: 1; justify-self: start; }
 .vb-bar > [data-bar-speaker] { grid-row: 2; grid-column: 2; }
-.vb-bar > [data-bar-text] { grid-row: 2; grid-column: 4; }
+.vb-bar > [data-bar-text] { grid-row: 2; grid-column: 5; justify-self: end; }
 /* A control fills its slot up to 64 px; the label stays on one line (centred, it may run past a narrow slot evenly). */
 .vb-ctl { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 64px; flex: none; white-space: nowrap; padding: 0; border: 0; background: none; cursor: pointer;
   font: inherit; font-size: 11px; line-height: 14px; font-weight: 500; color: var(--muted, #566073); }

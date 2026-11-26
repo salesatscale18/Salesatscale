@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { asc, count, desc } from "drizzle-orm";
+import { asc, count, desc, eq, or } from "drizzle-orm";
 import { sellerAccounts, users } from "@/db/schema";
 import { Chip, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { MetricTile } from "@/components/sas/record";
 import { appDb, requireSuperAdmin } from "@/lib/auth/account";
+import { accountOpenSql } from "@/lib/accounts/closed";
 import { displayName } from "@/lib/auth/display";
 import { ACTION_PREFIXES, listAuditLog, parseActionPrefix } from "@/lib/admin/activity";
 import { t } from "@/lib/i18n";
@@ -35,8 +36,12 @@ export default async function SuperAdminPage({ searchParams }: { searchParams: P
 
   const [log, accounts, statusCounts, allUsers, [{ n: userCount }]] = await Promise.all([
     listAuditLog(appDb, { accountId, actionPrefix, limit: PAGE_SIZE, before }),
-    appDb.select({ id: sellerAccounts.id, tradeName: sellerAccounts.tradeName }).from(sellerAccounts).orderBy(asc(sellerAccounts.tradeName)),
-    appDb.select({ status: sellerAccounts.status, n: count() }).from(sellerAccounts).groupBy(sellerAccounts.status),
+    // Closed accounts (lib/accounts/closed.ts) are left out of the account filter (unless it is the
+    // one selected, e.g. from a log row) and of the counts; /sadmin/accounts?closed=1 lists them.
+    appDb.select({ id: sellerAccounts.id, tradeName: sellerAccounts.tradeName }).from(sellerAccounts)
+      .where(accountId ? or(accountOpenSql(), eq(sellerAccounts.id, accountId)) : accountOpenSql())
+      .orderBy(asc(sellerAccounts.tradeName)),
+    appDb.select({ status: sellerAccounts.status, n: count() }).from(sellerAccounts).where(accountOpenSql()).groupBy(sellerAccounts.status),
     appDb.select().from(users).orderBy(desc(users.createdAt)).limit(USERS_LIMIT),
     appDb.select({ n: count() }).from(users),
   ]);

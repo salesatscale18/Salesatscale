@@ -10,8 +10,8 @@
  * Layout is CSS only (voice-bubble.css .vb-bar), nothing measured in script: the bar lays itself out at whatever
  * width it has, also when it was first rendered in a hidden or off-screen container of another width (the lead page
  * hand-over). Two rows: the short labels ("What you say appears as text…", "You are muted", …) in their own row,
- * in normal flow above the controls, so they can never cover the bubble's rings; then the controls in equal slots
- * with the bubble at the centre.
+ * in normal flow above the controls, so they can never cover the bubble's rings; then the controls: Mute and Text
+ * at the strip's two edges (mirrored in RTL), Speaker between Mute and the bubble, the bubble at the centre.
  */
 import type { KeyboardEvent } from "react";
 import { Icon } from "@/components/sas/icon";

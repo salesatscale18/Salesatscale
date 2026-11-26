@@ -4822,5 +4822,7 @@
   "lead.preview_run_plain": "Preview run",
   "lead_pages.latest.preview_run": "Preview run",
   "lead_pages.link.start_over": "Start over",
-  "followup.reason.preview_run": "it was a preview run"
+  "followup.reason.preview_run": "it was a preview run",
+  "admin.accounts.show_closed": "Show closed ({count})",
+  "admin.accounts.hide_closed": "Hide closed"
 }

@@ -4,7 +4,7 @@ import { Icon } from "@/components/sas/icon";
 import { MetricTile } from "@/components/sas/record";
 import { buttonClass } from "@/components/sas/primitives";
 import { appDb, requireSuperAdmin } from "@/lib/auth/account";
-import { listAccounts } from "@/lib/accounts/service";
+import { countClosedAccounts, listAccounts } from "@/lib/accounts/service";
 import { PLANS, type Plan } from "@/lib/accounts/rules";
 import { demoAccountMarks } from "@/lib/demo/seed";
 import { t } from "@/lib/i18n";
@@ -20,7 +20,10 @@ const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 export default async function AccountsPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const me = await requireSuperAdmin();
   const sp = (await searchParams) ?? {};
-  const accounts = await listAccounts(appDb);
+  // Closed accounts (removed demos, accounts a super admin paused) are left out by the query
+  // unless "Show closed" is on (?closed=1); lib/accounts/closed.ts says what counts as closed.
+  const showClosed = (Array.isArray(sp.closed) ? sp.closed[0] : sp.closed) === "1";
+  const [accounts, closedCount] = await Promise.all([listAccounts(appDb, { includeClosed: showClosed }), countClosedAccounts(appDb)]);
   const demos = await demoAccountMarks(appDb, accounts.map((a) => a.id));
   const since = Date.now() - MONTH_MS;
   const addedThisMonth = accounts.filter((a) => a.createdAt.getTime() >= since).length;
@@ -56,6 +59,18 @@ export default async function AccountsPage({ searchParams }: { searchParams?: Pr
           <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("admin.demo.failed")}</span></div>
         ) : null}
         <section className="sas-panel">
+          {closedCount > 0 || showClosed ? (
+            <div className="sas-panel__head" style={{ justifyContent: "flex-end" }}>
+              <a
+                className={buttonClass("ghost", "sm")}
+                href={showClosed ? "/sadmin/accounts" : "/sadmin/accounts?closed=1"}
+                aria-pressed={showClosed}
+              >
+                <Icon name={showClosed ? "list-filter" : "eye"} />
+                {showClosed ? t("admin.accounts.hide_closed") : t("admin.accounts.show_closed", { count: closedCount })}
+              </a>
+            </div>
+          ) : null}
           {accounts.length === 0 ? (
             <p className="sas-panel__body sas-small">{t("admin.accounts.empty")}</p>
           ) : (

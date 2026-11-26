@@ -17,12 +17,16 @@ export const metadata: Metadata = { title: "Sales at Scale", robots: { index: fa
  * Entry to the seller workspace (canvas: AccessStates).
  * No account → explanation + sign out. One account → straight in.
  * Several accounts, or a platform admin → account picker.
+ * Closed accounts (lib/accounts/closed.ts) are left out; a platform admin reaches
+ * them through /sadmin/accounts. A seller whose only accounts are closed keeps
+ * today's behaviour (straight in, where the account says it is paused).
  */
 export default async function AppEntryPage() {
   const me = await ensureUser();
   if (!me) return (await auth()).redirectToSignIn();
-  const memberships = await listUserAccounts(appDb, me.id);
   const isPlatformAdmin = me.role === "super_admin";
+  let memberships = await listUserAccounts(appDb, me.id);
+  if (memberships.length === 0 && !isPlatformAdmin) memberships = await listUserAccounts(appDb, me.id, { includeClosed: true });
 
   if (memberships.length === 1 && !isPlatformAdmin) redirect(`/app/${memberships[0].account.slug}`);
 

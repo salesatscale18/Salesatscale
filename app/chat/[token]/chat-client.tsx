@@ -11,7 +11,6 @@ import { translator, type Locale, type MessageKey } from "@/lib/i18n";
 import { VoiceClient, type CallFailReason, type VoiceCallEvents } from "@/lib/voice/client/voice-client";
 import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
 import { mirrorPhase } from "@/lib/voice/client/bubble";
-import { callClock } from "@/lib/voice/lab";
 import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import { BuyerCallBar, ChatVoiceBubble } from "./voice";
 import { useBackGuard } from "@/lib/voice/client/back-guard";
@@ -586,12 +585,13 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
             {m.kind === "quote" ? <Bolded text={m.body} /> : <Linked text={m.previews.length ? text : m.body} />}
             <span className="c-meta">
               {m.call ? (
-                // Said (or typed) in a call: the time in the call, with a mark (board VoiceBuyer 3).
-                <span className="c-spoken" title={tr(m.call.typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: callClock(m.call.atMs / 1000) })} data-spoken="">
-                  <svg viewBox="0 0 24 24" role="img" aria-label={tr(m.call.typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: callClock(m.call.atMs / 1000) })}>
+                // Said (or typed) in a call: the line's clock time like every other line, with a mark (board VoiceBuyer 3).
+                // (The seller's views, the test lab and the call block keep the time in the call.)
+                <span className="c-spoken" title={tr(m.call.typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: timeOf(d) })} data-spoken="">
+                  <svg viewBox="0 0 24 24" role="img" aria-label={tr(m.call.typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: timeOf(d) })}>
                     <path d={m.call.typed ? "M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" : "M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM19 10v2a7 7 0 0 1-14 0v-2M12 19v3"} />
                   </svg>
-                  {callClock(m.call.atMs / 1000)}
+                  <time dateTime={m.at} suppressHydrationWarning>{timeOf(d)}</time>
                 </span>
               ) : <time dateTime={m.at} suppressHydrationWarning>{timeOf(d)}</time>}
               {m.pending === "failed" ? <span>· {strings.notSent}</span> : null}
