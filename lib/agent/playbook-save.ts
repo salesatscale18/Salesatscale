@@ -8,7 +8,7 @@ import type { Playbook } from "@/db/schema";
 import { isPlayKey, parsePlaybookRows, parsePlayRow, playbookRowsFromForm, type PlaybookErrors, type PlaybookRowsInput, type PlayRowInput } from "./playbook";
 import { ensureDraftVersion, saveDraftPlaybook } from "./service";
 import { refreshAgentNameAuto } from "./names-auto";
-import { UNPAID_STEPS, unpaidRemindersOf, type PlaybookWithUnpaid, type UnpaidRowsInput } from "@/lib/orders/unpaid-reminders";
+import { UNPAID_DEFAULTS, UNPAID_STEPS, unpaidRemindersOf, type PlaybookWithUnpaid, type UnpaidRowsInput } from "@/lib/orders/unpaid-reminders";
 import { readOpener } from "./core/opener";
 import { questionBudgetOf } from "./core/stage";
 import { objectionAttemptsOf } from "./core/objections";
@@ -40,7 +40,7 @@ export async function savePlayForm(db: Db, accountId: string, key: string, entri
   else delete plays[key];
   const { plays: _old, ...rest } = current;
   void _old;
-  await saveDraftPlaybook(db, accountId, { ...rest, ...(Object.keys(plays).length ? { plays } : {}) });
+  await saveDraftPlaybook(db, accountId, withoutDefaultUnpaid({ ...rest, ...(Object.keys(plays).length ? { plays } : {}) }));
   return { ok: true };
 }
 
@@ -65,10 +65,24 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
  * writes it into the draft, as the editor's save always has. `keptExceptions`:
  * the approved exceptions still shown (null: keep every stored one).
  */
-async function saveRowsInput(db: Db, accountId: string, input: PlaybookRowsInput, keptExceptions: ReadonlySet<string> | null, opts: SaveOpts, draft?: PlaybookWithUnpaid): Promise<PlaybookFormSave> {
+async function saveRowsInput(db: Db, accountId: string, input: PlaybookRowsInput, keptExceptions: ReadonlySet<string> | null, opts: SaveOpts): Promise<PlaybookFormSave> {
+  const current: PlaybookWithUnpaid = (await ensureDraftVersion(db, accountId)).playbook;
+  const built = buildRowsDraft(current, input, keptExceptions);
+  if (!built.ok) return { ok: false, errors: built.errors, values: input };
+  await saveDraftPlaybook(db, accountId, withoutDefaultUnpaid(built.value));
+  // Automatic versions for a new name or new market languages, once, on save (retrying earlier failures).
+  if (opts.names !== undefined) await refreshAgentNameAuto(db, accountId, opts.names, { actor: opts.actor ?? null, retry: true });
+  return { ok: true };
+}
+
+/**
+ * The playbook the editor's save writes for `input` over the stored draft
+ * `current` (pure): every value as parsed, with what the form did not show
+ * kept as stored. Only the editor's keys are written (EDITOR_KEYS).
+ */
+function buildRowsDraft(current: PlaybookWithUnpaid, input: PlaybookRowsInput, keptExceptions: ReadonlySet<string> | null): { ok: true; value: PlaybookWithUnpaid } | { ok: false; errors: PlaybookErrors } {
   const parsed = parsePlaybookRows(input);
-  if (!parsed.ok) return { ok: false, errors: parsed.errors, values: input };
-  const current: PlaybookWithUnpaid = draft ?? (await ensureDraftVersion(db, accountId)).playbook;
+  if (!parsed.ok) return parsed;
   const stored = current.exceptions ?? [];
   const exceptions = keptExceptions ? stored.filter((x) => keptExceptions.has(x.id)) : stored;
   const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, objectionAttempts, callRole, unpaidReminders, ...rest } = parsed.value;
@@ -91,22 +105,108 @@ async function saveRowsInput(db: Db, accountId: string, input: PlaybookRowsInput
   const keepUnpaid = input.unpaidReminders === undefined ? current.unpaidReminders : unpaidReminders;
   // Automatic name versions are kept; they are stale (and remade) when the name changed (lib/agent/names-auto.ts).
   const keepAuto = current.agentNameAuto;
-  await saveDraftPlaybook(db, accountId, {
-    ...rest,
-    ...(Object.keys(keepNames).length ? { agentNameLocal: keepNames } : {}),
-    ...(keepAuto ? { agentNameAuto: keepAuto } : {}),
-    ...(keepGender ? { agentGender: keepGender } : {}),
-    ...(keepBudget !== undefined ? { questionBudget: keepBudget } : {}),
-    ...(keepAttempts !== undefined ? { objectionAttempts: keepAttempts } : {}),
-    ...(keepRole ? { callRole: keepRole } : {}),
-    ...(exceptions.length ? { exceptions } : {}),
-    ...(keepOpener ? { opener: keepOpener } : {}),
-    ...(keepPlays ? { plays: keepPlays } : {}),
-    ...(keepUnpaid ? { unpaidReminders: keepUnpaid } : {}),
+  return {
+    ok: true,
+    value: {
+      ...rest,
+      ...(Object.keys(keepNames).length ? { agentNameLocal: keepNames } : {}),
+      ...(keepAuto ? { agentNameAuto: keepAuto } : {}),
+      ...(keepGender ? { agentGender: keepGender } : {}),
+      ...(keepBudget !== undefined ? { questionBudget: keepBudget } : {}),
+      ...(keepAttempts !== undefined ? { objectionAttempts: keepAttempts } : {}),
+      ...(keepRole ? { callRole: keepRole } : {}),
+      ...(exceptions.length ? { exceptions } : {}),
+      ...(keepOpener ? { opener: keepOpener } : {}),
+      ...(keepPlays ? { plays: keepPlays } : {}),
+      ...(keepUnpaid ? { unpaidReminders: keepUnpaid } : {}),
+    },
+  };
+}
+
+/** Keys the editor's save writes (buildRowsDraft); a stored playbook can hold others (a part added later). */
+const EDITOR_KEYS = new Set<string>([
+  "agentName", "agentNameLocal", "agentNameAuto", "agentGender", "questionBudget", "objectionAttempts", "goal", "tone", "outcomes", "fields",
+  "objections", "maxDiscountBp", "offerMeetingWhen", "handOffWhen", "callRole", "neverDo", "exceptions", "opener", "plays", "unpaidReminders",
+]);
+
+/** Structural equality of stored JSON values; a property set to undefined counts as missing. */
+export function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const bb = b as unknown[];
+    return a.length === bb.length && a.every((x, i) => sameJson(x, bb[i]));
+  }
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const ka = Object.keys(ra).filter((k) => ra[k] !== undefined);
+  const kb = Object.keys(rb).filter((k) => rb[k] !== undefined);
+  return ka.length === kb.length && ka.every((k) => rb[k] !== undefined && sameJson(ra[k], rb[k]));
+}
+
+/**
+ * "Signed, not paid yet" stored with exactly the default values is dropped
+ * (the key goes away). A playbook without the key reads the same defaults
+ * (unpaidRemindersOf), and the setting is read only by the reminder runner,
+ * never by the agent's prompt, so for the buyer, the team and the agent it is
+ * the same whether the key is there or not: a seller who picks 2 / 5 / 7, all
+ * on, on purpose gets exactly that. Dropping it also heals drafts where the
+ * first row save of the new Playbook (S1) wrote the defaults by mistake.
+ */
+export function withoutDefaultUnpaid<T extends PlaybookWithUnpaid>(p: T): T {
+  if (p.unpaidReminders === undefined || !sameJson(p.unpaidReminders, UNPAID_DEFAULTS)) return p;
+  const { unpaidReminders: _u, ...rest } = p;
+  void _u;
+  return rest as T;
+}
+
+/**
+ * The draft after one row change, keeping everything the change did not touch
+ * exactly as stored (pure). `baseline` is what the editor's save writes for
+ * the stored draft unchanged, `next` what it writes with the change. A
+ * top-level key where they agree is kept as stored (also when it is missing,
+ * and keys the editor does not know); one where they differ takes the new
+ * value, and in a list the items the change left alone keep their stored form.
+ * So the editor's own filling-in (the defaults for the budget, attempts,
+ * gender, outcomes and reminders; trimming; the opener's shape) never reaches
+ * a key the seller did not change.
+ */
+export function keepUntouched(current: PlaybookWithUnpaid, baseline: PlaybookWithUnpaid, next: PlaybookWithUnpaid): PlaybookWithUnpaid {
+  const cur = current as unknown as Record<string, unknown>;
+  const base = baseline as unknown as Record<string, unknown>;
+  const nxt = next as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of new Set([...Object.keys(cur), ...Object.keys(base), ...Object.keys(nxt)])) {
+    if (sameJson(base[k], nxt[k])) {
+      if (cur[k] !== undefined) out[k] = cur[k];
+    } else if (nxt[k] !== undefined) {
+      out[k] = keepUntouchedItems(cur[k], base[k], nxt[k]);
+    }
+  }
+  return out as unknown as PlaybookWithUnpaid;
+}
+
+/** A list's new items: each one that is (as written) one of the old items is taken as stored. */
+function keepUntouchedItems(cur: unknown, base: unknown, nxt: unknown): unknown {
+  if (!Array.isArray(cur) || !Array.isArray(base) || !Array.isArray(nxt) || cur.length !== base.length) return nxt;
+  const used = new Set<number>();
+  return nxt.map((x) => {
+    const i = base.findIndex((b, j) => !used.has(j) && sameJson(b, x));
+    if (i < 0) return x;
+    used.add(i);
+    return cur[i];
   });
-  // Automatic versions for a new name or new market languages, once, on save (retrying earlier failures).
-  if (opts.names !== undefined) await refreshAgentNameAuto(db, accountId, opts.names, { actor: opts.actor ?? null, retry: true });
-  return { ok: true };
+}
+
+/**
+ * A stored draft that the validator refuses unchanged (an older value today's
+ * rules no longer accept) has no baseline: a change that makes it valid is
+ * written as the whole form, keeping the keys the editor does not know.
+ */
+function withUnknownKeys(current: PlaybookWithUnpaid, next: PlaybookWithUnpaid): PlaybookWithUnpaid {
+  const unknown = Object.fromEntries(Object.entries(current).filter(([k]) => !EDITOR_KEYS.has(k)));
+  return { ...unknown, ...next } as PlaybookWithUnpaid;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,9 +367,10 @@ export type PlaybookChangeSave = { ok: true } | { ok: false; errors: PlaybookErr
 /**
  * Applies ONE change to the latest draft playbook and saves it (Playbook
  * parts). The whole playbook is checked again with the editor's validator
- * (parsePlaybookRows) and written exactly as the one-page save wrote it
- * (savePlaybookForm with every other value as stored): the same draft
- * creation, the same stored shape, the same automatic name versions. An error
+ * (parsePlaybookRows); what the change touched is written as the one-page
+ * save wrote it, and everything else stays exactly as stored (keepUntouched:
+ * no defaults filled in, unknown keys kept). The same draft creation and
+ * automatic name versions as the one-page save. An error
  * anywhere (also in another part) refuses the change; its keys are input names,
  * so the caller can say which part needs the fix (partOfKey).
  */
@@ -284,7 +385,15 @@ export async function savePlaybookChange(db: Db, accountId: string, change: Play
     if (!stored.some((x) => x.id === change.id)) return { ok: false, errors: { exceptions: NOT_FOUND } };
     kept = new Set(stored.map((x) => x.id).filter((id) => id !== change.id));
   }
-  return saveRowsInput(db, accountId, applied.input, kept, opts, current);
+  const next = buildRowsDraft(current, applied.input, kept);
+  if (!next.ok) return { ok: false, errors: next.errors, values: applied.input };
+  // Only what the change touched is written; everything else stays exactly as stored.
+  const baseline = buildRowsDraft(current, storedRowsInput(current), null);
+  const draft = baseline.ok ? keepUntouched(current, baseline.value, next.value) : withUnknownKeys(current, next.value);
+  await saveDraftPlaybook(db, accountId, withoutDefaultUnpaid(draft));
+  // Automatic versions for a new name or new market languages, once, on save (retrying earlier failures).
+  if (opts.names !== undefined) await refreshAgentNameAuto(db, accountId, opts.names, { actor: opts.actor ?? null, retry: true });
+  return { ok: true };
 }
 
 const str = (v: unknown, max = 5000): string | null => (typeof v === "string" ? v.slice(0, max) : null);
