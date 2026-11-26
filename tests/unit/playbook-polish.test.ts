@@ -28,7 +28,8 @@ describe("old one-page anchors land on their part (the scroll-spy is gone)", () 
   it("an input anchor goes to its part (moves included); no anchor or an unknown one stays on home", () => {
     expect(partForAnchor("#pb-callRole")).toBe("agent");
     expect(partForAnchor("#pb-objectionAttempts")).toBe("objections");
-    expect(partForAnchor("#pb-maxDiscount")).toBe("limits");
+    // The discount limit lives in Offers now (set per offer).
+    expect(partForAnchor("#pb-maxDiscount")).toBe("offers");
     expect(partForAnchor("#pb-never.2")).toBe("never");
     expect(partForAnchor("#pb-opener.topic.0.en")).toBe("opening");
     expect(partForAnchor("")).toBeNull();

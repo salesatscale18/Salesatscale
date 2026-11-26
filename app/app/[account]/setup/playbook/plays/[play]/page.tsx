@@ -31,7 +31,7 @@ export default async function PlayPage({ params, searchParams }: { params: Promi
   // Facts that live in another setting are shown here read-only, with a link there.
   const elsewhere: ElsewhereFact[] = [];
   if (play === "too_expensive") {
-    elsewhere.push({ label: t("playbook.play.discount_limit"), text: t("playbook.play.discount_limit_text", { pct: pb.maxDiscountBp / 100 }), href: data.hrefs.limits, linkLabel: t("playbook.play.edit_in_limits") });
+    elsewhere.push({ label: t("playbook.play.discount_limit"), text: t("playbook.play.discount_limit_text", { pct: pb.maxDiscountBp / 100 }), href: data.hrefs.offers, linkLabel: t("playbook.play.edit_in_offers") });
   }
   if (play === "handoff" && pb.handOffWhen.trim()) {
     elsewhere.push({ label: t("playbook.handoff_when"), text: pb.handOffWhen, href: data.hrefs.limits, linkLabel: t("playbook.play.edit_in_limits") });

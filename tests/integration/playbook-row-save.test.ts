@@ -32,6 +32,8 @@ const { savePlaybookChange, savePlaybookForm, savePlayForm } = await import("@/l
 const { defaultPlaybook } = await import("@/lib/agent/playbook");
 const { countChanges, loadVersionComparison } = await import("@/lib/agent/version-compare");
 const { UNPAID_DEFAULTS } = await import("@/lib/orders/unpaid-reminders");
+const { offersOf } = await import("@/lib/agent/offer-settings");
+type StoredOffer = import("@/lib/agent/offer-settings").StoredOffer;
 
 type Change = Parameters<typeof savePlaybookChange>[2];
 type Rec = Record<string, unknown>;
@@ -67,14 +69,22 @@ const FULL: Playbook = {
   ...({ unpaidReminders: { first: { days: 3, on: true }, second: { days: 6, on: false }, team: { days: 9, on: true } } } as object),
 };
 
-/** Keys the editor does not know (a part added later) must survive a row save. */
-const EXTRA = { offers: [{ id: "o1", text: "10% off the first year" }], futureFlag: true, notes: { a: [1, 2] } };
+/** Keys the editor does not know (a part added later) must survive a row save. (`offers` is a known key since the Offers part.) */
+const EXTRA = { promos: [{ id: "o1", text: "10% off the first year" }], futureFlag: true, notes: { a: [1, 2] } };
+
+/** A stored offers list (Offers, 23 Nov): its own order, some trades on, numbers of its own. */
+const OFFERS: StoredOffer[] = [
+  { type: "decide_now", on: true, percentBp: 300 }, { type: "smaller_start", on: true }, { type: "general", on: true, percentBp: 1000 },
+  { type: "more_units", on: false, percentBp: 500, minUnits: 10 }, { type: "pay_yearly", on: false, percentBp: 800 },
+];
 
 const DRAFTS: Record<string, Playbook> = {
   legacy: LEGACY,
   full: FULL,
   "legacy + unknown keys": { ...LEGACY, ...EXTRA } as Playbook,
   "full + unknown keys": { ...FULL, ...EXTRA } as Playbook,
+  "full + offers list": { ...FULL, offers: OFFERS } as Playbook,
+  "legacy + offers list, limit 0": { ...LEGACY, maxDiscountBp: 0, offers: OFFERS.map((o) => (o.type === "general" ? { ...o, on: false } : o)) } as Playbook,
 };
 
 const LIST_ITEMS = {
@@ -132,6 +142,15 @@ function changesFor(p: Playbook): { name: string; change: Change }[] {
   }
   if (listOf(p, "openerTopics").length >= 2) out.push({ name: "setDefault", change: { kind: "setDefault", index: listOf(p, "openerTopics").length - 1 } });
   if (p.exceptions?.length) out.push({ name: "removeException", change: { kind: "removeException", id: p.exceptions[0].id } });
+  // Offers (its own part): one row's numbers, one switch, one move; the list as stored, or derived from the limit.
+  const offers = offersOf(p);
+  const active = offers.filter((o) => o.on);
+  const general = offers.find((o) => o.type === "general")!;
+  out.push({ name: "offer numbers (more units)", change: { kind: "offer", type: "more_units", pct: "7", units: "12" } });
+  out.push({ name: "offer numbers (general)", change: { kind: "offer", type: "general", pct: general.on ? "6" : "4" } });
+  out.push({ name: "offerSwitch (decide now)", change: { kind: "offerSwitch", type: "decide_now", on: !offers.find((o) => o.type === "decide_now")!.on } });
+  out.push({ name: "offerSwitch (general)", change: { kind: "offerSwitch", type: "general", on: !general.on } });
+  if (active.length >= 2) out.push({ name: "offerMove", change: { kind: "offerMove", type: active[0].type, to: active.length - 1 } });
   return out;
 }
 
