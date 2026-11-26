@@ -348,6 +348,17 @@ export const BOOKKEEPING_TOOLS: readonly string[] = ["update_deal_state"];
  * once; anything later is left alone: never the answer to a buyer whose words reached the engine late).
  */
 export const AFTER_QUESTION_CONTINUATION_MS = 5_000;
+/** Result fields that ask the model to say something (a guard's message, a kept number, a line to say). */
+export const SPEAK_FIELDS = ["kept_as_buyer_said", "kept_message", "message", "say_this", "instruction", "instructions"] as const;
+/**
+ * A bookkeeping call counts for the after-question guard only as a plain successful save: an ok outcome, and nothing
+ * in its result (as sent to the model, or the tool's own) that asks the model to speak (SPEAK_FIELDS). A refusal, a
+ * kept number or any message makes the model's continuation an answer to the app: it is always played. (`note`, the
+ * shortened result's "not saved yet" data, says it is not a cue to speak.)
+ */
+export function plainSave(outcome: string, ...results: (Record<string, unknown> | null | undefined)[]): boolean {
+  return outcome === "ok" && results.every((r) => !r || (r.ok !== false && SPEAK_FIELDS.every((k) => r[k] === undefined || r[k] === null || r[k] === "")));
+}
 
 /** A line in English or Hebrew (other languages are not judged: the model decides). */
 const JUDGEABLE = /[A-Za-z֐-׿]/;
@@ -624,7 +635,7 @@ export class VoiceEngine {
    * and when. `afterQDrop`: the continuation being dropped now. `lastSaid`: the agent's latest spoken output since the
    * buyer last spoke ("" once they speak).
    */
-  private afterQ: { tools: string[]; pending: number; question: boolean; said: string; turnId: string | null; turnText: string; at: number } | null = null;
+  private afterQ: { tools: string[]; pending: number; question: boolean; speaks: boolean; said: string; turnId: string | null; turnText: string; at: number } | null = null;
   private afterQDrop: { tools: string[]; turnId: string | null; turnText: string; text: string; raw: string; audioMs: number; audio: boolean } | null = null;
   /** A drop ended before its response did (the buyer spoke, a note): that response's turn-done still ends the agent's line as said. */
   private afterQDoneFor: string | null = null;
@@ -1944,7 +1955,7 @@ export class VoiceEngine {
   /** A tool call from the model: one more call since the agent's last spoken output (a drop under way ends: what follows the result is a new continuation). */
   private afterQTool(name: string) {
     if (this.afterQDrop) this.endAfterQDrop("tool");
-    const w = (this.afterQ ??= { tools: [], pending: 0, question: false, said: "", turnId: null, turnText: "", at: 0 });
+    const w = (this.afterQ ??= { tools: [], pending: 0, question: false, speaks: false, said: "", turnId: null, turnText: "", at: 0 });
     w.tools.push(name);
     w.pending++;
     w.question = false;
@@ -1954,10 +1965,12 @@ export class VoiceEngine {
    * A call's result went to the model (or never will: cancelled). Once every result is in, the model may continue by
    * itself: whether the agent's last spoken output ended with a question is taken now, before it can.
    */
-  private afterQResult() {
+  private afterQResult(speaks = false) {
     const w = this.afterQ;
     if (!w || w.pending <= 0) return;
     w.pending--;
+    // A result that asks the model to say something (plainSave): its continuation is never dropped.
+    if (speaks) w.speaks = true;
     if (w.pending) return;
     w.said = this.lastSaid;
     w.question = endsWithQuestion(this.lastSaid.trim());
@@ -1973,7 +1986,7 @@ export class VoiceEngine {
    */
   private afterQArmed(): boolean {
     const w = this.afterQ;
-    return !!w && !w.pending && w.question && w.tools.length > 0 && w.tools.every((t) => BOOKKEEPING_TOOLS.includes(t))
+    return !!w && !w.pending && w.question && !w.speaks && w.tools.length > 0 && w.tools.every((t) => BOOKKEEPING_TOOLS.includes(t))
       && this.clock.now() - w.at <= AFTER_QUESTION_CONTINUATION_MS && this.afterQOn();
   }
 
@@ -2272,7 +2285,7 @@ export class VoiceEngine {
    */
   private answerDuplicate(callId: string, name: string, first: RecentToolCall) {
     if (this.cancelledCalls.has(callId)) {
-      this.afterQResult();
+      this.afterQResult(!plainSave("ok", first.result));
       return;
     }
     const { say_this: _say, message: _msg, scheduling: _sch, ...data } = first.result ?? { ok: true };
@@ -2283,7 +2296,7 @@ export class VoiceEngine {
     if (this.conn) this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=0ms chars=${JSON.stringify(result).length} dup=yes`);
     this.traceCallAt.delete(callId);
     this.conn?.sendToolResult(callId, name, result);
-    this.afterQResult();
+    this.afterQResult(!plainSave("ok", first.result));
   }
 
   /**
@@ -2978,7 +2991,7 @@ export class VoiceEngine {
     }
     this.traceCallAt.delete(callId);
     turn.awaitingContinuation = true;
-    this.afterQResult();
+    this.afterQResult(!plainSave(r.outcome, forModel, r.result));
     this.send({ t: "tool", id: callId, name, label, status: r.outcome });
   }
 

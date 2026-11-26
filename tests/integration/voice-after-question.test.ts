@@ -12,7 +12,7 @@ import { messages, rateLimits, users, voiceSessions, type User } from "@/db/sche
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion } from "@/lib/agent/service";
-import { AFTER_QUESTION_CONTINUATION_MS, BOOKKEEPING_TOOLS, VoiceEngine } from "@/lib/voice/engine";
+import { AFTER_QUESTION_CONTINUATION_MS, BOOKKEEPING_TOOLS, plainSave, VoiceEngine } from "@/lib/voice/engine";
 import type { VoiceLog } from "@/lib/voice/log";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
 import { endResponse, expectBuyer, micPcm, say, ScriptedRealtime, speechPcm, tool, type Script } from "@/lib/voice/scripted-realtime";
@@ -229,6 +229,63 @@ describe("after-question guard: Gemini-style (one turn across the tool call, no 
     expect(cfg(test).tools.map((x) => x.name)).toEqual(cfg(buyer).tools.map((x) => x.name));
     await test.hangUp();
     await buyer.hangUp();
+  });
+});
+
+describe("after-question guard: only a plain successful save is bookkeeping", () => {
+  const sitesUpdate = (value: string) => ({ ...UDS, updates: [{ key: "sites", value, provenance: "buyer" }] });
+
+  it("plainSave: an ok save with no message is plain; a refusal, a kept number or any line to say is not", () => {
+    expect(plainSave("ok", { ok: true, saved: ["sites"], stage: "x" })).toBe(true);
+    expect(plainSave("ok", { ok: true, saved: [], note: "Not saved yet: sites. (this is not a cue to speak)" })).toBe(true);
+    expect(plainSave("refused", { ok: false, rule: "Unknown deal-state fields" })).toBe(false);
+    expect(plainSave("ok", { ok: false })).toBe(false);
+    expect(plainSave("ok", { ok: true, kept_as_buyer_said: [{ key: "sites" }] })).toBe(false);
+    expect(plainSave("ok", { ok: true, kept_message: "Number of sites stays 2" })).toBe(false);
+    expect(plainSave("ok", { ok: true, message: "Say this." })).toBe(false);
+    expect(plainSave("ok", { ok: true, say_this: "Hello" })).toBe(false);
+    expect(plainSave("ok", { ok: true, instruction: "Tell the buyer" })).toBe(false);
+    // The tool's own result counts too (a field the model's view left out).
+    expect(plainSave("ok", { ok: true }, { ok: true, kept_message: "x" })).toBe(false);
+  });
+
+  it("a plain save (a field saved) after the question: the continuation is dropped", async () => {
+    const c = await call({ script: [expectBuyer("We have two sites."), say(Q), tool("update_deal_state", sitesUpdate("2")), say(REWORD), expectBuyer("Four each.")] });
+    await c.run(15_000);
+    await c.speak();
+    await c.run(20_000);
+    await c.hangUp();
+    expect(c.lines.some((l) => / tool update_deal_state ok \d+ms$/.test(l))).toBe(true);
+    expect((await c.rows()).at(-1)).toBe(Q);
+    expect(c.drops()).toHaveLength(1);
+  });
+
+  it("a save that keeps a number as the buyer said (kept_message): the continuation is played", async () => {
+    const c = await call({ script: [
+      expectBuyer("I have two sites."), say("Got it."), tool("update_deal_state", sitesUpdate("2")),
+      expectBuyer("Yeah, I guess so."), say(Q), tool("update_deal_state", sitesUpdate("1")), say(REWORD), expectBuyer("Four each."),
+    ] });
+    await c.run(15_000);
+    await c.speak();
+    await c.run(20_000);
+    await c.speak();
+    await c.run(20_000);
+    await c.hangUp();
+    const kept = (c.model as ScriptedRealtime).connections[0].sent.toolResults.map((r) => r.result as Record<string, unknown>).at(-1)!;
+    expect(kept.kept_message).toBeTruthy();
+    expect((await c.rows()).at(-1)).toBe(`${Q} ${REWORD}`);
+    expect(c.drops()).toEqual([]);
+  });
+
+  it("a refused save: the continuation is played", async () => {
+    const c = await call({ script: [expectBuyer("We have two sites."), say(Q), tool("update_deal_state", { ...UDS, updates: [{ key: "no_such_field", value: "x", provenance: "buyer" }] }), say(REWORD), expectBuyer("Four each.")] });
+    await c.run(15_000);
+    await c.speak();
+    await c.run(20_000);
+    await c.hangUp();
+    expect(c.lines.some((l) => / tool update_deal_state (refused|failed) \d+ms$/.test(l))).toBe(true);
+    expect((await c.rows()).at(-1)).toBe(`${Q} ${REWORD}`);
+    expect(c.drops()).toEqual([]);
   });
 });
 
