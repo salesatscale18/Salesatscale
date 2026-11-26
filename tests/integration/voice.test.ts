@@ -188,7 +188,12 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     await c.run(30_000);
     await hangUp(c);
     const tc = await calls(c.conversationId);
-    expect(tc.find((x) => x.name === "create_quote")?.result).toMatchObject({ status: "awaiting_seller_approval" });
+    // Offers: the first quote has no discount, check_offer ran on it, and the 15% quote waits for the team.
+    const quotesMade = tc.filter((x) => x.name === "create_quote" && x.outcome === "ok");
+    expect(quotesMade.map((x) => (x.input as { discount_percent: number }).discount_percent)).toEqual([0, 15]);
+    expect(quotesMade[0].result).toMatchObject({ status: "ready" });
+    expect(tc.find((x) => x.name === "check_offer")?.outcome).toBe("ok");
+    expect(quotesMade[1].result).toMatchObject({ status: "awaiting_seller_approval" });
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
     // While the price waits, the agent says it has asked and keeps going; it never invents the outcome.
     const agent = (await thread(c.conversationId)).filter((m) => m.actor === "agent" && m.voiceSessionId).map((m) => m.body);
@@ -197,7 +202,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
 
     // The team declines the price: the next call has "Price approval" in its first instructions, and again after a reconnect.
     const [acct] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, acc));
-    const quoteId = String(tc.find((x) => x.name === "create_quote")!.result.quote_id);
+    const quoteId = String(quotesMade[1].result.quote_id);
     expect(await declineHeldQuote(db, { account: acct, user: me, actingAs: false, role: "seller_admin" as const }, quoteId, null)).toMatchObject({ ok: true });
     const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED });
     if (!s.ok) throw new Error(s.reason);
@@ -261,8 +266,9 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(tc.some((x) => x.name === "hand_off_to_human")).toBe(false);
     // The model heard the result in call wording: the link is in the chat, never read aloud; the call goes on.
     const sent = c.conn().sent.toolResults.filter((r) => r.name === "request_callback").at(-1)!.result as { message: string };
-    expect(sent.message).toMatch(/^The booking card with the free times is now in this chat \(a card to pick a time on, not a link you sent\)\. Tell the buyer, in one short spoken sentence in their language,/);
-    expect(sent.message).toContain("from the free times on the booking card in the chat. Never say you sent a link, and never read the link or the times aloud.");
+    expect(sent.message).toMatch(/^The booking card with the free times is now in this chat\. Tell the buyer, in one short spoken sentence in their language, that the booking card is now in the chat and that they can pick a time for a call with a member of our team there\./);
+    expect(sent.message).toContain("Never read the times on the card aloud.");
+    expect(sent.message).not.toMatch(/below|under your reply|\blink\b/);
     expect(sent.message).toContain("this call goes on, and you stay on the line.");
     // The live transcript's chip while it ran.
     expect(c.json()).toContainEqual({ t: "tool", id: expect.any(String), name: "request_callback", label: "Requesting a call", status: "running" });

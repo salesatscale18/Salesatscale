@@ -2,6 +2,7 @@
 
 exports[`Classic (20 Nov) engine: golden against af85493 > lists the optional 20 Nov replacements today's text does not have (left unmatched, by design) 1`] = `
 [
+  "core design: : here is a link to pick a time that suits you."",
   "stable prompt: End with one question that keeps the chat going.",
   "stage: (already sent to the buyer in a message: do not repeat it un",
   "stage: Do: this is your first message.",

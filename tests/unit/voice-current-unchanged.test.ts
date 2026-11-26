@@ -3,6 +3,10 @@
  * inputs (tests/fixtures/voice-classic/input.json), Current's instructions (with and without the recording rule)
  * and its AI SDK session config (Gemini and OpenAI) hash to exactly what the code at e20617c produced
  * (current-before.json, generated from a checkout of that commit: generate-current.ts.txt).
+ * Re-recorded once since, for the offers release (26 Nov 2026): the instructions changed only by the approved offers
+ * chat lines (price early, hesitant yes, Limits, hand-over, Special approval, prices, discounts, hand-off, exceptions,
+ * the cards "Too expensive" and "The buyer is upset"), the session config only by its tool list (check_offer added,
+ * create_quote's offer argument and descriptions).
  */
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";

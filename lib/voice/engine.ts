@@ -24,7 +24,8 @@ import { isLocale } from "@/lib/i18n";
 import { writtenByAgent } from "@/lib/agent/core/stage";
 import { latestBookingOffer } from "@/lib/team-calls/service";
 import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
-import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
+import { resultForModel, runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
+import type { OfferCall } from "@/lib/agent/offer-records";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
@@ -2037,10 +2038,15 @@ export class VoiceEngine {
 
   private ensureAgentTurn(): AgentTurn {
     if (!this.agentTurn) {
-      // A new turn gets a new per-turn memo (lib/agent/tools.ts TurnMemo: never shared across turns).
+      // A new turn gets a new per-turn memo (lib/agent/tools.ts TurnMemo: never shared across turns). Offers: the
+      // ok check_offer / create_quote calls of a turn the buyer cut before its first word are not stored yet (they
+      // go with the next spoken line), so the new turn's memo carries them: an offer id stays valid for the quote.
+      const offerCalls: OfferCall[] = this.carriedTools
+        .filter((p) => (p.name === "check_offer" || p.name === "create_quote") && p.r.outcome === "ok")
+        .map((p) => ({ name: p.name, input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>, result: p.r.result, outcome: "ok", at: Date.now() }));
       this.agentTurn = {
         id: `a${++this.turnSeq}`, text: "", startMs: this.offsetMs(), answerMs: null, tools: [],
-        memo: { account: this.loaded?.account }, awaitingContinuation: false, heardAudio: false, interrupted: false, finalText: false,
+        memo: { account: this.loaded?.account, ...(offerCalls.length ? { offerCalls } : {}) }, awaitingContinuation: false, heardAudio: false, interrupted: false, finalText: false,
       };
     }
     return this.agentTurn;
@@ -2674,7 +2680,10 @@ export class VoiceEngine {
     if (removeGate === "no") this.log.info(voiceLine(this.sessionId, "tool create_quote held: removes a line the buyer did not ask to remove"));
     // One line per tool call: its name, outcome and time (never its arguments or result).
     this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} ${r.outcome} ${Math.round(this.clock.now() - t0)}ms`));
-    let forModel = this.profile ? await this.guardedToolResult(turn, name, args, r, formGate === "no") : await this.currentToolResult(turn, name, r);
+    // The model's view (lib/agent/tools.ts resultForModel, as in chat): the app's own record (check_offer's binding
+    // record) never reaches the model; the call's shaping applies on top. check_offer's figures (offer.totals, the
+    // saving) are a source the agent may state, so they pass as the tool gives them (no fitForCall, no held shaping).
+    let forModel = resultForModel(this.profile ? await this.guardedToolResult(turn, name, args, r, formGate === "no") : await this.currentToolResult(turn, name, r));
     // Held for approval: the held state first, in the call's language, and no figure of the quote (any engine).
     const sayIn = this.spokenLanguage !== "en" ? this.sayIn() : null;
     const noTotals = name === "check_fit";
@@ -2783,7 +2792,7 @@ export class VoiceEngine {
     // Every result message in call wording ("confirm it here" → "by message", …).
     if (typeof forModel.message === "string") forModel = { ...forModel, message: voiceToolResultMessage(forModel.message) };
     // The booking card only (no time named): a fixed Hebrew example of what to say, for a Hebrew call.
-    if (name === "request_callback" && r.outcome === "ok" && this.spokenLanguage === "he" && /^Link sent in the chat\./.test(String(r.result.message ?? ""))) {
+    if (name === "request_callback" && r.outcome === "ok" && this.spokenLanguage === "he" && /^The booking card is now in the chat\b/.test(String(r.result.message ?? ""))) {
       forModel = { ...forModel, message: `${String(forModel.message ?? "")} For example, in Hebrew: "${BOOKING_CARD_LINE_HE}"` };
     }
     // A call in another language than English: guidance the result already gives (written in English) names the

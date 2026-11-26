@@ -88,7 +88,7 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
     from: "- Call with a person. Framed as a help, with a link where the buyer picks the time.",
     to: "- Call with a person. Framed as a help, with a booking link in the chat where the buyer picks the time. Never read the link aloud.",
   },
-  { from: ': here is a link to pick a time that suits you."', to: ': I\'ve put a link in the chat where you can pick a time that suits you."' },
+  { from: ': pick a time that suits you below."', to: ': I\'ve put a link in the chat where you can pick a time that suits you."' },
   // N1 (22 Nov): the time the buyer names is booked when free; the result says Booked, not free (with the nearest free times) or only the card.
   {
     from: "It puts a booking link in the chat; tell the buyer they can pick a time there. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call. When the buyer named a time for the call, pass it as time: if it is free the call is booked, so confirm the time instead; if not, offer the nearest free times the result gives.",
@@ -113,14 +113,8 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
  */
 export const PLAYS_VOICE: readonly VoiceReplacement[] = [
   { from: "End with one question that keeps the chat going.", to: "End with one question that keeps the conversation going.", optional: true },
-  // "The buyer is upset" on a call (owner, 22 Nov 2026): offer the hand-over and ask first; the call goes on after it.
-  {
-    from: "Do: 1) Stop selling and ask nothing more. 2) Say a person from the team will take over. 3) Hand over at once.",
-    to: "Do: 1) Stop selling. 2) Offer that someone from the team gets back to them, and ask if that is OK. 3) Hand over (hand_off_to_human) when they agree or demand a person; then ask if there is anything else you can help with.",
-    optional: true,
-  },
-  { from: 'Example: "Understood. I am passing you to a member of the team now."', to: 'Example: "I\'ll ask someone from the team to get back to you. Would that be OK?"', optional: true },
-  { from: 'Not this: "Before I do that, can I just ask one more question?"', to: 'Not this: "I am passing you to the team now. Goodbye."', optional: true },
+  // "The buyer is upset": since the offers release (25 Nov 2026) the default card offers the hand-over and asks first
+  // in chat too, so a call reads it as written; "After hand_off_to_human" in the voice block keeps the call going.
   {
     from: "send a real approval request to the team, say you have asked, and keep the chat going.",
     to: "send a real approval request to the team, say you have asked, and keep the conversation going; do not end the call because of it.",
@@ -288,11 +282,16 @@ export const TOOL_RESULT_VOICE: readonly VoiceReplacement[] = [
     to: "Say that at that time they get a text with a link back to this chat, where they can talk to you by voice or write. Never say you will message or call them yourself.",
     optional: true,
   },
-  // request_callback (reach part B): the booking card is in the chat, never read aloud.
-  { from: "Link sent in the chat. Tell the buyer, in one short sentence in their wording,", to: "The booking card with the free times is now in this chat (a card to pick a time on, not a link you sent). Tell the buyer, in one short spoken sentence in their language,", optional: true },
+  // request_callback (reach part B): the booking card is in the chat, never read aloud. A caller sees no "below" and
+  // no "under your reply": the card is in the chat, and the buyer picks a time there.
   {
-    from: "with the link. Keep answering their questions until the call.",
-    to: "from the free times on the booking card in the chat. Never say you sent a link, and never read the link or the times aloud. Then ask if there is anything else you can help with: this call goes on, and you stay on the line.",
+    from: "The booking card is now in the chat, right under your reply. Tell the buyer, in one short sentence in their wording,",
+    to: "The booking card with the free times is now in this chat. Tell the buyer, in one short spoken sentence in their language, that the booking card is now in the chat and",
+    optional: true,
+  },
+  {
+    from: "on the card below. Keep answering their questions until the call.",
+    to: "there. Never read the times on the card aloud. Then ask if there is anything else you can help with: this call goes on, and you stay on the line.",
     optional: true,
   },
   // request_callback with a time (N1): booked, or not free with the nearest free times.

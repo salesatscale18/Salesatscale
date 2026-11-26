@@ -1,24 +1,24 @@
 {
-  "note": "sha256 of the Current voice code's output before the Classic engine (e20617c), for input.json: generate-current.ts.txt.",
+  "note": "sha256 of the Current voice code's output for input.json: first generated before the Classic engine (e20617c) with generate-current.ts.txt; re-recorded for the offers release (26 Nov 2026: the approved offers chat wording, check_offer in the tool list, create_quote's offer argument).",
   "cases": [
     {
       "id": "new-call",
-      "instructions": "895a2ef975e3381405044071db472706b8ec8f50d608eb21ac4a17a2e9f68c94",
-      "recorded": "45e867e2049e3a767b6048408b476db9d2903495b8e8698b46ef0954a7576811"
+      "instructions": "782f37183ee1ba763a131e0bd208c51dbe45138fcb386fb0bc35195a79963f81",
+      "recorded": "7a1b0b2434ac1512604ab89a09ec76663d3e71c9680058d2f6e8eb827ab0f65d"
     },
     {
       "id": "continuing-chat",
-      "instructions": "b80e8b1b18a0252d7d4400f87f455c8390eb73d89e50b1ab26fb64dbcd1902d5",
-      "recorded": "f62002c7eca154f9b440046fb5e75e0923569efa69ed2d58c60a7203675eeab4"
+      "instructions": "bb44d0ea48f6072fcbdc31914a0c44f965a3ff102e930da81606ac450d10d87d",
+      "recorded": "b990c637c20f14067d3703ef7e263ae6598fb9f0c69f056f496f16d89544589e"
     },
     {
       "id": "woke-he",
-      "instructions": "acd2a5ac8dc4fbbfa3c4664e9c22b6722c10f64af156e846c5628501eeb1021e",
-      "recorded": "5a5e24a6da7c7a49b73bf2269c2cc76a94a3fc47db771b2f1a577d5bbec6c8ed"
+      "instructions": "167e9ad4d1927d57f612ec228083d390cb61b2a39ebd050eb30aba23853dcd36",
+      "recorded": "140d908b03141052e084d62c7b742de22dcf96efd2d35ef7da9c2f54a0229640"
     }
   ],
   "sdk": {
-    "gemini": "e6c3d0f006f873bb41eff016a68e76528c99bb7826076f9dafd90ed5d5ab3181",
-    "openai": "f73a3677a97d51bb1e6989de29d770443fb28c85e6f95c4bbd50b5727b21a5cb"
+    "gemini": "5266db7f9a72a560bd0e2bb5690e9a5e43436acdc4cf3ce3c70d154fd96fb3cc",
+    "openai": "09ff23d459f503d2543fd680f6c53e4df71be1253df7fbdc5c53ad79ef543c3f"
   }
 }

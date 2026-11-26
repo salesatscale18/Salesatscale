@@ -115,8 +115,13 @@ function firstSoldSku(ctx: ScriptCtx): string {
 }
 
 const quoteArgs = (discount: number) => (ctx: ScriptCtx) => ({
-  lines: [{ sku: firstSoldSku(ctx), qty: 1 }], discount_percent: discount, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null,
+  lines: [{ sku: firstSoldSku(ctx), qty: 1 }], discount_percent: discount, offer: null, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null,
 });
+
+/** check_offer for the buyer's current quote (the latest create_quote), for the price in general. */
+const checkOffer = tool("check_offer", (ctx: ScriptCtx) => ({
+  quote: String(ctx.last("create_quote")?.quote ?? "").split(" ")[0], reason: "next", lines: null, sites: null,
+}));
 
 const dealUpdate = (ctx: ScriptCtx) => ({
   updates: quoteFieldUpdates(ctx), next_step: "quote", objection: null, recommendation_confirmed: true, price_asked: true, asked: null,
@@ -257,7 +262,7 @@ const quoteFacts = (size: number) => tool("update_deal_state", (ctx: ScriptCtx) 
 }));
 /** A quote of `size` units of the first item sold here, for `size` sites; no discount. */
 const quoteFor = (size: number) => tool("create_quote", (ctx: ScriptCtx) => ({
-  lines: [{ sku: firstSoldSku(ctx), qty: size }], discount_percent: 0, sites: size, remove_auto_added: null, exception: null, headline: null, assumed: null,
+  lines: [{ sku: firstSoldSku(ctx), qty: size }], discount_percent: 0, offer: null, sites: size, remove_auto_added: null, exception: null, headline: null, assumed: null,
 }));
 /** Facts, catalog and quote for `size` locations, as one step of a turn. */
 const quoteSteps = (size: number): ScriptStep[] => [quoteFacts(size), tool("search_catalog", { query: "" }), quoteFor(size)];
@@ -448,6 +453,11 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     say("Let me check that for you."),
     tool("update_deal_state", dealUpdate),
     tool("search_catalog", { query: "" }),
+    // Offers (part 2): the first quote never has a discount; the price objection is recorded, check_offer runs, and
+    // the 15% (more than check_offer returned) goes to the team as a quote held for approval.
+    tool("create_quote", quoteArgs(0)),
+    recordObjection("too_expensive", "only with 15% off", 4, true),
+    checkOffer,
     tool("create_quote", quoteArgs(15)),
     // The quote waits for the team (special-price approval): say once it was asked, keep going, never invent the outcome.
     say("I've asked the team to approve that price, and you'll get their decision by message. Meanwhile, is there anything else you'd like to know?"),

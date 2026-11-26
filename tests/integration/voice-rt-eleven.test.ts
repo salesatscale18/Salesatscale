@@ -217,7 +217,13 @@ describe("realtime + ElevenLabs (rt_eleven)", () => {
     expect(held).toMatchObject({ ok: false, rule: "Not agreed yet" });
     await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
     await c.buyerSays("Can you do ten percent off six sensors?");
-    const q = await c.tool("q1", "create_quote", { lines: [{ sku: "SENSOR", qty: 6 }], discount_percent: 10, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null });
+    // Offers: a first quote without a discount, the price objection on record and check_offer, then the 10% (more
+    // than check_offer returned) is a quote held for approval.
+    const first = await c.tool("q0", "create_quote", { lines: [{ sku: "SENSOR", qty: 6 }], discount_percent: 0, offer: null, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null });
+    expect(first).toMatchObject({ ok: true, status: "ready" });
+    await c.tool("o0", "update_deal_state", { ...noUpdate, objection: { play: "too_expensive", buyer_words: "ten percent off", step: 4, attempt: true, status: "open" } });
+    expect(await c.tool("o1", "check_offer", { quote: String(first.quote).split(" ")[0], reason: "next", lines: null, sites: null })).toMatchObject({ ok: true });
+    const q = await c.tool("q1", "create_quote", { lines: [{ sku: "SENSOR", qty: 6 }], discount_percent: 10, offer: null, sites: null, remove_auto_added: null, exception: null, headline: null, assumed: null });
     expect(q).toMatchObject({ ok: true, status: "awaiting_seller_approval", quote_held: true, say_this: HELD_QUOTE_SAY.en });
     await c.respond(String(q.say_this));
     await c.run(4_000);
