@@ -12,7 +12,7 @@ import { isOrderFormField, type PlaybookPart } from "@/lib/agent/playbook-parts"
 import { AddRow, EditRow, OtherErrors, PartRows, useRowSave, useRows, type ErrorOf, type RowRefusal } from "./row";
 import { SortHelp, moved, useSortable } from "./sortable";
 import { usePreview } from "./preview";
-import type { ObjectionGapView } from "./gaps";
+import { focusAfterDelete } from "./focus";
 import { PlatformFixed, enterSaves, growProps } from "./parts";
 import "./playbook.css";
 
@@ -94,7 +94,7 @@ function ListItem({ id, what, read, editor, toChange, own, remove, lead, aside, 
   command?: { change: PlaybookChange; label: string; ariaLabel: string };
   status?: ReactNode;
   rowAttrs?: Record<string, string | number | undefined>;
-  /** Where focus goes after a delete: the next row's edit control, or the Add button. */
+  /** Where focus goes after a delete (focus.ts focusAfterDelete): the next row's edit control, else the previous one's, else the Add button. */
   nextFocus: string;
 }) {
   const rows = useRows();
@@ -152,7 +152,7 @@ function SavedStepper({ id, field, label, hint, value, min, max, fewer, more, te
       </div>
       <span role="group" aria-labelledby={`${id}-label`} aria-describedby={`${id}-hint`} className="pb-stepper" data-testid={testId === "question-budget" ? "budget-stepper" : "attempts-stepper"}>
         <button type="button" onClick={() => go(n - 1)} disabled={n <= min || save.pending} aria-label={t(fewer)}><Icon name="minus" /></button>
-        <output id={id} aria-live="polite" data-value={n}>{n}</output>
+        <output id={id} aria-live="polite" aria-labelledby={`${id}-label`} data-value={n}>{n}</output>
         <button type="button" onClick={() => go(n + 1)} disabled={n >= max || save.pending} aria-label={t(more)}><Icon name="plus" /></button>
       </span>
       {save.pending ? <span className="sas-small pb-pending" role="status">{t("playbook.saving")}</span> : null}
@@ -266,7 +266,7 @@ function TopicList({ topics, defaultTopic }: { topics: { en: string; he: string 
                 editor={(e) => <TopicEditor at={`opener.topic.${i}`} errAt={`opener.topic.${i}`} en={x.en} he={x.he} e={e} />}
                 toChange={(form) => ({ kind: "edit", list: "openerTopics", index: i, item: { en: val(form, "en"), he: val(form, "he") } })}
                 remove={{ kind: "delete", list: "openerTopics", index: i }}
-                nextFocus={i < topics.length - 1 ? `topic.${i}` : "topic.add"}
+                nextFocus={focusAfterDelete(m.order, pos, (j) => `topic.${j}`, "topic.add")}
                 status={m.status(keys[i])}
                 rowAttrs={{ "data-topic": i, "data-is-default": isDefault ? "" : undefined }}
               />
@@ -375,7 +375,7 @@ function FieldList({ rows, stages, helpId, headId, addId }: { rows: FieldAt[]; s
                 editor={(e) => <FieldEditor at={at} label={r.f.label} example={r.f.example ?? ""} stage={r.f.stage} stages={stages} e={e} errAt={at} />}
                 toChange={(form) => ({ kind: "edit", list: "fields", index: r.i, item: { key: r.f.key || undefined, label: val(form, "label"), stage: val(form, "stage"), example: val(form, "example"), hint: r.f.hint || undefined } })}
                 remove={{ kind: "delete", list: "fields", index: r.i }}
-                nextFocus={rows[pos + 1] ? `field.${rows[pos + 1].i - (rows[pos + 1].i > r.i ? 1 : 0)}` : addId}
+                nextFocus={focusAfterDelete(m.order.map((o) => rows[o].i), pos, (j) => `field.${j}`, addId)}
                 status={m.status(k)}
                 rowAttrs={{ "data-field": r.i, "data-stage": r.f.stage }}
               />
@@ -522,12 +522,10 @@ const objectionOf = (form: FormData) => ({ objection: val(form, "objection"), an
  * answer, "From: …" only when filled; change, delete), Add objection. No drag:
  * the order of objections does not matter.
  */
-export function ObjectionsRows({ slug, hrefs, edit, p, prefill, gaps }: Base & {
+export function ObjectionsRows({ slug, hrefs, edit, p, prefill }: Base & {
   p: Pick<Playbook, "objections" | "objectionAttempts">;
   /** The buyer's words "Add an answer" opens the add row with (`?words=`). */
   prefill?: string | null;
-  /** Objections buyers raised with no approved answer (S3; lib/agent/objection-gaps.ts). */
-  gaps?: ObjectionGapView | null;
 }) {
   const n = p.objections.length;
   return (
@@ -562,7 +560,7 @@ export function ObjectionsRows({ slug, hrefs, edit, p, prefill, gaps }: Base & {
                     editor={(e) => <ObjectionEditor at={at} errAt={at} o={{ objection: o.objection, answer: o.answer, source }} e={e} />}
                     toChange={(form) => ({ kind: "edit", list: "objections", index: i, item: objectionOf(form) })}
                     remove={{ kind: "delete", list: "objections", index: i }}
-                    nextFocus={i < n - 1 ? `objection.${i}` : "objection.add"}
+                    nextFocus={focusAfterDelete(p.objections.map((_, j) => j), i, (j) => `objection.${j}`, "objection.add")}
                     rowAttrs={{ "data-testid": "objection-row" }}
                   />
                 </div>
@@ -579,20 +577,6 @@ export function ObjectionsRows({ slug, hrefs, edit, p, prefill, gaps }: Base & {
           ? { kind: "add", list: "objections", item: objectionOf(form) }
           : { refuse: { [`objection.${n}.objection`]: t("playbook.objection.required") } })}
       />
-      {gaps?.items.length ? (
-        <div className="pb-rows__note pb-gapline" data-testid="objection-gaps" role="group" aria-labelledby="pb-obj-gap-h">
-          <span className="pb-gapline__title" id="pb-obj-gap-h">{t("playbook.objections.gap.title")}</span>
-          <ul className="pb-plain-list">
-            {gaps.items.map((g) => (
-              <li key={g.href} className="pb-gapline__item" data-gap-deals={g.deals}>
-                <span dir="auto">{g.text}{g.play ? <span className="pb-muted"> · {g.play}</span> : null}</span>
-                <a className="pb-link" href={g.href} data-gap-add="">{t("playbook.objections.gap.add")}</a>
-              </li>
-            ))}
-          </ul>
-          <span className="sas-small">{t("playbook.objections.gap.how")}</span>
-        </div>
-      ) : null}
     </PartRows>
   );
 }

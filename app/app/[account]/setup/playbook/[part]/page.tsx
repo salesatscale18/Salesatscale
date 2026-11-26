@@ -18,7 +18,6 @@ import { AsksRows, ObjectionsRows, OpeningRows } from "../list-rows";
 import { AfterPreviewPanel, AgentPreview, OpeningPreview } from "../preview";
 import { previewLanguages } from "../previews";
 import { afterPreview } from "../after-preview";
-import { objectionGapView } from "../gaps";
 import { readOpener } from "@/lib/agent/core/opener";
 
 /** The notice cookie, or nothing outside a request (render tests). */
@@ -90,7 +89,7 @@ export default async function PlaybookPartPage({ params, searchParams }: { param
       break;
     case "objections": {
       const prefill = typeof sp.words === "string" ? sp.words.slice(0, 200) : null;
-      body = <ObjectionsRows {...base} p={p} prefill={prefill} gaps={await objectionGapView(appDb, account.id, p, data.hrefs.objections)} />;
+      body = <ObjectionsRows {...base} p={p} prefill={prefill} />;
       break;
     }
     case "after":

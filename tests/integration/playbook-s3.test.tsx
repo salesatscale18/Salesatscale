@@ -2,12 +2,13 @@
  * Playbook rethink, slice S3 (Previews and gaps), against the database.
  * Scripted only: no model is called.
  *
- * - The objections gap: real leads only (no test-lab, simulated or
- *   preview-only leads), deals active in the last 90 days, account-scoped,
- *   the matching rule against the playbook, one query.
+ * - No objections gap (removed): since O1 every objection the agent records
+ *   names its play, and every play is an approved way to handle it, so the
+ *   gap could only list pre-O1 entries. Regression from production
+ *   (polar-demo-2026-11-17-10-40-25): "expensive" was listed although Too
+ *   expensive was Ready with a 5% discount limit.
  * - Each preview renders the real template output for the draft (en and he).
- * - Objections shows the gap line with "Add an answer" (prefilled add row);
- *   home shows the note and the "Worth a look" entry.
+ * - Objections: the add row can open prefilled (`?words=`).
  * - Limits shows the always-on hand-over line in the read state; Sales plays
  *   rows are name + summary + state; one-line part descriptions.
  *
@@ -42,7 +43,6 @@ const { ensureDraftVersion, saveDraftPlaybook } = await import("@/lib/agent/serv
 const { defaultPlaybook } = await import("@/lib/agent/playbook");
 const { sampleOpenerText } = await import("@/lib/agent/core/opener");
 const { reminderText } = await import("@/lib/orders/unpaid-reminders");
-const { raisedObjections, objectionGaps } = await import("@/lib/agent/objection-gaps");
 const { default: HomePage } = await import("@/app/app/[account]/setup/playbook/page");
 const { default: PartPage } = await import("@/app/app/[account]/setup/playbook/[part]/page");
 const { default: PlaysPage } = await import("@/app/app/[account]/setup/playbook/plays/page");
@@ -58,7 +58,7 @@ const RICH = (base: Playbook): Playbook => ({
   unpaidReminders: { first: { days: 3, on: true }, second: { days: 6, on: true }, team: { days: 8, on: true } },
 } as Playbook);
 
-describe("Playbook S3: previews and the objections gap", () => {
+describe("Playbook S3: previews; no objections gap", () => {
   let t: Awaited<ReturnType<typeof createTestDb>>;
   let db: TestDb;
   let me: User;
@@ -88,6 +88,7 @@ describe("Playbook S3: previews and the objections gap", () => {
     (await db.insert(leads).values({ accountId, fullName: name, phone: `+97250${Math.floor(Math.random() * 1e7)}`, language: "en", origin: "manual", ...extra }).returning())[0];
   const deal = (accountId: string, leadId: string, objections: StoredObjection[], daysAgo = 5) =>
     db.insert(dealStates).values({ accountId, leadId, objections, updatedAt: new Date(now.getTime() - daysAgo * DAY) });
+  const PROD_WORDS = "Sounds expensive; compares to a simple 200 ILS one-time sensor";
   const obj = (play: string, words: string): StoredObjection => ({ play, words, steps: [1], status: "open", attempts: 1 } as StoredObjection);
 
   beforeAll(async () => {
@@ -107,94 +108,35 @@ describe("Playbook S3: previews and the objections gap", () => {
     await ensureDraftVersion(db, acc.id);
     await saveDraftPlaybook(db, acc.id, RICH(defaultPlaybook("Polar Demo", 0)));
 
-    // Real buyers.
+    // The production case: the same buyer words once as a pre-O1 entry (no play) and once with the play.
+    await saveDraftPlaybook(db, acc.id, { ...RICH(defaultPlaybook("Polar Demo", 0)), maxDiscountBp: 500 });
     const a = await lead(acc.id, "Avi");
-    await deal(acc.id, a.id, [obj("too_expensive", "too pricey"), obj("competitor", "X is cheaper"), { text: "We have no budget", handled: false }]);
+    await deal(acc.id, a.id, [{ text: "expensive", handled: false }, { text: PROD_WORDS, handled: true }]);
     const b = await lead(acc.id, "Bina");
-    await deal(acc.id, b.id, [obj("too_expensive", "Too expensive for us"), obj("existing_solution", "we already pay for an alarm company")]);
-    const c = await lead(acc.id, "Carmel");
-    await deal(acc.id, c.id, [obj("too_expensive", "too pricey")], 89);
-    // Not counted: test lab, simulated, older than 90 days, preview-only, another account.
-    await deal(acc.id, (await lead(acc.id, "Test", { isTest: true })).id, [obj("too_expensive", "test lab")]);
-    await deal(acc.id, (await lead(acc.id, "Sim", { buyerRef: "SIM-0001" })).id, [obj("too_expensive", "simulated")]);
-    await deal(acc.id, (await lead(acc.id, "Old")).id, [obj("too_expensive", "old")], 91);
-    const [page] = await db.insert(leadPages).values({ id: crypto.randomUUID(), accountId: acc.id, publicKey: "pk-s3", name: "Demo page", connection: "link", language: "en" }).returning();
-    const previewOnly = await lead(acc.id, "Preview only");
-    const both = await lead(acc.id, "Preview then real");
-    await db.insert(leadPageSubmissions).values([
-      { id: crypto.randomUUID(), accountId: acc.id, pageId: page.id, leadId: previewOnly.id, via: "link", leadCreated: true, consent: true, preview: true, language: "en", sourceKey: "" },
-      { id: crypto.randomUUID(), accountId: acc.id, pageId: page.id, leadId: both.id, via: "link", leadCreated: true, consent: true, preview: true, language: "en", sourceKey: "" },
-      { id: crypto.randomUUID(), accountId: acc.id, pageId: page.id, leadId: both.id, via: "link", leadCreated: false, consent: true, preview: false, language: "en", sourceKey: "" },
-    ]);
-    await deal(acc.id, previewOnly.id, [obj("not_now", "preview words")]);
-    await deal(acc.id, both.id, [obj("not_now", "Maybe next quarter")]);
-    await deal(other.id, (await lead(other.id, "Elsewhere")).id, [obj("too_expensive", "other account"), obj("proof", "show me")]);
+    await deal(acc.id, b.id, [obj("too_expensive", "expensive"), obj("too_expensive", PROD_WORDS), obj("not_now", "Maybe next quarter")]);
   }, 120_000);
   afterAll(async () => t.close());
 
-  describe("the count", () => {
-    it("real leads only, last 90 days, this account only, grouped by play and words (one query)", async () => {
-      const raised = await raisedObjections(db, acc.id, now);
-      const key = (r: { play: string | null; words: string; deals: number }) => `${r.play}|${r.words}|${r.deals}`;
-      expect(raised.map(key).sort()).toEqual([
-        "competitor|X is cheaper|1",
-        "existing_solution|we already pay for an alarm company|1",
-        "not_now|Maybe next quarter|1",
-        "null|We have no budget|1",
-        "too_expensive|Too expensive for us|1",
-        "too_expensive|too pricey|2",
-      ]);
-      const words = raised.map((r) => r.words);
-      for (const w of ["test lab", "simulated", "old", "preview words", "other account", "show me"]) expect(words).not.toContain(w);
-      expect((await raisedObjections(db, other.id, now)).map(key).sort()).toEqual(["proof|show me|1", "too_expensive|other account|1"]);
-      // The window moves with "now": 3 days later the 89-day deal has left it.
-      expect((await raisedObjections(db, acc.id, new Date(now.getTime() + 3 * DAY))).find((r) => r.words === "too pricey")?.deals).toBe(1);
-    });
-    it("matched against the playbook: plays with facts and approved objections with the same words are answered", async () => {
-      const p = (await ensureDraftVersion(db, acc.id)).playbook;
-      expect(objectionGaps(await raisedObjections(db, acc.id, now), p)).toEqual([
-        { play: "too_expensive", deals: 3, words: "too pricey" },
-        { play: "not_now", deals: 1, words: "Maybe next quarter" },
-        { play: null, deals: 1, words: "We have no budget" },
-      ]);
-    });
-  });
-
-  describe("Objections and home", () => {
-    it("Objections: the gap line at the bottom, each with Add an answer (the add row prefilled with the buyer's words)", async () => {
-      const html = await part("objections");
-      save("objections", html);
-      const s = text(html);
-      expect(html).toContain('data-testid="objection-gaps"');
-      expect(s).toContain("Raised by buyers, no matching approved answer");
-      expect(s).toContain("3 buyers raised “too pricey” · Too expensive");
-      expect(s).toContain("1 buyer raised “We have no budget”");
-      expect(s).toContain("1 buyer raised “Maybe next quarter” · Not now");
-      expect(html).toContain(`href="/app/${acc.slug}/setup/playbook/objections?edit=objection.add&amp;words=too+pricey"`);
-      const add = await part("objections", { edit: "objection.add", words: "too pricey" });
-      save("objections-add", add);
-      expect(add).toMatch(/id="pb-objection\.new\.objection"[^>]*value="too pricey"/);
-    });
-    it("no gap line when every raised objection has an answer", async () => {
-      const { savePlaybookRowAction } = await import("@/app/app/[account]/setup/playbook/actions");
-      holder.access = { account: acc, user: me, actingAs: false, role: "seller_admin" };
-      const before = (await ensureDraftVersion(db, acc.id)).playbook;
-      for (const o of ["too pricey", "We have no budget", "Maybe next quarter"]) {
-        expect(await savePlaybookRowAction(acc.slug, { kind: "add", list: "objections", item: { objection: o, answer: "An answer.", source: "" } })).toEqual({ ok: true });
+  describe("Objections and home: no objections gap", () => {
+    it("regression (production): objections the agent attributed to a play are not listed as unanswered; no gap block, note or Worth a look entry", async () => {
+      const objections = await part("objections");
+      save("objections", objections);
+      const home = await render(HomePage, {});
+      save("home", home);
+      for (const html of [objections, home]) {
+        const s = text(html);
+        expect(html).not.toContain('data-testid="objection-gaps"');
+        expect(html).not.toContain('data-gap="objections"');
+        expect(s).not.toContain("buyer raised");
+        expect(s).not.toContain("expensive”");
+        expect(s).not.toContain("Maybe next quarter");
       }
-      // "Too expensive" still raised as "Too expensive for us": the approved "too pricey" does not say the same.
-      expect(text(await part("objections"))).toContain("1 buyer raised “Too expensive for us”");
-      await saveDraftPlaybook(db, acc.id, { ...before, maxDiscountBp: 500, objections: [...before.objections, { objection: "We have no budget", answer: "a" }, { objection: "next quarter", answer: "b" }] });
-      expect(await part("objections")).not.toContain('data-testid="objection-gaps"');
-      await saveDraftPlaybook(db, acc.id, before);
-    });
-    it("home: the Objections row's note and the Worth a look entry (several: the list)", async () => {
-      const html = await render(HomePage, {});
-      save("home", html);
-      expect(html).toMatch(/data-part="objections"[^]*?<span class="pb-home__gap" data-gap="objections">3 objections buyers raised match none of your answers\.<\/span>/);
-      expect(html).toMatch(/<li data-gap="objections">3 objections buyers raised match none of your answers\. <a href="\/app\/[^"]+\/setup\/playbook\/objections">Add one<\/a><\/li>/);
       // Plays: one has facts, so no plays note (UX after S2).
-      expect(html).not.toContain('data-gap="plays"');
+      expect(home).not.toContain('data-gap="plays"');
+    });
+    it("Objections: the add row still opens prefilled with ?words=", async () => {
+      const add = await part("objections", { edit: "objection.add", words: "too pricey" });
+      expect(add).toMatch(/id="pb-objection\.new\.objection"[^>]*value="too pricey"/);
     });
   });
 

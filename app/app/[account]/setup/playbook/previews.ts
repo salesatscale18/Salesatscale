@@ -107,6 +107,17 @@ export function openerPreview(p: OpenerPlaybook, account: Account, lang: Locale,
   return segs.map((s) => s.text).join("") === text ? { segs, text } : { segs: [{ text }], text };
 }
 
+/**
+ * When the topic previewed has no text in `lang`, what a lead in that language from a page with this topic gets
+ * (as openerParts does: a lead page passes the topic only in the lead's language, else the default topic is used):
+ * "default" when the default topic has text in `lang`, else "general" (the general opening). null: the topic has it.
+ */
+export function topicFallback(opener: OpenerPlaybook["opener"], lang: Locale, topic: number): "general" | "default" | null {
+  const o = readOpener(opener);
+  if (topic < 0 || topic >= o.topics.length || textIn(o.topics[topic], lang)) return null;
+  return topic !== o.defaultTopic && textIn(o.topics[o.defaultTopic], lang) ? "default" : "general";
+}
+
 /** The languages a preview offers: the account's buyer languages among English and Hebrew (English when none). */
 export function previewLanguages(languages: readonly string[]): Locale[] {
   const l = (["en", "he"] as const).filter((x) => languages.includes(x));

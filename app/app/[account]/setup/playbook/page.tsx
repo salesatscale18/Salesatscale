@@ -9,7 +9,6 @@ import { loadPlaybook } from "./data";
 import { gapNotes, PART_LABEL } from "./summaries";
 import { GROUP_LABEL, PART_ICON, PlaybookHeader } from "./shell";
 import { AnchorRedirect, HowItSounds } from "./home-client";
-import { objectionGapView } from "./gaps";
 
 /** Parts added in P11, tagged "New" as the one-page section list did. */
 const NEW_PARTS: ReadonlySet<string> = new Set(["opening", "plays", "after"]);
@@ -26,9 +25,8 @@ export default async function PlaybookPage({ params }: { params: Promise<{ accou
   const { account } = access;
   const [data, unanswered] = await Promise.all([loadPlaybook(access), unansweredQuestions(appDb, account.id, 10)]);
   const p = data.draft.playbook;
-  const objectionGaps = await objectionGapView(appDb, account.id, p, data.hrefs.objections);
   const gaps = gapNotes(p, {
-    plays: data.playsSummary, unanswered: unanswered.length, objections: objectionGaps.items,
+    plays: data.playsSummary, unanswered: unanswered.length,
     href: { part: (x) => data.hrefs[x], playsNeeds: `${data.hrefs.plays}?filter=needs`, questions: `${data.base}/setup/knowledge?view=questions` },
   });
   const sells = (["en", "he"] as const).filter((l) => account.languages.includes(l));
