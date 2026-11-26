@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { Playbook } from "@/db/schema";
 import { Icon } from "@/components/sas/icon";
+import { InfoTip } from "@/components/sas/info-tip";
 import { t, type Locale } from "@/lib/i18n";
 import type { AgentGender } from "@/lib/agent/core/names";
 import { openerPreview, topicFallback, type PreviewSeg } from "./previews";
@@ -59,7 +60,7 @@ export function useAgentDraft(field: "name" | "gender") {
  * button opens it as a sheet over the page (Escape or Close returns, focus
  * goes back to the button).
  */
-export function PartPreview({ title, children }: { title: string; children: ReactNode }) {
+export function PartPreview({ title, info, children }: { title: string; info?: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const toggleRef = useRef<HTMLButtonElement>(null);
@@ -84,7 +85,10 @@ export function PartPreview({ title, children }: { title: string; children: Reac
         onKeyDown={(e) => { if (open && e.key === "Escape") { e.stopPropagation(); close(); } }}
       >
         <div className="pb-pv__head">
-          <h2 className="sas-heading" id={`${id}-h`}>{title}</h2>
+          <span className="pb-pv__title">
+            <h2 className="sas-heading" id={`${id}-h`}>{title}</h2>
+            {info ? <InfoTip label={title} wide>{info}</InfoTip> : null}
+          </span>
           <button ref={closeRef} type="button" className="sas-btn sas-btn--secondary sas-btn--sm pb-pv__close" onClick={close} data-preview-close="">{t("playbook.preview.close")}</button>
         </div>
         {children}
@@ -139,11 +143,9 @@ export function AgentPreview({ p, account, langs }: { p: OpenerPb; account: Acco
   };
   const m = openerPreview(draft, account, lang, { part: "agent" });
   return (
-    <PartPreview title={t("playbook.preview.title")}>
+    <PartPreview title={t("playbook.preview.title")} info={<><span data-preview-legend="">{t("playbook.preview.agent_legend")}</span><PlatformFixed>{t("playbook.preview.fixed")}</PlatformFixed></>}>
       <div className="pb-pv__bar"><span className="sas-small">{t("playbook.preview.agent_sub")}</span>{switcher}</div>
       <Bubble segs={m.segs} lang={lang} testId={`agent-preview-${lang}`} />
-      <span className="sas-small">{t("playbook.preview.agent_legend")}</span>
-      <PlatformFixed>{t("playbook.preview.fixed")}</PlatformFixed>
     </PartPreview>
   );
 }
@@ -166,7 +168,10 @@ export function OpeningPreview({ p, account, langs, topics, defaultTopic }: { p:
   const fallback = topics.length ? topicFallback(p.opener, lang, i) : null;
   const language = t(lang === "he" ? "playbook.opening.hebrew" : "playbook.opening.english");
   return (
-    <PartPreview title={t("playbook.preview.title")}>
+    <PartPreview
+      title={t("playbook.preview.title")}
+      info={<><span data-preview-legend="">{t("playbook.preview.opening_legend")}</span><PlatformFixed>{t("playbook.preview.fixed")}</PlatformFixed><span>{t("playbook.opening.preview_once")}</span></>}
+    >
       <div className="pb-pv__bar">
         <span className="sas-small" data-preview-topic={topics.length ? i : undefined}>
           {topics.length ? t(i === defaultTopic ? "playbook.preview.topic_default" : "playbook.preview.topic", { topic: topics[i] }) : t("playbook.preview.no_topic")}
@@ -174,15 +179,12 @@ export function OpeningPreview({ p, account, langs, topics, defaultTopic }: { p:
         {switcher}
       </div>
       <Bubble segs={m.segs} lang={lang} testId={`opening-preview-${lang}`} />
-      <span className="sas-small">{t("playbook.preview.opening_legend")}</span>
-      <PlatformFixed>{t("playbook.preview.fixed")}</PlatformFixed>
       {fallback ? (
         <span className="sas-small" data-topic-fallback={fallback}>
           {t(fallback === "default" ? "playbook.opening.preview_topic_default" : "playbook.opening.preview_topic_general", { language })}{" "}
           <a className="pb-link" href={`?${new URLSearchParams({ edit: `topic.${i}` }).toString()}`} data-topic-add-lang={lang}>{t("playbook.opening.preview_topic_add", { language })}</a>
         </span>
       ) : lang === "he" && !hasHe ? <span className="sas-small">{t("playbook.opening.preview_he_fallback")}</span> : null}
-      <span className="sas-small">{t("playbook.opening.preview_once")}</span>
     </PartPreview>
   );
 }
@@ -196,7 +198,7 @@ export function AfterPreviewPanel({ data, langs }: { data: AfterPreview; langs: 
   const { lang, switcher } = useLang(langs);
   const buyer = data.buyer[lang] ?? data.buyer.en;
   return (
-    <PartPreview title={t("playbook.preview.after_title")}>
+    <PartPreview title={t("playbook.preview.after_title")} info={<span data-preview-note="">{t("playbook.preview.after_note")}</span>}>
       <div className="pb-pv__bar"><span className="sas-small">{t("playbook.preview.after_sub")}</span>{switcher}</div>
       {buyer?.reminders.map((r) => (
         <div key={r.step} className="pb-pv__step" data-step={r.step} data-off={r.on ? undefined : ""}>
@@ -230,7 +232,6 @@ export function AfterPreviewPanel({ data, langs }: { data: AfterPreview; langs: 
         ) : null}
       </div>
       <span className="pb-unpaid__fixed"><Icon name="lock" />{t("playbook.unpaid.wording_fixed")}</span>
-      <span className="sas-small">{t("playbook.preview.after_note")}</span>
     </PartPreview>
   );
 }

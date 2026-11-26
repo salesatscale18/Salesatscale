@@ -10,7 +10,8 @@ import { CALL_ROLE_MAX, DEFAULT_CALL_ROLE } from "@/lib/agent/core/call-role";
 import type { PlaybookPart } from "@/lib/agent/playbook-parts";
 import { LocalNames } from "../local-names";
 import { dismissHandoffNoticeAction } from "./actions";
-import { PlatformFixed, enterSaves, growProps } from "./parts";
+import { InfoTip } from "@/components/sas/info-tip";
+import { LockTag, enterSaves, growProps } from "./parts";
 import { restatesDiscountLimit, shortDate } from "./checks";
 import { AddRow, EditRow, PartRows, RowCommand, type ErrorOf } from "./row";
 import { focusAfterDelete } from "./focus";
@@ -104,7 +105,7 @@ export function AgentRows({ slug, hrefs, edit, p, names, voice }: Base & {
       <EditRow
         id="gender" label={t("playbook.agent_speaks_short")} own={["agentGender"]}
         read={<span data-gender-read={gender}>{t(`playbook.agent_gender.${gender}` as MessageKey)}</span>}
-        hint={t("playbook.agent_speaks_hint")} readHint={t("playbook.agent_speaks_read")}
+        hint={t("playbook.agent_speaks_hint")} info={t("playbook.agent_speaks_read")}
         editor={() => <GenderEditor value={gender} />}
         toChange={(form) => ({ kind: "set", values: { agentGender: val(form, "agentGender") } })}
       />
@@ -198,7 +199,7 @@ export function MaxDiscountRow({ maxDiscountBp }: { maxDiscountBp: number }) {
     <EditRow
       id="maxDiscount" label={t("playbook.max_discount")} own={["maxDiscount"]}
       read={<span data-max-discount={pct}>{t("playbook.limits.discount_read", { pct })}</span>}
-      hint={t("playbook.max_discount_hint")} readHint={t("playbook.max_discount_hint")}
+      hint={t("playbook.max_discount_hint")} info={t("playbook.max_discount_hint")}
       editor={(e) => (
         <>
           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -214,6 +215,30 @@ export function MaxDiscountRow({ maxDiscountBp }: { maxDiscountBp: number }) {
   );
 }
 
+/**
+ * When the agent hands over whatever the seller writes in "Hand over to a person when" (checked 26 Nov
+ * against the code): core design and the "The buyer is upset" play (upset, complains, legal or
+ * existing-customer issue, insists; on a call the voice rules ask first, and a first request for a person
+ * books a call: prompt.ts, voice.ts), a delivery date before the estimate (prompt.ts), numbers that look
+ * wrong (design.ts), a second no to the recommendation when meetings are off (design.ts, stage.ts), a yes to
+ * the quote when neither the order form nor meetings are on (stage.ts order_form), and no
+ * reply at all: a model refusal or an AI budget / spend cap (turn.ts, whatsapp.ts).
+ */
+export const HANDOFF_ALWAYS: readonly MessageKey[] = [
+  "playbook.handoff_always_list.upset", "playbook.handoff_always_list.legal", "playbook.handoff_always_list.delivery",
+  "playbook.handoff_always_list.numbers", "playbook.handoff_always_list.second_no", "playbook.handoff_always_list.agrees",
+  "playbook.handoff_always_list.cant_reply",
+];
+
+function HandoffAlways() {
+  return (
+    <>
+      <span>{t("playbook.handoff_always_list")}</span>
+      <ul data-handoff-always-list="">{HANDOFF_ALWAYS.map((k) => <li key={k}>{t(k)}</li>)}</ul>
+    </>
+  );
+}
+
 /** Limits (board PlaybookLimits): the discount limit, when to offer a call, when to hand over, approved exceptions. */
 export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
   p: Pick<Playbook, "maxDiscountBp" | "offerMeetingWhen" | "handOffWhen" | "exceptions">;
@@ -222,9 +247,9 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
 }) {
   const excId = useId();
   const exceptions: PlaybookException[] = p.exceptions ?? [];
-  const text = (id: "offerMeetingWhen" | "handOffWhen", label: MessageKey, extra?: ReactNode, readHint?: ReactNode) => (
+  const text = (id: "offerMeetingWhen" | "handOffWhen", label: MessageKey, extra?: ReactNode, readHint?: ReactNode, info?: ReactNode) => (
     <EditRow
-      id={id} label={t(label)} own={[id]} readHint={readHint}
+      id={id} label={t(label)} own={[id]} readHint={readHint} info={info} infoWide
       read={<span className="sas-stack-2" style={{ gap: 6 }}>{p[id].trim() ? <span dir="auto" className="pb-long">{p[id]}</span> : <Empty k="playbook.not_set" />}</span>}
       editor={(e) => (
         <>
@@ -241,22 +266,25 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
     <PartRows slug={slug} part="limits" hrefs={hrefs} edit={edit}>
       <MaxDiscountRow maxDiscountBp={p.maxDiscountBp} />
       {text("offerMeetingWhen", "playbook.meeting_when")}
-      {text("handOffWhen", "playbook.handoff_when", <span className="sas-hint" data-handoff-always="">{t("playbook.handoff_always")}</span>, <span data-handoff-always-read="">{t("playbook.handoff_always_read")}</span>)}
+      {text(
+        "handOffWhen", "playbook.handoff_when", <span className="sas-hint" data-handoff-always="">{t("playbook.handoff_always")}</span>,
+        <span data-handoff-always-read="">{t("playbook.handoff_always_line")}</span>, <HandoffAlways />,
+      )}
       {handOffNotice ? (
         // O1: dismissed per user (cookie). Its own form and action, which do not save the playbook.
         <form action={dismissHandoffNoticeAction} className="sas-alert pb-notice pb-rows__note" role="status" data-testid="handoff-notice">
           <input type="hidden" name="slug" value={slug} />
           <Icon name="info" />
-          <span style={{ flex: "1 1 220px", minWidth: 0 }}>
-            {t("playbook.handoff_notice.text")}{" "}
-            <a href={handOffNotice.playHref}>{t("playbook.handoff_notice.link")}</a>
+          <span className="pb-notice__text">
+            {t("playbook.handoff_notice.short")}{" "}
+            <a href={handOffNotice.playHref} aria-label={`${t("playbook.handoff_notice.see")} ${t("playbook.handoff_notice.link")}`}>{t("playbook.handoff_notice.see")}</a>
           </span>
           <button type="submit" className={buttonClass("ghost", "sm")}>{t("playbook.handoff_notice.dismiss")}</button>
         </form>
       ) : null}
       <EditRow
         id="exceptions" label={<span id={excId}>{t("playbook.exceptions")}</span>} editable={false}
-        readHint={t("playbook.exceptions_read")}
+        info={t("playbook.exceptions_read")} infoLabel={t("playbook.exceptions")}
         read={exceptions.length === 0 ? <Empty k="playbook.exceptions_empty" /> : (
           <ul className="pb-plain-list pb-exceptions" aria-labelledby={excId}>
             {exceptions.map((x) => (
@@ -318,7 +346,8 @@ export function NeverRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbook, "
         newId={`never.${p.neverDo.length}`}
         toChange={(form) => (val(form, "rule").trim() ? { kind: "add", list: "neverDo", item: val(form, "rule") } : { refuse: { [`never.${p.neverDo.length}`]: t("playbook.never.rule_required") } })}
       />
-      <div className="pb-rows__note"><PlatformFixed>{t("playbook.never_hint")}</PlatformFixed></div>
+      {/* The platform's own rules: the tag, and the rules behind its (i). */}
+      <div className="pb-rows__note pb-fixed-line" data-platform-fixed=""><LockTag /><InfoTip label={t("playbook.fixed.tag")}>{t("playbook.never_hint")}</InfoTip></div>
     </PartRows>
   );
 }

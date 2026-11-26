@@ -178,7 +178,7 @@ describe("Playbook S2: the list parts", () => {
       expect(html).not.toMatch(/<form class="pb-row__form"/);
       expect(html.indexOf('data-testid="question-budget"')).toBeLessThan(html.indexOf('data-row="field.0"'));
       expect(text(html)).toContain("Questions before it recommends");
-      expect(html).toContain('<span class="pb-item__tag">Where the answer is used</span>');
+      expect(html).toContain('<span class="pb-item__tag"><span aria-hidden="true">Where the answer is used</span>');
       expect(html).toContain('data-role-tag="before_quote">Needed for the quote</span>');
       expect(html).toContain('data-role-tag="optional">Helps the pitch</span>');
       expect(html).toContain('data-role-tag="before_order_form">Filled in the order form</span>');
@@ -188,8 +188,8 @@ describe("Playbook S2: the list parts", () => {
       expect(html.match(/data-sort-handle="/g)?.length).toBe(4);
       expect(html).toContain('id="pb-sort-help-asks"');
       expect(html).toContain('id="pb-sort-help-form"');
-      expect(html).toMatch(/<details class="pb-disclosure" data-testid="roles-disclosure">/);
-      expect(text(html)).toContain("Your own order-form fields (1)");
+      expect(html).toContain('aria-label="About: Where the answer is used"');
+      expect(text(html)).toContain("1 of your own fields");
     });
 
     it("one question in edit state: question, example, where the answer is used (order-form fields may become chat questions)", async () => {

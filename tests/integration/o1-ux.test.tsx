@@ -121,8 +121,9 @@ describe("the Limits notice on unknown questions", () => {
     const html = await render();
     save("playbook-notice", html);
     expect(html).toContain('data-testid="handoff-notice"');
-    expect(html).toContain("Questions the agent can&#x27;t answer no longer hand off the chat. The agent asks the team and keeps going. See the play");
-    expect(html).toContain(`<a href="/app/${acc.slug}/setup/playbook/plays/no_answer">&#x27;A question with no approved answer&#x27;.</a>`);
+    // One line with its link (owner, 26 Nov: calmer Playbook screens).
+    expect(html).toContain("Unanswered questions no longer hand off the chat: the agent asks the team.");
+    expect(html).toContain(`<a href="/app/${acc.slug}/setup/playbook/plays/no_answer" aria-label="See the play &#x27;A question with no approved answer&#x27;.">See the play</a>`);
     // In Limits, after the hand-off rule.
     expect(html.indexOf('data-row="handOffWhen"')).toBeGreaterThan(0);
     expect(html.indexOf('data-testid="handoff-notice"')).toBeGreaterThan(html.indexOf('data-row="handOffWhen"'));

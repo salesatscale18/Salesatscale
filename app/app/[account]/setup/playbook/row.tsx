@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, useTransition, type ReactNode } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
+import { InfoTip } from "@/components/sas/info-tip";
 import { t } from "@/lib/i18n";
 import type { PlaybookChange } from "@/lib/agent/playbook-save";
 import { partOfKey, type PlaybookPart } from "@/lib/agent/playbook-parts";
@@ -112,7 +113,7 @@ export function useRowSave(onDone: () => void, onFail?: () => void) {
  * error at the row when it is refused. Focus moves into the fields on open and
  * back to "Change" on close. `extra`: more buttons in the read state (Remove).
  */
-export function EditRow({ id, label, read, editor, toChange, own, hint, readHint, wide, changeLabel, extra, editable = true, item, lead, aside, rowAttrs, after, focusAfter }: {
+export function EditRow({ id, label, read, editor, toChange, own, hint, readHint, info, infoLabel, infoWide, wide, changeLabel, extra, editable = true, item, lead, aside, rowAttrs, after, focusAfter }: {
   id: string;
   label: ReactNode;
   read: ReactNode;
@@ -126,8 +127,13 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, readHint
   own?: readonly string[];
   /** The full helper: shown only while the row is open. */
   hint?: ReactNode;
-  /** At most one short muted line under the value in the read state (UX: no helper walls). */
+  /** One fact line under the value in the read state, only where it must stay visible (Limits' hand-over). */
   readHint?: ReactNode;
+  /** The row's explanation, behind an (i) after the label (owner, 26 Nov: no grey lines in the read state). */
+  info?: ReactNode;
+  /** The label as text for the (i)'s name, when `label` is not a string. */
+  infoLabel?: string;
+  infoWide?: boolean;
   /** No label column: the value takes the row (list items). */
   wide?: boolean;
   changeLabel?: string;
@@ -166,8 +172,10 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, readHint
   const ownKeys = own ?? [];
   const e: ErrorOf = (key) => (errors && owns(ownKeys, key) ? errors[key] : undefined);
   return (
-    <div className={`pb-row${wide || item ? " pb-row--wide" : ""}${item ? " pb-row--item" : ""}`} data-row={id} data-open={open ? "" : undefined} aria-busy={pending || undefined} {...rowAttrs}>
-      {wide || item ? <span className="sas-sr" id={labelId}>{label}</span> : <span className="pb-row__label" id={labelId}>{label}</span>}
+    <div className={`pb-row${wide || item ? " pb-row--wide" : ""}${item ? " pb-row--item" : ""}`} data-row={id} data-open={open ? "" : undefined} aria-busy={pending || undefined} data-info-scope="" {...rowAttrs}>
+      {wide || item ? <span className="sas-sr" id={labelId}>{label}</span> : info ? (
+        <span className="pb-row__label pb-row__label--info"><span id={labelId}>{label}</span><InfoTip label={infoLabel ?? String(label)} wide={infoWide}>{info}</InfoTip></span>
+      ) : <span className="pb-row__label" id={labelId}>{label}</span>}
       {item && lead !== undefined ? <span className="pb-row__lead">{open ? null : lead}</span> : null}
       <div className="pb-row__value">
         {open && editor ? (
@@ -192,12 +200,12 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, readHint
         ) : (
           <>
             {read}
-            {readHint ? <span className="sas-small pb-row__hint">{readHint}</span> : null}
+            {readHint ? <span className="sas-small pb-row__fact">{readHint}</span> : null}
           </>
         )}
       </div>
       {!open ? (
-        <span className="pb-row__actions">
+        <span className="pb-row__actions" data-info-avoid="">
           {aside}
           {editable && editor ? (
             item ? (
