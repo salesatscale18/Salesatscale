@@ -29,6 +29,16 @@ export function routeBuyerText(phase: string): "call" | "queue" | "chat" {
   return CALL_PHASES.has(phase) ? "queue" : "chat";
 }
 
+/**
+ * The composer when voice mode ends (End call, the Back sheet's End call, or the call's own end): it is back in the
+ * voice bar's place, and focused where the pointer is fine (desktop); on a phone focusing it would pop the keyboard,
+ * so it is only shown, ready. Nothing while voice mode goes on or never was.
+ */
+export function composerAfterVoice(wasVoice: boolean, voiceNow: boolean, finePointer: boolean): "focus" | "show" | null {
+  if (!wasVoice || voiceNow) return null;
+  return finePointer ? "focus" : "show";
+}
+
 /** What to do with queued text when the call's phase changes: into the call, back to the chat, or keep waiting. */
 export function flushQueued(phase: string): "call" | "chat" | "wait" {
   if (phase === "live") return "call";

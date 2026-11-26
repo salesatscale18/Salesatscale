@@ -16,6 +16,7 @@ import { MAX_CLIENT_TEXT, VOICE_SAMPLE_RATE, parseServerMessage, type ClientMess
 import { FrameChunker, LinearResampler, floatToPcm16, levelOf, pcm16ToFloat, rmsOf } from "./audio";
 import { PlaybackSchedule } from "./playback";
 import { outputChoices, playbackRoute, type OutputDevice, type PlaybackRoute } from "./output";
+import { LiveSpeech, type LiveLine } from "./live-text";
 import { INITIAL_SNAPSHOT, isIdlePhase, voiceReducer, type VoiceEvent, type VoiceSnapshot, type VoiceUnavailableReason } from "./state";
 import { CAPTURE_PROCESSOR, CAPTURE_WORKLET_SOURCE } from "./worklet";
 import { READY_PRIMER_MS, latencyMs, runReadiness, type ReadinessProbe, type ReadyReport } from "./readiness";
@@ -142,7 +143,31 @@ export class VoiceClient {
   };
   getSnapshot = (): VoiceSnapshot => this.snap;
 
+  /**
+   * The agent's line as it is being spoken (the buyer chat's live text; display only): what the relay sent, paced by
+   * the agent audio this page actually played. Read with liveLines(); fed here and in play().
+   */
+  private live = new LiveSpeech();
+
+  /** The agent's lines of this call as they show now (lib/voice/client/live-text.ts). Read on a timer by the chat. */
+  liveLines = (): LiveLine[] => this.live.lines(performance.now());
+
+  private feedLive(e: VoiceEvent) {
+    if (e.type === "reset") {
+      this.live.reset();
+      return;
+    }
+    if (e.type !== "server" || this.snap.phase === "ended") return;
+    const m = e.msg;
+    const now = performance.now();
+    if (m.t === "transcript") this.live.transcript(m, now);
+    else if (m.t === "agent_audio") this.live.mark(m.id, m.totalMs);
+    else if (m.t === "state") this.live.state(m.state);
+    // A flush (barge-in) reaches the live text through flushPlayback, as every other drop of the queued audio does.
+  }
+
   private dispatch(e: VoiceEvent) {
+    this.feedLive(e);
     const next = voiceReducer(this.snap, e);
     if (next === this.snap) return;
     this.snap = next;
@@ -641,6 +666,9 @@ export class VoiceClient {
     src.buffer = buffer;
     src.connect(out);
     const at = this.schedule.place(ctx.currentTime, buffer.duration);
+    // The live text's clock is the page's (ms): this frame starts playing `at - currentTime` from now.
+    const now = performance.now();
+    this.live.audio(buffer.duration * 1000, now + (at - ctx.currentTime) * 1000, now);
     this.playing.add(src);
     src.onended = () => this.playing.delete(src);
     src.start(at);
@@ -735,6 +763,8 @@ export class VoiceClient {
   }
 
   private flushPlayback() {
+    // The live text stops at what was played (a line never runs ahead of the voice it lost).
+    this.live.flush(performance.now());
     for (const src of this.playing) {
       try {
         src.stop();

@@ -9,10 +9,11 @@ import { isQuoteMessageText } from "@/lib/agent/quote-message";
 import { QUOTE_CARD_WAIT_MS } from "@/lib/simulator/rules";
 import { translator, type Locale, type MessageKey } from "@/lib/i18n";
 import { VoiceClient, type CallFailReason, type VoiceCallEvents } from "@/lib/voice/client/voice-client";
-import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
+import { CALL_PHASES, callLength, composerAfterVoice, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
+import { placeLiveLines, type LiveLine } from "@/lib/voice/client/live-text";
 import { mirrorPhase } from "@/lib/voice/client/bubble";
 import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
-import { BuyerCallBar, ChatVoiceBubble } from "./voice";
+import { BuyerCallBar, ChatVoiceBubble, useLiveAgentText } from "./voice";
 import { useBackGuard } from "@/lib/voice/client/back-guard";
 import { LeaveSheet } from "@/components/sas/voice/leave-sheet";
 import { Icon } from "@/components/sas/icon";
@@ -120,7 +121,7 @@ export function chatControls(o: {
  * A refusal or a failed request is told to `events` (onFailed) before the attempt ends.
  */
 export function startChatCall(c: VoiceClient, o: {
-  token: string; holdGreeting?: boolean; events?: VoiceCallEvents; onFirstNote?: (first: boolean) => void;
+  token: string; holdGreeting?: boolean; events?: VoiceCallEvents;
   onGate?: (reason: NonNullable<BuyerVoiceState["reason"]>) => void; fetchImpl?: typeof fetch;
 }): void {
   c.begin({ holdGreeting: !!o.holdGreeting, events: o.events });
@@ -132,10 +133,9 @@ export function startChatCall(c: VoiceClient, o: {
       const res = await doFetch(`/chat/${o.token}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       const r = (await res.json().catch(() => ({}))) as {
         ok?: boolean; reason?: string; gate?: BuyerVoiceState["reason"];
-        sessionId?: string; ticket?: string; wsUrl?: string; maxSec?: number; mode?: "scripted" | "live"; firstInConversation?: boolean;
+        sessionId?: string; ticket?: string; wsUrl?: string; maxSec?: number; mode?: "scripted" | "live";
       };
       if (r.ok && r.sessionId && r.ticket && r.wsUrl) {
-        o.onFirstNote?.(!!r.firstInConversation);
         c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec ?? null, mode: r.mode ?? null });
         return;
       }
@@ -177,6 +177,17 @@ function Linked({ text }: { text: string }) {
   const parts = text.split(URL_RE);
   return <>{parts.map((p, i) => (i % 2 === 1 ? <a key={i} href={p} target="_blank" rel="noopener noreferrer">{p}</a> : <Fragment key={i}>{p}</Fragment>))}</>;
 }
+
+/**
+ * An agent line as far as it was spoken (live text). Hidden from screen readers until it is whole (the log would
+ * otherwise read it out word by word); then it is read once.
+ */
+function LiveText({ line }: { line: LiveLine }) {
+  return <span aria-hidden={line.done ? undefined : true} data-live-text=""><Linked text={line.text} /></span>;
+}
+
+/** The live line's state, for the harness and tests: being spoken, cut by the buyer, or spoken whole. */
+const liveState = (l: LiveLine) => (l.cut ? "cut" : l.done ? "done" : "speaking");
 
 /** The app's quote message: WhatsApp-style `*bold*` lines (headline and totals) shown bold. */
 function Bolded({ text }: { text: string }) {
@@ -282,13 +293,16 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const [foldedPay, setFoldedPay] = useState<Record<string, string>>(initial.foldedPay ?? {});
   // "Switch to voice" (live voice): the server's gates, refreshed on every poll (with the reason on a simulated chat or for the seller's signed-in staff).
   const [voiceState, setVoiceState] = useState<BuyerVoiceState>(initial.voice ?? { available: false });
-  // The buyer's first switch in this conversation: the bar says what they say appears as text.
-  const [firstNote, setFirstNote] = useState(false);
   const [barHidden, setBarHidden] = useState(false);
   const clientRef = useRef<VoiceClient | null>(null);
   if (voice && !clientRef.current && typeof window !== "undefined") clientRef.current = new VoiceClient();
   const callSnap = useVoiceSnapshot(clientRef.current);
   const inCall = CALL_PHASES.has(callSnap.phase);
+  // Live text (owner, 26 Nov): the agent's line shows word by word while it is spoken (display only; the stored line
+  // replaces it in place). Each line remembers which messages the chat had when it first showed (placeLiveLines).
+  const liveLines = useLiveAgentText(clientRef.current, inCall);
+  const liveSeen = useRef(new Map<string, { ids: Set<string>; at: Date }>());
+  const liveSize = liveLines.reduce((n, l) => n + l.text.length, 0);
   // The call's phase as of now (quick-reply handlers may be older than the last render).
   const phaseRef = useRef(callSnap.phase);
   phaseRef.current = callSnap.phase;
@@ -365,7 +379,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
     // The bubble's room at the bottom appears with the call: keep the last message in view.
-  }, [items.length, typing, calls.length, inCall]);
+    // A line spoken word by word grows at the bottom: it stays in view as it does.
+  }, [items.length, typing, calls.length, inCall, liveSize]);
 
   const grow = () => {
     const el = inputRef.current;
@@ -460,7 +475,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     setBarHidden(false);
     startChatCall(c, {
       token, holdGreeting: !!opts.holdGreeting, events: opts.parent ? listenerEvents(callListeners.current) : undefined,
-      onFirstNote: setFirstNote, onGate: (reason) => setVoiceState({ available: false, reason }),
+      onGate: (reason) => setVoiceState({ available: false, reason }),
     });
   };
   // A parent's controls call the latest startCall synchronously (no await, no timer, no state round-trip before it).
@@ -487,16 +502,16 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   // The bar above the chat shows only what the bubble cannot carry: connecting, the microphone, errors and refusals,
   // reconnecting, and the short ended note. While the call is live the bubble is the indicator (owner, 21 Nov).
   const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && callSnap.phase !== "live" && !barHidden;
-  // Back (board VoiceBubbleBack): "Switch to text?" during a call (the voice stops, the chat stays), else "Leave the chat?" (also for the seller's staff);
+  // Back (board VoiceBubbleBack): "End the call?" during a call (the voice stops, the chat stays), else "Leave the chat?" (also for the seller's staff);
   // nothing once the link expired. During a call, closing or reloading the tab gets the browser's leave prompt.
   const callOn = !!voice && inCall && callSnap.phase !== "ending";
   // Voice mode (board VoiceBubbleBack 1): connecting, live (standby too), reconnecting, ending. The composer is hidden
-  // and the voice bar takes its place; Text (or the call's end) brings the composer back, focused on desktop only
-  // (a phone would pop its keyboard).
+  // and the voice bar takes its place; End call (or the call's own end) brings the composer back, focused on desktop
+  // only (a phone would pop its keyboard): composerAfterVoice.
   const voiceMode = !!voice && inCall && mirrorPhase(callSnap.phase) !== null;
   const wasVoice = useRef(false);
   useEffect(() => {
-    if (wasVoice.current && !voiceMode && window.matchMedia?.("(pointer: fine)").matches) inputRef.current?.focus();
+    if (composerAfterVoice(wasVoice.current, voiceMode, !!window.matchMedia?.("(pointer: fine)").matches) === "focus") inputRef.current?.focus();
     wasVoice.current = voiceMode;
   }, [voiceMode]);
   // Not while a parent keeps the chat off screen (the lead page hand-over): its sheet would be invisible.
@@ -514,6 +529,26 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     : dayKey(d) === dayKey(yesterday) ? strings.yesterday
     : new Intl.DateTimeFormat(locale, { timeZone: buyerZone, day: "numeric", month: locale.startsWith("he") ? "long" : "short", ...(dayKey(d).slice(0, 4) !== dayKey(now).slice(0, 4) ? { year: "numeric" } : {}) }).format(d);
   const timeOf = (d: Date) => new Intl.DateTimeFormat(locale, { timeZone: buyerZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+
+  /** Said (or typed) in a call: the line's clock time like every other line, with a mark (board VoiceBuyer 3). (The
+   *  seller's views, the test lab and the call block keep the time in the call.) */
+  const spokenMark = (typed: boolean, d: Date, iso: string) => (
+    <span className="c-spoken" title={tr(typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: timeOf(d) })} data-spoken="">
+      <svg viewBox="0 0 24 24" role="img" aria-label={tr(typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: timeOf(d) })}>
+        <path d={typed ? "M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" : "M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM19 10v2a7 7 0 0 1-14 0v-2M12 19v3"} />
+      </svg>
+      <time dateTime={iso} suppressHydrationWarning>{timeOf(d)}</time>
+    </span>
+  );
+
+  // Live text: which stored message each line being spoken is (its row shows the line as far as it was said), and the
+  // lines with no stored message yet (shown after the messages). Each line notes the messages there when it first showed.
+  for (const l of liveLines) if (!liveSeen.current.has(l.key)) liveSeen.current.set(l.key, { ids: new Set(items.map((m) => m.id)), at: new Date() });
+  const livePlace = placeLiveLines(
+    items.map((m) => ({ id: m.id, agentCall: m.from === "agent" && !!m.call && !m.call.typed, body: m.body })), liveLines, (k) => liveSeen.current.get(k)?.ids,
+  );
+  const liveByKey = new Map(liveLines.map((l) => [l.key, l]));
+  const liveOf = new Map([...livePlace.byMessage].map(([id, key]) => [id, liveByKey.get(key)!]));
 
   const rows: ReactNode[] = [];
   let prevDay = "";
@@ -571,29 +606,24 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       );
       return;
     }
+    // Live text: an agent line of the call being spoken shows as far as it was said (a text-out reply's row is stored
+    // before its voice: it shows from its first word), in the same place, under the same key, as its live bubble had.
+    const live = liveOf.get(m.id);
+    if (live && !live.text) return;
     const answered = shown.slice(i + 1).some((n) => n.from !== "buyer" && !n.pending);
     const state = m.from !== "buyer" ? null : m.pending === "sending" || m.pending === "failed" ? "sent" : answered ? "read" : "delivered";
     const side = m.from === "buyer" ? "out" : "in";
     // A link with a card shows as the card (artboard SimDesktop), not as a raw URL; a message that is only the link is the card alone.
     const text = m.previews.reduce((b, p) => b.split(p.url).join(""), m.body).replace(/[ \t]+\n/g, "\n").replace(/\n{2,}/g, "\n").trim();
-    const onlyLink = m.previews.length > 0 && !text;
+    const onlyLink = m.previews.length > 0 && !text && !live;
     rows.push(
-      <div key={m.id} className={`c-msg c-msg--${side}${m.pending === "failed" ? " c-msg--failed" : ""}`}>
+      <div key={live ? `live-${live.key}` : m.id} className={`c-msg c-msg--${side}${m.pending === "failed" ? " c-msg--failed" : ""}`} data-live-line={live ? liveState(live) : undefined}>
         {m.from === "human" && m.name ? <span className="c-who" dir="auto">{m.name}</span> : null}
         {onlyLink ? null : (
           <div className={`c-bubble${m.kind ? ` c-bubble--${m.kind}` : ""}`} dir="auto" data-kind={m.kind}>
-            {m.kind === "quote" ? <Bolded text={m.body} /> : <Linked text={m.previews.length ? text : m.body} />}
+            {live ? <LiveText line={live} /> : m.kind === "quote" ? <Bolded text={m.body} /> : <Linked text={m.previews.length ? text : m.body} />}
             <span className="c-meta">
-              {m.call ? (
-                // Said (or typed) in a call: the line's clock time like every other line, with a mark (board VoiceBuyer 3).
-                // (The seller's views, the test lab and the call block keep the time in the call.)
-                <span className="c-spoken" title={tr(m.call.typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: timeOf(d) })} data-spoken="">
-                  <svg viewBox="0 0 24 24" role="img" aria-label={tr(m.call.typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: timeOf(d) })}>
-                    <path d={m.call.typed ? "M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" : "M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM19 10v2a7 7 0 0 1-14 0v-2M12 19v3"} />
-                  </svg>
-                  <time dateTime={m.at} suppressHydrationWarning>{timeOf(d)}</time>
-                </span>
-              ) : <time dateTime={m.at} suppressHydrationWarning>{timeOf(d)}</time>}
+              {m.call ? spokenMark(m.call.typed, d, m.at) : <time dateTime={m.at} suppressHydrationWarning>{timeOf(d)}</time>}
               {m.pending === "failed" ? <span>· {strings.notSent}</span> : null}
               {state ? <Tick state={state} label={strings[state]} /> : null}
             </span>
@@ -618,6 +648,19 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     }
   });
   callRows.forEach(pushCall);
+  // Live lines no stored message is yet: after the messages, as the agent's next line will be.
+  for (const l of livePlace.standalone) {
+    if (!l.text) continue;
+    const at = liveSeen.current.get(l.key)?.at ?? new Date();
+    rows.push(
+      <div key={`live-${l.key}`} className="c-msg c-msg--in" data-live-line={liveState(l)}>
+        <div className="c-bubble" dir="auto">
+          <LiveText line={l} />
+          <span className="c-meta">{spokenMark(false, at, at.toISOString())}</span>
+        </div>
+      </div>,
+    );
+  }
   for (const c of chipsLeft) rows.push(<SmsChip key={`sms-${c.at}`} at={c.at} tz={buyerZone} lang={lang} />);
   // Reach RB: talk now at the time the buyer asked for (Talk now starts voice mode through the chat's own switch).
   const canTalk = !!voice && voiceState.available && !inCall && !ended;
@@ -692,7 +735,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       {backGuard.sheet ? <LeaveSheet ask={backGuard.sheet} tr={tr} dir={dir} onChoose={backGuard.choose} /> : null}
       {voice && clientRef.current ? (
         // Voice mode: the voice bar in the composer's place; it also links an order form tab to this call.
-        <ChatVoiceBubble client={clientRef.current} tabKey={voice.tabKey ?? null} tr={tr} agentName={voice.agentName} dir={dir} showBubble={voiceMode} firstNote={firstNote} />
+        <ChatVoiceBubble client={clientRef.current} tabKey={voice.tabKey ?? null} tr={tr} agentName={voice.agentName} dir={dir} showBubble={voiceMode} />
       ) : null}
       {ended ? (
         <div className="c-ended" role="status" aria-disabled="true" dir={dir}>{expired ? strings.expired : strings.ended}</div>

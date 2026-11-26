@@ -778,7 +778,7 @@ export class VoiceEngine {
     this.speaker = deps.speaker ?? null;
     this.player = this.speaker ? new SpeechPlayer({
       speaker: this.speaker, clock: this.clock, frameBytes: PIPELINE_TIMING.frameBytes, leadMs: PIPELINE_TIMING.leadMs,
-      send: (frame) => this.onSpeechFrame(frame),
+      send: (frame, job) => this.onSpeechFrame(frame, job),
       onFirstAudio: (job) => this.onSpeechFirstAudio(job),
       onChars: (n) => void (this.rt.chars += n),
       onJobEnd: (job) => this.onSpeechJobEnd(job),
@@ -980,8 +980,23 @@ export class VoiceEngine {
     return p;
   }
 
+  /**
+   * Whose agent audio the browser is getting (agent_audio, display only): the turn, and whether its whole length was
+   * told. Changes only with the turn (and after a flush), so it adds one small frame per spoken turn.
+   */
+  private audioMark: { id: string; total: boolean } | null = null;
+
+  private markAgentAudio(id: string, totalMs: number | null = null) {
+    const m = this.audioMark;
+    if (m && m.id === id && (m.total || totalMs === null)) return;
+    this.audioMark = { id, total: totalMs !== null };
+    this.send(totalMs === null ? { t: "agent_audio", id } : { t: "agent_audio", id, totalMs: Math.round(totalMs) });
+  }
+
   private send(msg: ServerMessage | Uint8Array) {
     if (this.firstAudioSentAt === null && msg instanceof Uint8Array && msg.byteLength > 0) this.firstAudioSentAt = this.clock.now();
+    // A flush drops what the browser queued: the next agent audio says again whose it is.
+    if (!(msg instanceof Uint8Array) && msg.t === "flush") this.audioMark = null;
     try {
       this.out(msg);
     } catch (e) {
@@ -1657,6 +1672,7 @@ export class VoiceEngine {
         this.connAudio = true;
         this.clearQuiet();
         this.setState("speaking");
+        this.markAgentAudio(turn.id);
         this.send(e.pcm);
         this.noteOpenerAudio(e.pcm.byteLength);
         // The recording's right channel: as the browser plays it (queued after what it still has).
@@ -1904,7 +1920,7 @@ export class VoiceEngine {
   }
 
   /** A frame of the speaker's audio: to the browser and the recording's agent channel, as agent audio always goes. */
-  private onSpeechFrame(frame: Uint8Array) {
+  private onSpeechFrame(frame: Uint8Array, job?: SpeechJob) {
     if (this.ended) return;
     if (this.currentWake) {
       this.currentWake.entry.firstAudioMs ??= Math.max(0, Math.round(this.clock.now() - this.currentWake.at));
@@ -1913,6 +1929,8 @@ export class VoiceEngine {
     this.connAudio = true;
     this.clearQuiet();
     this.setState("speaking");
+    // Whose line this audio speaks, and its whole length once synthesis finished (the browser paces the line by it).
+    if (job) this.markAgentAudio(job.turnId, job.synthDone ? job.receivedMs : null);
     this.send(frame);
     this.noteOpenerAudio(frame.byteLength);
     this.recorder?.agent(frame, this.offsetMs());

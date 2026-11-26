@@ -229,6 +229,13 @@ export type ServerMessage =
   | { t: "message"; messageId: string }
   /** The buyer interrupted: drop the agent audio queued for playback. */
   | { t: "flush" }
+  /**
+   * The agent audio frames that follow belong to the agent turn `id` (the `id` of its transcript lines): sent before
+   * the first frame of a turn's audio, and again with `totalMs` once that turn's whole audio length is known (the
+   * text-output + speaker path, when synthesis finished). Display only: the buyer chat reveals the agent's line in
+   * step with the audio played (lib/voice/client/live-text.ts). Added 26 Nov 2026; older pages ignore it.
+   */
+  | { t: "agent_audio"; id: string; totalMs?: number }
   | { t: "notice"; kind: "limit_soon" | "silence_check" }
   /** About every 5 s and after each usage snapshot. Scripted calls send cost 0. */
   | { t: "stats"; durationSec: number; costMicros: number; answerMsAvg: number | null }
@@ -263,6 +270,11 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       return str("messageId") ? (o as ServerMessage) : null;
     case "flush":
       return { t: "flush" };
+    case "agent_audio": {
+      if (!str("id") || (o.id as string).length > 64) return null;
+      const total = num("totalMs") && (o.totalMs as number) >= 0 ? Math.round(o.totalMs as number) : undefined;
+      return total === undefined ? { t: "agent_audio", id: o.id as string } : { t: "agent_audio", id: o.id as string, totalMs: total };
+    }
     case "notice":
       return o.kind === "limit_soon" || o.kind === "silence_check" ? (o as ServerMessage) : null;
     case "stats":

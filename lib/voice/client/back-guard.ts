@@ -1,5 +1,5 @@
 /**
- * The Back guard (board VoiceBubbleBack): on the buyer chat, the browser's Back first asks ("Switch to text?" during
+ * The Back guard (board VoiceBubbleBack): on the buyer chat, the browser's Back first asks ("End the call?" during
  * a call, "Leave the chat?" otherwise); in the test lab it asks only during a test call, also for a link that
  * leaves the test lab. During a live call, closing or reloading the tab gets the browser's own leave prompt.
  *
@@ -27,7 +27,7 @@ export const GUARD_KEY = "__sasBackGuard";
 
 /** What the sheet asks. */
 export type GuardAsk = "end_call" | "leave_chat";
-/** The answer: the safe choice (Stay in voice, Keep talking, Stay in the chat), stop the call (Switch to text, End call), or Leave. */
+/** The answer: the safe choice (Keep talking, Stay in the chat), stop the call (End call), or Leave. */
 export type GuardChoice = "stay" | "end_call" | "leave";
 
 type Listener = (e: { state?: unknown; persisted?: boolean } & Partial<Event>) => void;

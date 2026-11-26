@@ -2,10 +2,10 @@
 
 /**
  * The voice bubble (live voice, buyer pages, board VoiceBubbleBack): a 60 px round button with a waveform that
- * follows who is speaking, in five looks. In the chat it sits in the voice bar ([Mute] · bubble · [Text],
+ * follows who is speaking, in five looks. In the chat it sits in the voice bar ([Mute] · bubble · [End call],
  * components/sas/voice/voice-bar.tsx) in place of the composer: no pop-up there, a tap only wakes the agent from
  * standby. On an order form tab (which mirrors the chat tab's call over the tab link) it floats centred at the
- * bottom; a tap opens a small tray with Mute and Text, and the agent's line shows above it as a caption, since the
+ * bottom; a tap opens a small tray with Mute and End call, and the agent's line shows above it as a caption, since the
  * chat is not in view. Short labels sit centred above it. State words and the waveform only: never tool chips.
  */
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -68,12 +68,15 @@ const STANDBY_NOTE_MS = 5000;
 const MUTED_NOTE_MS = 3000;
 
 /** A round control with its one-word label under it (the voice bar and the order form's tray). */
-export function RoundControl({ icon, label, name, onClick, on = false, disabled = false, data }: {
-  icon: ReactNode; label: string; name?: string; onClick: () => void; on?: boolean; disabled?: boolean; data: string;
+export function RoundControl({ icon, label, name, onClick, on = false, disabled = false, danger = false, data }: {
+  icon: ReactNode; label: string; name?: string; onClick: () => void; on?: boolean; disabled?: boolean;
+  /** A destructive control (End call): the design system's danger outline. */
+  danger?: boolean;
+  data: string;
 }) {
   return (
     <button
-      type="button" className={`vb-ctl${on ? " vb-ctl--on" : ""}`} onClick={onClick} disabled={disabled}
+      type="button" className={`vb-ctl${on ? " vb-ctl--on" : ""}${danger ? " vb-ctl--danger" : ""}`} onClick={onClick} disabled={disabled}
       aria-label={name} aria-pressed={data === "mute" ? on : undefined} {...{ [`data-bar-${data}`]: "" }}
     >
       <span className="vb-ctl__circle" aria-hidden="true">{icon}</span>
@@ -82,7 +85,21 @@ export function RoundControl({ icon, label, name, onClick, on = false, disabled 
   );
 }
 
-/** The order form's tray: Mute and Text, round, labels under; no headline. */
+/**
+ * End call (the voice bar and the order form's tray; owner, 26 Nov: in place of Text, doing what Text did): the
+ * phone-down icon in a danger outline (the design system's destructive secondary action, as .sas-btn--danger),
+ * labelled and named "End call". It ends the voice part only: the chat goes on.
+ */
+export function EndCallControl({ state, tr, onCommand }: { state: MirrorState; tr: Tr; onCommand: (c: TabCommand) => void }) {
+  return (
+    <RoundControl
+      data="end" danger disabled={state.phase === "ending"} icon={<Icon name="phone-off" />} label={tr("buyer.voice.end_call")}
+      onClick={() => onCommand({ cmd: "end" })}
+    />
+  );
+}
+
+/** The order form's tray: Mute and End call, round, labels under; no headline. */
 export function BubbleTray({ id, state, view, tr, act }: {
   id: string; state: MirrorState; view: ReturnType<typeof bubbleView>; tr: Tr; act: (c: TabCommand) => void;
 }) {
@@ -92,10 +109,7 @@ export function BubbleTray({ id, state, view, tr, act }: {
         data="mute" on={state.muted} disabled={!view.controls} icon={<Icon name={state.muted ? "mic" : "mic-off"} />}
         label={tr(state.muted ? "buyer.voice.unmute" : "buyer.voice.mute")} onClick={() => act({ cmd: state.muted ? "unmute" : "mute" })}
       />
-      <RoundControl
-        data="text" disabled={state.phase === "ending"} icon={<Icon name="keyboard" />} label={tr("buyer.voice.bar.text")} name={tr("buyer.voice.to_text")}
-        onClick={() => act({ cmd: "end" })}
-      />
+      <EndCallControl state={state} tr={tr} onCommand={act} />
     </div>
   );
 }

@@ -157,7 +157,7 @@ async function bubbleSection(browser: Browser, base: string) {
     await chat.click("[data-voice-talk]");
     const live = await chat.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 }).then(() => true, () => false);
     check(live, `${sh.name}: the bubble shows in the chat once the call is live`);
-    // Voice mode (board VoiceBubbleBack 1): the composer is hidden; the voice bar, centred, holds Mute · bubble · Text.
+    // Voice mode (board VoiceBubbleBack 1): the composer is hidden; the voice bar, centred, holds Mute · bubble · End call.
     // Desktop browsers list speakers once the call is live: the Speaker control follows.
     if (desk) await chat.waitForSelector("[data-bar-speaker]", { timeout: 5000 }).catch(() => undefined);
     const box = await chat.locator("[data-bubble-button]").boundingBox();
@@ -168,8 +168,8 @@ async function bubbleSection(browser: Browser, base: string) {
     const sym = await barSymmetry(chat);
     check(sym.off <= 1 && Math.abs(sym.leftGap - sym.rightGap) <= 1, `${sh.name}: bubble at the bar's centre (${sym.off.toFixed(1)} px off), equal gaps (${sym.leftGap.toFixed(1)} / ${sym.rightGap.toFixed(1)} px)`);
     check(JSON.stringify(sym.sizes) === JSON.stringify(["44x44"]), `${sh.name}: one button size on the bar (${sym.sizes.join(", ")})`);
-    const ctl = await chat.evaluate(() => [...document.querySelectorAll("[data-voice-bar] [data-bar-mute], [data-voice-bar] [data-bar-speaker], [data-voice-bar] [data-bubble-button], [data-voice-bar] [data-bar-text]")].map((e) => (e as HTMLElement).dataset.barMute !== undefined ? "mute" : (e as HTMLElement).dataset.barSpeaker !== undefined ? "speaker" : (e as HTMLElement).dataset.barText !== undefined ? "text" : "bubble"));
-    check(JSON.stringify(ctl) === JSON.stringify(desk ? ["mute", "speaker", "bubble", "text"] : ["mute", "bubble", "text"]), `${sh.name}: the bar: ${ctl.join(" · ")}`);
+    const ctl = await chat.evaluate(() => [...document.querySelectorAll("[data-voice-bar] [data-bar-mute], [data-voice-bar] [data-bar-speaker], [data-voice-bar] [data-bubble-button], [data-voice-bar] [data-bar-end]")].map((e) => (e as HTMLElement).dataset.barMute !== undefined ? "mute" : (e as HTMLElement).dataset.barSpeaker !== undefined ? "speaker" : (e as HTMLElement).dataset.barEnd !== undefined ? "end" : "bubble"));
+    check(JSON.stringify(ctl) === JSON.stringify(desk ? ["mute", "speaker", "bubble", "end"] : ["mute", "bubble", "end"]), `${sh.name}: the bar: ${ctl.join(" · ")}`);
     check((await chat.getAttribute("[data-voice-bar]", "role")) === "toolbar", `${sh.name}: the bar is a toolbar`);
     await chat.waitForTimeout(2500);
     // The bubble never covers the last item: at the bottom of the thread, the last row ends above the bubble.
@@ -186,7 +186,7 @@ async function bubbleSection(browser: Browser, base: string) {
     await shot(chat, `bubble-chat-${sh.name}`);
     await chat.click("[data-bubble-button]");
     check((await chat.locator("[data-bubble-tray], [role=menu]").count()) === 0, `${sh.name}: tapping the bubble opens nothing in the chat`);
-    check((await chat.getAttribute("[data-bar-text]", "aria-label")) === (sh.lang === "he" ? "מעבר לכתיבה" : "Switch to text"), `${sh.name}: Text is named Switch to text`);
+    check((await chat.textContent("[data-bar-end]")) === (sh.lang === "he" ? "סיום שיחה" : "End call"), `${sh.name}: End call is named End call`);
     await chat.click("[data-bar-mute]");
     check(await chat.waitForSelector('[data-bubble-note="muted"]', { timeout: 3000 }).then(() => true, () => false), `${sh.name}: "You are muted" above the bubble`);
     check((await chat.getAttribute("[data-bar-mute]", "aria-pressed")) === "true" && (await chat.textContent("[data-bar-mute]")) === (sh.lang === "he" ? "ביטול השתקה" : "Unmute"), `${sh.name}: Mute reads Unmute, pressed`);
@@ -234,8 +234,8 @@ async function bubbleSection(browser: Browser, base: string) {
       console.log(`        notes: ${all.length}`);
     }
     await form.click("[data-bubble-button]");
-    const tray = await form.evaluate(() => [...document.querySelectorAll("[data-bubble-tray] > *")].map((e) => ((e as HTMLElement).dataset.barMute !== undefined ? "mute" : "text")));
-    check(JSON.stringify(tray) === JSON.stringify(["mute", "text"]), `${sh.name}: the form bubble opens a tray: Mute and Text`);
+    const tray = await form.evaluate(() => [...document.querySelectorAll("[data-bubble-tray] > *")].map((e) => ((e as HTMLElement).dataset.barMute !== undefined ? "mute" : "end")));
+    check(JSON.stringify(tray) === JSON.stringify(["mute", "end"]), `${sh.name}: the form bubble opens a tray: Mute and End call`);
     await shot(form, `bubble-form-menu-${sh.name}`);
     if (sh.full) {
       // The speaker picked in the chat tab's bar plays the agent there.
@@ -246,15 +246,15 @@ async function bubbleSection(browser: Browser, base: string) {
       check((await sinks()).includes("hp"), "Speaker in the bar switches to the next output");
       check((await chat.getAttribute("[data-bar-speaker]", "aria-label")) === "Speaker: Headphones", "and names it");
       await form.bringToFront();
-      await form.click("[data-bubble-tray] [data-bar-text]");
-      check(await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).then(() => true, () => false), "Switch to text from the form tab ends the call in the chat tab");
+      await form.click("[data-bubble-tray] [data-bar-end]");
+      check(await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).then(() => true, () => false), "End call from the form tab ends the call in the chat tab");
       check(await form.waitForSelector('[data-voice-bubble][data-bubble-phase="ended"]', { timeout: 5000 }).then(() => true, () => false), "the form bubble says the call ended");
       await shot(form, `bubble-form-ended-${sh.name}`);
       check(await form.waitForSelector("[data-voice-bubble]", { state: "detached", timeout: 10_000 }).then(() => true, () => false), "then it goes");
     } else {
       await form.keyboard.press("Escape");
       await chat.bringToFront();
-      await chat.click("[data-bar-text]");
+      await chat.click("[data-bar-end]");
       await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).catch(() => undefined);
     }
     // The chat tab closes during a call: the form bubble goes (gone, then hidden).
@@ -275,7 +275,7 @@ async function bubbleSection(browser: Browser, base: string) {
     check((await chat.locator("[data-voice-bar]").count()) === 1 && (await chat.locator(".c-bar").count()) === 0, `real lead ${sfx}: the voice bar in the composer's place`);
     await chat.waitForTimeout(1500);
     await shot(chat, `bubble-real-lead-${sfx}`);
-    await chat.click("[data-bar-text]").catch(() => undefined);
+    await chat.click("[data-bar-end]").catch(() => undefined);
     await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).catch(() => undefined);
     await chat.context().close();
   }
@@ -329,7 +329,7 @@ async function markersAndQuoteSection(browser: Browser, base: string) {
   check(!never.some((x) => x.startsWith("raw quote")), `the quote never painted as raw text${never.length ? ` (${never[0]})` : ""}`);
   check(!never.some((x) => x.startsWith("marker")), "no transcription marker in the chat, a caption or the form tab");
   await shot(chat, "buyer2-quote-in-call-phone");
-  await chat.click("[data-bar-text]").catch(() => undefined);
+  await chat.click("[data-bar-end]").catch(() => undefined);
   await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).catch(() => undefined);
   await chat.context().close();
   await fetch(`${base}/api/markers?mode=off`, { method: "POST" });
@@ -385,7 +385,7 @@ async function standbySection(browser: Browser, base: string) {
       await chat.waitForTimeout(1500);
       check((await notes()).some((n) => n.includes("Company details")), "the form note reached the model");
     }
-    await chat.click("[data-bar-text]").catch(() => undefined);
+    await chat.click("[data-bar-end]").catch(() => undefined);
     await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).catch(() => undefined);
     await chat.context().close();
   }
@@ -644,7 +644,7 @@ async function main() {
       const desktop = (lang: "en" | "he"): Shape => ({ name: `desktop${lang === "he" ? "-he" : ""}`, w: 1440, hgt: 900, lang });
       const phone = (lang: "en" | "he"): Shape => ({ name: `phone${lang === "he" ? "-he" : ""}`, w: 390, hgt: 844, lang });
 
-      // The button at rest, then a whole call: switch, voice mode (the voice bar instead of the composer), Text, the chat after.
+      // The button at rest, then a whole call: switch, voice mode (the voice bar instead of the composer), End call, the chat after.
       for (const sh of [phone("en"), desktop("en"), phone("he"), desktop("he")]) {
         const page = await newPage(browser, `${h.url}/buyer?lang=${sh.lang}`, sh.w, sh.hgt);
         check(await page.waitForSelector("[data-voice-talk]:not([data-voice-disabled])", { timeout: 15_000 }).then(() => true, () => false), `${sh.name}: Switch to voice at the composer's edge`);
@@ -654,11 +654,11 @@ async function main() {
         await page.click("[data-voice-talk]");
         check((await page.locator("[data-voice-sheet]").count()) === 0, `${sh.name}: no sheet, the call starts at once`);
         check(await waitPhase(page, "live", 20_000), `${sh.name}: the call connects`);
-        check(await page.waitForSelector("[data-voice-bar] [data-bar-text]", { timeout: 5000 }).then(() => true, () => false), `${sh.name}: the voice bar with Text`);
+        check(await page.waitForSelector("[data-voice-bar] [data-bar-end]", { timeout: 5000 }).then(() => true, () => false), `${sh.name}: the voice bar with End call`);
         check((await page.locator("[data-buyer-call]").count()) === 0, `${sh.name}: no bar above the chat while the call is live (the bubble is the indicator)`);
         // Typing during voice is gone by design: the composer is hidden.
         check((await page.locator("#c-input").count()) === 0, `${sh.name}: no text field in voice mode`);
-        check((await page.locator('[data-bubble-note="first"]').count()) === (first ? 1 : 0), `${sh.name}: the transcript note above the bubble, only on the first switch in the conversation`);
+        check((await page.locator('[data-bubble-note="first"]').count()) === 1, `${sh.name}: the one-time hint above the bubble (each page here is a fresh browser: its first call)`);
         check(!/automated assistant/i.test((await page.locator("[data-voice-bubble]").textContent()) ?? ""), `${sh.name}: no bot notice by the bubble`);
         await page.waitForTimeout(sh.lang === "en" && first ? 9000 : 3500);
         await shot(page, `buyer2-call-live-${sh.name}`);
@@ -669,8 +669,8 @@ async function main() {
           // (After the recording notice, when the call is recorded.)
           check(/^(?:Some calls may be recorded for quality review\. )?So, what made you get in touch today\?/.test(firstLine ?? ""), "it re-asks the agent's open question from the chat");
         }
-        await page.click("[data-bar-text]");
-        check(await waitPhase(page, "ended", 15_000), `${sh.name}: Text ends voice mode`);
+        await page.click("[data-bar-end]");
+        check(await waitPhase(page, "ended", 15_000), `${sh.name}: End call ends voice mode`);
         // The composer is back; on desktop its field has focus (a phone would pop its keyboard).
         check((await page.locator("#c-input").count()) === 1, `${sh.name}: the composer is back`);
         const focused = await page.evaluate(() => document.activeElement?.id === "c-input");
@@ -694,8 +694,8 @@ async function main() {
         check(/automated assistant/i.test(written), "empty chat: the chat starts with the agent's opener");
         check(spoken && /^(?:Some calls may be recorded for quality review\. )?So, /.test((await page.locator(".c-msg--in .c-bubble:has([data-spoken])").first().textContent()) ?? ""), "empty chat: the call re-asks its question (no second introduction)");
         await shot(page, "buyer2-empty-chat-phone");
-        await page.click("[data-bar-text]");
-        check(await waitPhase(page, "ended", 15_000), "empty chat: Text ends voice mode; the chat goes on");
+        await page.click("[data-bar-end]");
+        check(await waitPhase(page, "ended", 15_000), "empty chat: End call ends voice mode; the chat goes on");
         await page.context().close();
       }
 
