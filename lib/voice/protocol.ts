@@ -152,8 +152,12 @@ function parseContext(o: Record<string, unknown>, size: number): ClientMessage |
  * browser got from the server action that created the call. Nothing else is
  * accepted before it, and it must arrive within AUTH_TIMEOUT_MS.
  */
-/** `waitAudio`: this browser sends `{t:"ready"}` once it can play the agent; the opening line waits for it. */
-export type VoiceAuthMessage = { t: "auth"; sessionId: string; ticket: string; waitAudio?: boolean };
+/**
+ * `waitAudio`: this browser sends `{t:"ready"}` once it can play the agent; the opening line waits for it.
+ * `holdGreeting` (the lead page hand-over): that `ready` comes only once the page shows the chat, so the relay waits
+ * for it longer (VOICE_HOLD_GREETING_MS) and, without it, ends the call as not started (no opening line).
+ */
+export type VoiceAuthMessage = { t: "auth"; sessionId: string; ticket: string; waitAudio?: boolean; holdGreeting?: boolean };
 /** The relay closes a socket that has not authenticated after this long. */
 export const AUTH_TIMEOUT_MS = 5_000;
 
@@ -170,7 +174,9 @@ export function parseAuthMessage(raw: unknown): VoiceAuthMessage | null {
   const o = v as Record<string, unknown>;
   if (o.t !== "auth" || typeof o.sessionId !== "string" || typeof o.ticket !== "string") return null;
   if (o.sessionId.length > 64 || o.ticket.length > 128) return null;
-  return { t: "auth", sessionId: o.sessionId, ticket: o.ticket, ...(o.waitAudio === true ? { waitAudio: true } : {}) };
+  return {
+    t: "auth", sessionId: o.sessionId, ticket: o.ticket, ...(o.waitAudio === true ? { waitAudio: true } : {}), ...(o.holdGreeting === true ? { holdGreeting: true } : {}),
+  };
 }
 
 /** WebSocket close codes the relay uses. */
@@ -197,7 +203,9 @@ export type ToolStatus = "running" | "ok" | "refused" | "failed";
 
 /** Why a call ended (same values as voice_sessions.end_reason). */
 export type VoiceEndReasonWire =
-  | "user_hangup" | "agent_closed" | "limit" | "silence" | "idle" | "opt_out" | "handoff" | "take_over" | "connection_lost" | "budget" | "error";
+  | "user_hangup" | "agent_closed" | "limit" | "silence" | "idle" | "opt_out" | "handoff" | "take_over" | "connection_lost" | "budget" | "error"
+  /** A held greeting (auth `holdGreeting`) was never released: the call ended before the agent said anything. */
+  | "not_started";
 
 /** Error codes the call screen can show. */
 export const VOICE_ERROR_CODES = [

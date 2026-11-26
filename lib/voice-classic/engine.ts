@@ -76,6 +76,13 @@ export type VoiceLimits = {
   heartbeatMs?: number;
   /** Classic: accepted and ignored. Today's browser waits to say `ready`; the 20 Nov engine asked for the opener at once. */
   waitForClientAudio?: boolean;
+  /**
+   * Classic (hold only, lib/voice/engine.ts holdGreeting): the page holds the greeting (the lead page hand-over). The
+   * opener is asked for at the page's `ready`, not at connect; without it within holdGreetingMs the call ends as not
+   * started (no opener, no duration, no cost). Buyer audio does not reach the model while it is held.
+   */
+  holdGreeting?: boolean;
+  holdGreetingMs?: number;
 };
 
 /** end_call after the goodbye was spoken: the call ends this long after the result, unless the turn ends first. */
@@ -89,14 +96,14 @@ export const CLASSIC_FINAL_WRITE_TIMEOUT_MS = 8_000;
 /** Classic (infrastructure kept from today): who ended the call, from the reason, for the stored endDetail. */
 const BY_REASON: Record<VoiceEndReason, VoiceEndBy> = {
   user_hangup: "client_end", agent_closed: "tool", limit: "limit", silence: "idle", idle: "idle", opt_out: "tool", handoff: "tool",
-  take_over: "take_over", connection_lost: "client_closed", budget: "gate", error: "error",
+  take_over: "take_over", connection_lost: "client_closed", budget: "gate", error: "error", not_started: "not_started",
 };
 
 /** Classic (infrastructure kept from today): the final row write's outcome and the figures the browser is told. */
 type FinalRow = { connected: boolean; ended: boolean; durationSec: number; costMicros: number; answerMsAvg: number | null };
 
 const DEFAULTS = {
-  limitWarnSec: 45, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000, heartbeatMs: CLASSIC_HEARTBEAT_MS, waitForClientAudio: false,
+  limitWarnSec: 45, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000, heartbeatMs: CLASSIC_HEARTBEAT_MS, waitForClientAudio: false, holdGreeting: false, holdGreetingMs: 15_000,
   standbyAfterQuietMs: CALL_RULES.standbyAfterQuietMs, standbyIdleEndMs: CALL_RULES.standbyIdleEndMs, preRollMs: CALL_RULES.preRollMs,
   wakeBufferMaxMs: CALL_RULES.wakeBufferMaxMs, wakeConnectMs: CALL_RULES.wakeConnectMs, falseWakeMs: CALL_RULES.falseWakeMs,
   falseWakesBeforeRaise: CALL_RULES.falseWakesBeforeRaise, maxThresholdBoost: CALL_RULES.maxThresholdBoost, minWakeGapMs: CALL_RULES.minWakeGapMs,
@@ -245,9 +252,11 @@ export class ClassicVoiceEngine {
   private reconnecting = false;
   private lastStamp = 0;
   private errorCode: VoiceErrorCode | null = null;
-  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect" | "heartbeat", TimerHandle | null> = {
-    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null, heartbeat: null,
+  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect" | "heartbeat" | "ready", TimerHandle | null> = {
+    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null, heartbeat: null, ready: null,
   };
+  /** Classic (hold only): the opener while the page holds the greeting (limits.holdGreeting). */
+  private heldOpener: string | null = null;
 
   // Standby (lib/voice/call-rules.ts): the model is disconnected while the buyer is quiet; our detector listens.
   /** On standby since this clock time (null: not on standby). */
@@ -300,7 +309,7 @@ export class ClassicVoiceEngine {
     return this.enqueue(() => this.doStart());
   }
 
-  /** Classic: today's client also sends `{t:"ready"}` (it waits for no answer); the 20 Nov engine has no use for it. */
+  /** Classic: today's client also sends `{t:"ready"}` (it waits for no answer); the 20 Nov engine has no use for it, except to release a held greeting (limits.holdGreeting). */
   onClientMessage(msg: ClientMessage): void {
     if (this.ended) return;
     if (msg.t === "wake") return this.tapWake();
@@ -320,10 +329,32 @@ export class ClassicVoiceEngine {
         return;
       case "ping":
         return;
+      case "ready":
+        // Classic (hold only): the page released the greeting; otherwise ignored, as on 20 Nov.
+        this.releaseHeldOpener();
+        return;
       case "context":
         this.onFormContext(msg);
         return;
     }
+  }
+
+  /** Classic (hold only): asks for the held opener now (the page's `ready`). */
+  private releaseHeldOpener() {
+    const prompt = this.heldOpener;
+    if (prompt === null || this.ended || !this.conn) return;
+    this.heldOpener = null;
+    this.clearTimer("ready");
+    this.conn.requestResponse(prompt);
+  }
+
+  /** Classic (hold only): never released: the call ends as not started (stored as a call that never connected). */
+  private heldOpenerNotReleased() {
+    if (this.heldOpener === null || this.ended) return;
+    this.log.warn(voiceLine(this.sessionId, "held greeting not released: the call ends as not started"));
+    this.heldOpener = null;
+    this.callStart = null;
+    void this.stop("not_started", undefined, "not_started");
   }
 
   /**
@@ -346,6 +377,8 @@ export class ClassicVoiceEngine {
 
   onClientAudio(bytes: Uint8Array): void {
     if (this.ended || this.muted) return;
+    // Classic (hold only): no buyer audio reaches the model before the held opener.
+    if (this.heldOpener !== null) return;
     if (this.standbySince !== null) return this.listenOnStandby(bytes);
     if (this.waking) return this.holdWakeAudio(bytes);
     if (!this.conn || this.reconnecting) return;
@@ -649,7 +682,11 @@ export class ClassicVoiceEngine {
     this.setState("listening");
     // The agent speaks first: the chat's opener, in its voice.
     // A call that continues a chat starts with the short disclosure line instead (lib/voice/instructions.ts).
-    conn.requestResponse(ctx.openerPrompt);
+    // Classic (hold only): a held greeting waits for the page's `ready`.
+    if (this.limits.holdGreeting) {
+      this.heldOpener = ctx.openerPrompt;
+      this.timer("ready", this.limits.holdGreetingMs, () => this.heldOpenerNotReleased());
+    } else conn.requestResponse(ctx.openerPrompt);
   }
 
   private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {

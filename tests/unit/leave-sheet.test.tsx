@@ -96,6 +96,18 @@ describe("the voice bar and the form's tray", () => {
     expect(html).not.toMatch(/<b>|<h\d|left/);
   });
 
+  it("layout from CSS only: the short labels in the bar's own row above the controls (never inside the bubble), Speaker marks the bar", () => {
+    const html = bar({ ...base, secondsLeft: 45 });
+    // The note row comes first, holding the label; the bubble itself has no label inside it.
+    expect(html).toMatch(/^<div class="vb-bar"[^>]*><div class="vb-bar__note"><button type="button" class="vb-flash"/);
+    expect(/<div[^>]*data-voice-bubble=""[^>]*>.*data-bubble-note/.test(html)).toBe(false);
+    // The row is there with nothing in it too (its height is kept).
+    expect(bar(base)).toContain('<div class="vb-bar__note"></div>');
+    expect(bar({ ...base, outputs: [{ id: "a", label: "A" }, { id: "b", label: "B" }] })).toMatch(/^<div class="vb-bar vb-bar--speaker" role="toolbar"/);
+    // No inline sizes or positions: nothing measured in script.
+    expect(html).not.toMatch(/style="[^"]*(width|left|right|transform)/);
+  });
+
   it("the last minute: 1 min left above the bubble (the time left shows nowhere else)", () => {
     expect(bar({ ...base, secondsLeft: 45 })).toMatch(/class="vb-flash" dir="auto" data-bubble-note="last_minute">1 min left</);
     expect(bar({ ...base, secondsLeft: 61 })).not.toContain("data-bubble-note");

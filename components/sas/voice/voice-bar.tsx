@@ -6,10 +6,16 @@
  * button size (44 px circles).
  * A toolbar (arrow keys move between its controls). Mute turns dark while muted; Text switches the chat back to
  * text. The bubble has no pop-up here: a tap only wakes the agent from standby.
+ *
+ * Layout is CSS only (voice-bubble.css .vb-bar), nothing measured in script: the bar lays itself out at whatever
+ * width it has, also when it was first rendered in a hidden or off-screen container of another width (the lead page
+ * hand-over). Two rows: the short labels ("What you say appears as text…", "You are muted", …) in their own row,
+ * in normal flow above the controls, so they can never cover the bubble's rings; then the controls in equal slots
+ * with the bubble at the centre.
  */
 import type { KeyboardEvent } from "react";
 import { Icon } from "@/components/sas/icon";
-import { RoundControl, VoiceBubble } from "@/components/sas/voice/voice-bubble";
+import { BubbleFlash, RoundControl, VoiceBubble, useBubbleFlash } from "@/components/sas/voice/voice-bubble";
 import { bubbleView } from "@/lib/voice/client/bubble";
 import type { Tr } from "@/lib/voice/client/buyer-ui";
 import type { MirrorState, TabCommand } from "@/lib/voice/client/tab-link";
@@ -24,10 +30,12 @@ export function VoiceBar({ state, agentName, tr, dir, levels, onCommand, note = 
   onNoteDone?: () => void;
 }) {
   const view = bubbleView(state, tr, agentName);
+  const flash = useBubbleFlash({ state, view, tr, note, onNoteDone });
   const outputs = view.controls ? state.outputs : [];
   const current = outputs.findIndex((d) => d.id === state.output);
   const at = current < 0 ? 0 : current;
   const speakerName = (i: number) => outputs[i]?.label || tr("buyer.voice.bubble.speaker_n", { n: i + 1 });
+  const speaker = outputs.length >= 2;
   // Arrow keys move along the toolbar (in its reading direction); Home and End go to its ends.
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const items = [...e.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")].filter((b) => !b.closest("[data-bubble-note]") && !b.hasAttribute("data-bubble-note"));
@@ -41,27 +49,25 @@ export function VoiceBar({ state, agentName, tr, dir, levels, onCommand, note = 
     items[next].focus();
   };
   return (
-    <div className="vb-bar" role="toolbar" aria-label={tr("buyer.voice.bubble.menu")} dir={dir} onKeyDown={onKey} data-voice-bar="">
-      <span className="vb-bar__side vb-bar__side--start">
+    <div className={`vb-bar${speaker ? " vb-bar--speaker" : ""}`} role="toolbar" aria-label={tr("buyer.voice.bubble.menu")} dir={dir} onKeyDown={onKey} data-voice-bar="">
+      {/* The short labels' row: always there (its height is kept), so the bar never jumps when one shows. */}
+      <div className="vb-bar__note">{flash ? <BubbleFlash flash={flash} /> : null}</div>
       <RoundControl
         data="mute" on={state.muted} disabled={!view.controls} icon={<Icon name={state.muted ? "mic" : "mic-off"} />}
         label={tr(state.muted ? "buyer.voice.unmute" : "buyer.voice.mute")} onClick={() => onCommand({ cmd: state.muted ? "unmute" : "mute" })}
       />
-      {outputs.length >= 2 ? (
+      {speaker ? (
         // The speaker in use; a tap moves to the next one the browser offers.
         <RoundControl
           data="speaker" icon={<Icon name="volume" />} label={tr("buyer.voice.bubble.speaker")}
           name={`${tr("buyer.voice.bubble.speaker")}: ${speakerName(at)}`} onClick={() => onCommand({ cmd: "output", deviceId: outputs[(at + 1) % outputs.length].id })}
         />
       ) : null}
-      </span>
-      <VoiceBubble state={state} agentName={agentName} tr={tr} dir={dir} levels={levels} onCommand={onCommand} placement="bar" note={note} onNoteDone={onNoteDone} />
-      <span className="vb-bar__side vb-bar__side--end">
+      <VoiceBubble state={state} agentName={agentName} tr={tr} dir={dir} levels={levels} onCommand={onCommand} placement="bar" ownFlash={false} />
       <RoundControl
         data="text" disabled={state.phase === "ending"} icon={<Icon name="keyboard" />} label={tr("buyer.voice.bar.text")} name={tr("buyer.voice.to_text")}
         onClick={() => onCommand({ cmd: "end" })}
       />
-      </span>
     </div>
   );
 }

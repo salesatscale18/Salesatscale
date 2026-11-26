@@ -8,7 +8,7 @@ import { replyButtonsAfter } from "@/lib/agent/quote-replies";
 import { isQuoteMessageText } from "@/lib/agent/quote-message";
 import { QUOTE_CARD_WAIT_MS } from "@/lib/simulator/rules";
 import { translator, type Locale, type MessageKey } from "@/lib/i18n";
-import { VoiceClient } from "@/lib/voice/client/voice-client";
+import { VoiceClient, type CallFailReason, type VoiceCallEvents } from "@/lib/voice/client/voice-client";
 import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
 import { mirrorPhase } from "@/lib/voice/client/bubble";
 import { callClock } from "@/lib/voice/lab";
@@ -46,13 +46,116 @@ export type ChatSms = { stopUrl: string; stopped: boolean; fromSms: boolean; res
  * What a parent page may do with the chat (the lead page hand-over, /h/<token>, mounts the chat in the same
  * document): start the call inside the parent's own click (so the tap unlocks audio and the microphone prompt
  * comes from it), and focus the composer. `canCall`: the voice client exists (the chat is mounted with voice).
+ *
+ * startCall({ holdGreeting: true }) (the hand-over): synchronous in the tap, as without it; the call connects but the
+ * agent's opening line waits until releaseGreeting() (call it once the chat is on screen; idempotent). ChatClient's
+ * events (controls.onCallEvents) say when it is ready (onReady) or why it failed. Safety nets: the greeting goes 8 s after onReady when
+ * not released (lib/voice/client/voice-client.ts HOLD_RELEASE_MS); the relay ends a call whose greeting was not
+ * released within 15 s as not started (lib/voice/engine.ts VOICE_HOLD_GREETING_MS), which fires onFailed("connect_failed").
  */
 export type ChatControls = {
-  /** `holdGreeting` (the hand-over's readiness contract, app/h/[token]/call-ready.ts): honoured only once the call supports it. */
+  /** `holdGreeting` (the hand-over's readiness contract, app/h/[token]/call-ready.ts). */
   startCall(opts?: { holdGreeting?: boolean }): void;
   focusComposer(): void;
   canCall: boolean;
-} & Partial<HoldGreetingControls>;
+} & HoldGreetingControls;
+
+/**
+ * A call attempt's events for a parent page (the lead page hand-over keeps its "thinking" ring until onReady), see
+ * lib/voice/client/voice-client.ts VoiceCallEvents. onFailed fires at most once per attempt and never after onReady,
+ * except "connect_failed" when the call drops before the greeting was released. Reasons: "mic_denied" (blocked),
+ * "mic_unavailable" (no microphone), "gate_refused" (the server's gates refused the call: the chat's POST answered
+ * `unavailable`, or the relay refused it at a gate), "busy" (a call already running, or rate limited),
+ * "connect_failed" (the POST or the socket failed, the connection dropped, not ready in time, or the greeting was
+ * never released), "other".
+ */
+export type ChatCallEvents = VoiceCallEvents;
+export type { CallFailReason };
+
+/** The chat's POST that creates a call refused it (`reason`): the hand-over's failure reason. */
+export function startRefusal(reason: string | undefined): CallFailReason {
+  // The server's voice gates (a real buyer is not told which; a simulated chat or the seller's staff also get `gate`).
+  if (reason === "unavailable") return "gate_refused";
+  if (reason === "rate_limited" || reason === "already_in_call") return "busy";
+  return "other";
+}
+
+/** The events of one attempt, told to every subscriber (a copy of the set: one that unsubscribes while told is fine). */
+export function listenerEvents(listeners: Set<VoiceCallEvents>): VoiceCallEvents {
+  const each = (f: (l: VoiceCallEvents) => void) => {
+    for (const l of [...listeners]) {
+      try {
+        f(l);
+      } catch (e) {
+        console.error("[voice] call event listener failed", e);
+      }
+    }
+  };
+  return {
+    onMicGranted: () => each((l) => l.onMicGranted?.()),
+    onReady: () => each((l) => l.onReady?.()),
+    onFailed: (reason) => each((l) => l.onFailed?.(reason)),
+  };
+}
+
+/** The controls a parent page gets (ChatControls): `startCall` already goes through the parent's subscribers. */
+export function chatControls(o: {
+  startCall: (opts?: { holdGreeting?: boolean }) => void; client: () => VoiceClient | null; listeners: Set<VoiceCallEvents>; focusComposer: () => void;
+}): ChatControls {
+  return {
+    startCall: (opts) => o.startCall({ holdGreeting: !!opts?.holdGreeting }),
+    releaseGreeting: () => o.client()?.releaseGreeting(),
+    onCallEvents: (handlers) => {
+      const l: VoiceCallEvents = { ...handlers };
+      o.listeners.add(l);
+      return () => void o.listeners.delete(l);
+    },
+    focusComposer: o.focusComposer,
+    canCall: !!o.client(),
+  };
+}
+
+/**
+ * Starts a call on the chat's voice client: begin() synchronously (the AudioContext starts inside the tap; nothing is
+ * awaited before it), then the microphone, then the chat's POST (the server's gates and the ticket), then the socket.
+ * A refusal or a failed request is told to `events` (onFailed) before the attempt ends.
+ */
+export function startChatCall(c: VoiceClient, o: {
+  token: string; holdGreeting?: boolean; events?: VoiceCallEvents; onFirstNote?: (first: boolean) => void;
+  onGate?: (reason: NonNullable<BuyerVoiceState["reason"]>) => void; fetchImpl?: typeof fetch;
+}): void {
+  c.begin({ holdGreeting: !!o.holdGreeting, events: o.events });
+  const doFetch = o.fetchImpl ?? fetch;
+  void (async () => {
+    if (!(await c.prepare())) return;
+    let failed: CallFailReason = "other";
+    try {
+      const res = await doFetch(`/chat/${o.token}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const r = (await res.json().catch(() => ({}))) as {
+        ok?: boolean; reason?: string; gate?: BuyerVoiceState["reason"];
+        sessionId?: string; ticket?: string; wsUrl?: string; maxSec?: number; mode?: "scripted" | "live"; firstInConversation?: boolean;
+      };
+      if (r.ok && r.sessionId && r.ticket && r.wsUrl) {
+        o.onFirstNote?.(!!r.firstInConversation);
+        c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec ?? null, mode: r.mode ?? null });
+        return;
+      }
+      failed = startRefusal(r.reason);
+      if (r.gate) {
+        // A simulated chat or the seller's staff: the button turns disabled with the reason (the server said why).
+        c.failAttempt(failed);
+        c.cancel();
+        o.onGate?.(r.gate);
+        return;
+      }
+    } catch {
+      // The request itself failed (offline): shown as not available below.
+      failed = "connect_failed";
+    }
+    c.failAttempt(failed);
+    c.unavailable("error");
+  })();
+}
 
 /** A message on the page: from the server, or the buyer's own still on its way (pending). */
 type Shown = BuyerMessage & { pending?: "sending" | "confirmed" | "failed" };
@@ -343,46 +446,32 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     }
   };
 
+  // The parent's call-event subscribers (controls.onCallEvents); a call the parent starts reports to them.
+  const callListeners = useRef(new Set<VoiceCallEvents>());
   /**
    * Switches the chat to voice: audio unlocked in this tap, the microphone (the browser's own prompt), then the
    * server checks the gates and gives the ticket. No notice in between: it is the same conversation by voice.
+   * `parent`: started by the parent page's controls (its onCallEvents subscribers hear about this attempt); the chat's own buttons
+   * are not. `holdGreeting`: see ChatControls.
    */
-  const startCall = () => {
+  const startCall = (opts: { holdGreeting?: boolean; parent?: boolean } = {}) => {
     const c = clientRef.current;
     // A second tap before the page re-rendered (a double tap) must not restart the call being set up.
     if (!c || CALL_PHASES.has(c.getSnapshot().phase)) return;
     setBarHidden(false);
-    c.begin();
-    void (async () => {
-      if (!(await c.prepare())) return;
-      try {
-        const res = await fetch(`/chat/${token}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-        const r = (await res.json().catch(() => ({}))) as {
-          ok?: boolean; reason?: string; gate?: BuyerVoiceState["reason"];
-          sessionId?: string; ticket?: string; wsUrl?: string; maxSec?: number; mode?: "scripted" | "live"; firstInConversation?: boolean;
-        };
-        if (r.ok && r.sessionId && r.ticket && r.wsUrl) {
-          setFirstNote(!!r.firstInConversation);
-          c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec ?? null, mode: r.mode ?? null });
-          return;
-        }
-        if (r.gate) {
-          // A simulated chat or the seller's staff: the button turns disabled with the reason (the server said why).
-          c.cancel();
-          setVoiceState({ available: false, reason: r.gate });
-          return;
-        }
-      } catch {
-        // Shown as not available below.
-      }
-      c.unavailable("error");
-    })();
+    startChatCall(c, {
+      token, holdGreeting: !!opts.holdGreeting, events: opts.parent ? listenerEvents(callListeners.current) : undefined,
+      onFirstNote: setFirstNote, onGate: (reason) => setVoiceState({ available: false, reason }),
+    });
   };
   // A parent's controls call the latest startCall synchronously (no await, no timer, no state round-trip before it).
   const startCallRef = useRef(startCall);
   startCallRef.current = startCall;
   useEffect(() => {
-    controls?.({ startCall: () => startCallRef.current(), focusComposer: () => inputRef.current?.focus(), canCall: !!clientRef.current });
+    controls?.(chatControls({
+      startCall: (opts) => startCallRef.current({ ...opts, parent: true }), client: () => clientRef.current, listeners: callListeners.current,
+      focusComposer: () => inputRef.current?.focus(),
+    }));
   }, [controls]);
   // When a call ends: fetch its stored lines and the call row now, then let the bar go after a moment.
   useEffect(() => {
