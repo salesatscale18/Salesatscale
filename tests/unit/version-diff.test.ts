@@ -62,14 +62,14 @@ describe("diffVersions", () => {
     expect(diffVersions(version(base()), version(base()), opts)).toEqual([]);
   });
 
-  it("a limit change is one row in Limits with the old value struck and the new added", () => {
+  it("a limit change is one row in Limits with the old value struck and the new added; attempts sit in Objections (S1 move)", () => {
     const b = clone(base());
     b.maxDiscountBp = 800;
     b.objectionAttempts = 3;
     const rows = diffVersions(version(base()), version(b), opts);
     expect(rows.map((r) => [r.area, r.item, text(r.before), text(r.after)])).toEqual([
       ["limits", "Discount without approval", "5%", "8%"],
-      ["limits", "Attempts per objection", "2", "3"],
+      ["objections", "Attempts per objection", "2", "3"],
     ]);
   });
 
@@ -179,8 +179,8 @@ describe("diffVersions", () => {
     b.opener = { topics: [{ en: "a team plan" }] };
     const rows = diffVersions(version(a), version(b), opts);
     expect(rows.map((r) => [r.area, r.item, r.kind])).toEqual([
-      ["limits", "Never do · Rule 2", "added"],
       ["limits", "Approved exceptions", "changed"],
+      ["never", "Never do · Rule 2", "added"],
       ["agent", "Agent name", "changed"],
       ["opening", "Topic 1", "added"],
       ["opening", "Default", "added"],
@@ -228,7 +228,21 @@ describe("diffVersions", () => {
     const b = clone(base());
     b.maxDiscountBp = 800;
     b.goal = "Sell more.";
-    expect(areaCounts(diffVersions(version(base()), version(b), opts))).toEqual([{ area: "limits", count: 1 }, { area: "agent", count: 1 }]);
+    expect(areaCounts(diffVersions(version(base()), version(b), opts))).toEqual([{ area: "limits", count: 1 }, { area: "close", count: 1 }]);
+  });
+
+  it("S1 moves: who takes calls is in Agent, the goal and the ways to close in How a deal closes; the total is unchanged", () => {
+    const b = clone(base());
+    b.callRole = "our sales manager";
+    b.goal = "Sell more.";
+    b.outcomes = { ...b.outcomes, meeting: !b.outcomes.meeting };
+    const rows = diffVersions(version(base()), version(b), opts);
+    expect(rows.map((r) => [r.area, r.item])).toEqual([
+      ["agent", "Who takes calls"],
+      ["close", "Sales goal"],
+      ["close", "What the agent may offer · Book a meeting"],
+    ]);
+    expect(areaCounts(rows).reduce((n, x) => n + x.count, 0)).toBe(3);
   });
 });
 

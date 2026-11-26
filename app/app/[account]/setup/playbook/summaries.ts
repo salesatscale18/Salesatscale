@@ -1,0 +1,105 @@
+/**
+ * Playbook home and the part menu: one plain line per part, built from the
+ * SAVED draft values, and the gaps that can be computed today (no invented
+ * ones). Pure; unit-tested.
+ */
+import type { Playbook } from "@/db/schema";
+import { t, type MessageKey } from "@/lib/i18n";
+import { openerParts, readOpener } from "@/lib/agent/core/opener";
+import { agentGenderOf } from "@/lib/agent/core/names";
+import { questionBudgetOf } from "@/lib/agent/core/stage";
+import { objectionAttemptsOf } from "@/lib/agent/core/objections";
+import { unpaidRemindersOf, type PlaybookWithUnpaid } from "@/lib/orders/unpaid-reminders";
+import type { PlaybookPart } from "@/lib/agent/playbook-parts";
+import type { PlaysSummary } from "./plays/overview";
+
+export const PART_LABEL: Record<PlaybookPart, MessageKey> = {
+  agent: "playbook.part.agent", opening: "playbook.part.opening", asks: "playbook.part.asks", plays: "playbook.part.plays", objections: "playbook.part.objections",
+  close: "playbook.part.close", limits: "playbook.part.limits", never: "playbook.part.never", after: "playbook.part.after",
+};
+
+/** One line under the part's name in its view. */
+export const PART_SUB: Record<PlaybookPart, MessageKey> = {
+  agent: "playbook.part_sub.agent", opening: "playbook.opening.hint", asks: "playbook.fields_hint", plays: "playbook.plays.intro", objections: "playbook.objections_hint",
+  close: "playbook.part_sub.close", limits: "playbook.part_sub.limits", never: "playbook.part_sub.never", after: "playbook.part_sub.after",
+};
+
+export type PartLine = { summary: string; short: string };
+
+const count = (n: number, one: MessageKey, many: MessageKey, none?: MessageKey) => (n === 0 && none ? t(none) : t(n === 1 ? one : many, { n }));
+const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
+
+/** Chat questions: the ones the agent asks (order-form fields are filled in the order form). */
+export const chatQuestions = (p: Pick<Playbook, "fields">) => p.fields.filter((f) => f.stage !== "before_order_form");
+
+/** The ways a deal can close, as one line ("Order form with card or bank transfer · or a booked call"). */
+export function closeLine(o: Playbook["outcomes"]): string {
+  const pay = o.orderForm && o.bankTransfer ? "playbook.sum.close_card_bank" : o.orderForm ? "playbook.sum.close_card" : o.bankTransfer ? "playbook.sum.close_bank" : null;
+  if (!pay && !o.meeting) return t("playbook.sum.close_none");
+  if (!pay) return t("playbook.sum.close_call_only");
+  return o.meeting ? `${t(pay)} · ${t("playbook.sum.close_or_call")}` : t(pay);
+}
+
+/** "Reminders after 2 and 5 days · tells your team after 7". */
+export function afterLine(p: Playbook): { summary: string; short: string } {
+  const u = unpaidRemindersOf(p as PlaybookWithUnpaid);
+  const on = [u.first, u.second].filter((s) => s.on).map((s) => s.days);
+  const reminders = on.length === 2 ? t("playbook.sum.after_two", { a: on[0], b: on[1] }) : on.length === 1 ? t(on[0] === 1 ? "playbook.sum.after_one_day" : "playbook.sum.after_one", { a: on[0] }) : t("playbook.sum.after_none");
+  const team = u.team.on ? t(u.team.days === 1 ? "playbook.sum.after_team_day" : "playbook.sum.after_team", { c: u.team.days }) : t("playbook.sum.after_team_off");
+  const step = (s: { on: boolean; days: number }) => (s.on ? String(s.days) : t("playbook.unpaid.off"));
+  return { summary: `${reminders} · ${team}`, short: t("playbook.sum.after_short", { a: step(u.first), b: step(u.second), c: step(u.team) }) };
+}
+
+/** The part lines for home (summary) and the part menu (short). */
+export function partLines(p: Playbook, ctx: { plays: PlaysSummary }): Record<PlaybookPart, PartLine> {
+  const gender = agentGenderOf(p);
+  const tone = oneLine(p.tone);
+  const o = readOpener(p.opener);
+  const opener = o.topics.length || o.question
+    ? (() => { const parts = openerParts({ name: "", agent: "", company: "", language: "en", opener: p.opener }); return t("playbook.sum.quote", { text: `${parts.interest} ${parts.question}` }); })()
+    : t("playbook.sum.opening_none");
+  const asks = chatQuestions(p).length;
+  const objections = p.objections.length;
+  const ways = [p.outcomes.orderForm, p.outcomes.bankTransfer, p.outcomes.meeting].filter(Boolean).length;
+  const pct = p.maxDiscountBp / 100;
+  const handOff = oneLine(p.handOffWhen);
+  return {
+    agent: { summary: [p.agentName, t(`playbook.sum.speaks.${gender}` as MessageKey), tone].filter(Boolean).join(" · "), short: p.agentName },
+    opening: { summary: opener, short: count(o.topics.length, "playbook.sum.topics_one", "playbook.sum.topics", "playbook.sum.topics_none") },
+    asks: {
+      summary: `${count(asks, "playbook.sum.questions_one", "playbook.sum.questions", "playbook.sum.questions_none")} · ${t("playbook.sum.recommends_after", { n: questionBudgetOf(p) })}`,
+      short: count(asks, "playbook.sum.questions_one", "playbook.sum.questions", "playbook.sum.questions_none"),
+    },
+    plays: { summary: t("playbook.sum.plays", { total: ctx.plays.total, n: ctx.plays.withFacts }), short: t("playbook.sum.plays_short", { total: ctx.plays.total }) },
+    objections: {
+      summary: `${count(objections, "playbook.sum.objections_one", "playbook.sum.objections", "playbook.sum.objections_none")} · ${t(objectionAttemptsOf(p) === 1 ? "playbook.sum.attempts_one" : "playbook.sum.attempts", { n: objectionAttemptsOf(p) })}`,
+      short: count(objections, "playbook.sum.objections_one", "playbook.sum.objections", "playbook.sum.objections_none"),
+    },
+    close: { summary: closeLine(p.outcomes), short: count(ways, "playbook.sum.ways_one", "playbook.sum.ways", "playbook.sum.ways_none") },
+    limits: {
+      summary: handOff ? `${t("playbook.sum.discount", { pct })} · ${t("playbook.sum.hands_over", { text: handOff })}` : t("playbook.sum.discount", { pct }),
+      short: t("playbook.sum.discount_short", { pct }),
+    },
+    never: { summary: count(p.neverDo.length, "playbook.sum.rules_one", "playbook.sum.rules", "playbook.sum.rules_none"), short: count(p.neverDo.length, "playbook.sum.rules_one", "playbook.sum.rules", "playbook.sum.rules_none") },
+    after: afterLine(p),
+  };
+}
+
+/** A gap worth a look: computable from today's data only. `part` null: it lives outside the playbook (Knowledge). */
+export type GapNote = { id: string; part: PlaybookPart | null; text: string; link: string; href: string };
+
+/**
+ * The gaps shown on home ("Worth a look"): an opening without its question,
+ * chat questions without an example, plays that ask for the seller's facts and
+ * have none, and buyer questions the agent could not answer (Knowledge).
+ */
+export function gapNotes(p: Playbook, ctx: { plays: PlaysSummary; unanswered: number; href: { part: (part: PlaybookPart) => string; playsNeeds: string; questions: string } }): GapNote[] {
+  const out: GapNote[] = [];
+  const o = readOpener(p.opener);
+  if (!o.question) out.push({ id: "opening_question", part: "opening", text: t("playbook.gap.opening_question"), link: t("playbook.gap.add_one"), href: ctx.href.part("opening") });
+  const noExample = chatQuestions(p).filter((f) => !f.example?.trim()).length;
+  if (noExample) out.push({ id: "examples", part: "asks", text: t(noExample === 1 ? "playbook.gap.examples_one" : "playbook.gap.examples", { n: noExample }), link: t("playbook.gap.add_examples"), href: ctx.href.part("asks") });
+  if (ctx.plays.sharper) out.push({ id: "plays", part: "plays", text: t(ctx.plays.sharper === 1 ? "playbook.gap.plays_one" : "playbook.gap.plays", { n: ctx.plays.sharper }), link: t("playbook.gap.add_facts"), href: ctx.href.playsNeeds });
+  if (ctx.unanswered) out.push({ id: "questions", part: null, text: t(ctx.unanswered === 1 ? "playbook.gap.questions_one" : "playbook.gap.questions", { n: ctx.unanswered }), link: t("playbook.gap.answer_them"), href: ctx.href.questions });
+  return out;
+}

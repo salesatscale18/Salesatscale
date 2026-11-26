@@ -313,7 +313,7 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
             ) : limit && decided ? (
               preview?.kind === "setting" && preview.setting === "custom_pricing"
                 ? <a className="sas-small" href={`/app/${slug}/setup/price-lists`} data-limit-lives="price_list">{t("draft.limit.change_in_price_list", { name: preview.listName ?? "" })}</a>
-                : <a className="sas-small" href={`/app/${slug}/setup/playbook#pb-lim-h`} data-limit-lives="playbook">{t("draft.limit.change_in_playbook")}</a>
+                : <a className="sas-small" href={`/app/${slug}/setup/playbook/limits`} data-limit-lives="playbook">{t("draft.limit.change_in_playbook")}</a>
             ) : (
               <>
                 {s.status !== "rejected" ? <a className={buttonClass("ghost", "sm")} href={editHref} aria-label={`${t("draft.edit")}: ${title.slice(0, 60)}`}>{t("draft.edit")}</a> : null}

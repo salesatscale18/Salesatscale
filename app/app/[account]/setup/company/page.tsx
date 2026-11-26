@@ -171,7 +171,7 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                 <span style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
                   <strong>{playbook.agentName}</strong>
                   {heAgent ? <bdi lang="he" dir="rtl">{heAgent}</bdi> : null}
-                  <a href={`${base}/setup/playbook`}>{t("company.agent_edit")}</a>
+                  <a href={`${base}/setup/playbook/agent`}>{t("company.agent_edit")}</a>
                 </span>
               </div>
               {/* The opening message a lead gets now (R4 A5): the same text the agent sends, with a sample lead name. */}
@@ -185,7 +185,7 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                     <OpenerWithCompany text={o.text} company={o.company} />
                   </div>
                 ))}
-                <span className="sas-small">{t("company.agent_opener_hint")} <a href={`${base}/setup/playbook#pb-opener-h-s`}>{t("company.agent_opener_edit")}</a></span>
+                <span className="sas-small">{t("company.agent_opener_hint")} <a href={`${base}/setup/playbook/opening`}>{t("company.agent_opener_edit")}</a></span>
               </div>
               <PlatformFixed>{t("company.agent_disclosure")}</PlatformFixed>
             </div>

@@ -413,36 +413,50 @@ test("B3 Knowledge", async () => {
 
 test("B4 Playbook", async () => {
   need(S.appBase);
-  await page.goto(`${S.appBase}/setup/playbook`);
-  await expect(page.locator("#pb-agentName")).toHaveValue(`${SELLER} assistant`);
-  // An empty label shows an error on that row (a row left fully empty is dropped on save, by design).
+  // Agent: read first; the name row opens on Change.
+  await page.goto(`${S.appBase}/setup/playbook/agent`);
+  await expect(page.locator('[data-row="name"] strong')).toHaveText(`${SELLER} assistant`);
+  // What it asks: an empty label shows an error on that row (a row left fully empty is dropped on save, by design).
+  await page.goto(`${S.appBase}/setup/playbook/asks`);
   await page.getByRole("button", { name: "Add question" }).click();
   const rows = page.locator('input[id^="pb-field."][id$=".label"]');
   const n = await rows.count();
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("How many fridges do you have?");
-  await page.getByRole("button", { name: "Save to draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).click();
   await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toHaveText("Give this field a name, or remove the row.");
   // A duplicate label shows an error on that row.
   const first = await page.locator('[id="pb-field.0.label"]').inputValue();
   await page.locator(`[id="pb-field.${n - 1}.label"]`).fill(first);
-  await page.getByRole("button", { name: "Save to draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).click();
   await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toContainText("appears twice");
-  // Then a valid row. The agent name is typed after the refused saves (see "B4 Edits survive a refused save").
-  await page.locator("#pb-agentName").fill("Maya");
+  // Then a valid row.
   await page.locator(`[id="pb-field.${n - 1}.label"]`).fill("Number of fridges");
   await page.locator(`[id="pb-field.${n - 1}.stage"]`).selectOption({ label: "Needed for the quote" });
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("How many fridges do you have?");
-  await page.getByRole("button", { name: "Add objection" }).click();
-  const o = (await page.locator('input[id^="pb-objection."][id$=".objection"]').count()) - 1;
-  await page.locator(`[id="pb-objection.${o}.objection"]`).fill("It is too expensive");
-  await page.locator(`[id="pb-objection.${o}.answer"]`).fill("One spoiled fridge costs more than a year of monitoring.");
-  await page.locator("#pb-maxDiscount").fill("10");
-  await page.getByRole("button", { name: "Save to draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).click();
   await expect(page.getByText(/^Draft saved/)).toBeVisible();
   // Rows keep their order.
   await page.reload();
   await expect(page.locator(`[id="pb-field.${n - 1}.label"]`)).toHaveValue("Number of fridges");
-  await expect(page.locator("#pb-agentName")).toHaveValue("Maya");
+  // Objections.
+  await page.goto(`${S.appBase}/setup/playbook/objections`);
+  await page.getByRole("button", { name: "Add objection" }).click();
+  const o = (await page.locator('input[id^="pb-objection."][id$=".objection"]').count()) - 1;
+  await page.locator(`[id="pb-objection.${o}.objection"]`).fill("It is too expensive");
+  await page.locator(`[id="pb-objection.${o}.answer"]`).fill("One spoiled fridge costs more than a year of monitoring.");
+  await page.getByRole("button", { name: "Save to draft" }).click();
+  await expect(page.getByText(/^Draft saved/)).toBeVisible();
+  // Limits and Agent: one row each.
+  await page.goto(`${S.appBase}/setup/playbook/limits`);
+  await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Change", exact: true }).click();
+  await page.locator("#pb-maxDiscount").fill("10");
+  await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator('[data-max-discount="10"]')).toBeVisible();
+  await page.goto(`${S.appBase}/setup/playbook/agent`);
+  await page.locator('[data-row="name"]').getByRole("button", { name: "Change", exact: true }).click();
+  await page.locator("#pb-agentName").fill("Maya");
+  await page.locator('[data-row="name"]').getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator('[data-row="name"] strong')).toHaveText("Maya");
   // Setup → Company shows the agent preview with the new name.
   await page.goto(`${S.appBase}/setup/company`);
   // Round 4 (A5): Company shows the real opener, built like the agent's, with "automated assistant".
@@ -450,16 +464,21 @@ test("B4 Playbook", async () => {
 });
 
 test("B4 Edits survive a refused save", async () => {
-  // Fixed (Lane F): a refused save returns the submitted values, which the inputs show again.
+  // A refused save keeps what was typed: a part's editor shows the submitted values, a row stays open with its value.
   need(S.appBase);
-  await page.goto(`${S.appBase}/setup/playbook`);
-  await page.locator("#pb-agentName").fill("Noa");
+  await page.goto(`${S.appBase}/setup/playbook/asks`);
   await page.getByRole("button", { name: "Add question" }).click();
   const n = await page.locator('input[id^="pb-field."][id$=".label"]').count();
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("Only an example");
-  await page.getByRole("button", { name: "Save to draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).click();
   await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toBeVisible();
-  await expect(page.locator("#pb-agentName")).toHaveValue("Noa", { timeout: 5000 });
+  await expect(page.locator(`[id="pb-field.${n - 1}.example"]`)).toHaveValue("Only an example", { timeout: 5000 });
+  await page.goto(`${S.appBase}/setup/playbook/agent`);
+  await page.locator('[data-row="name"]').getByRole("button", { name: "Change", exact: true }).click();
+  await page.locator("#pb-agentName").fill("");
+  await page.locator('[data-row="name"]').getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator("#pb-agentName-error")).toBeVisible();
+  await expect(page.locator("#pb-agentName")).toHaveValue("");
 });
 
 test("B5 Publish the agent version", async () => {

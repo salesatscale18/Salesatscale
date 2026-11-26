@@ -1,14 +1,11 @@
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
-import { SetupSteps } from "@/components/sas/nav";
-import { setupProgress } from "@/lib/overview/setup";
-import { appDb, requireAccount } from "@/lib/auth/account";
-import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
-import { pendingPlaySuggestions } from "@/lib/pipeline/service";
+import { requireAccount } from "@/lib/auth/account";
 import { t, type MessageKey } from "@/lib/i18n";
-import { PlaybookToc } from "../toc";
-import { DraftBanner, PlatformFixed } from "../parts";
-import { filterPlays, PLAY_FILTERS, playCounts, playsOverview, type PlayFilter, type PlayOverview } from "./overview";
+import { PlatformFixed } from "../parts";
+import { loadPlaybook } from "../data";
+import { PartShell } from "../shell";
+import { filterPlays, PLAY_FILTERS, playCounts, type PlayFilter, type PlayOverview } from "./overview";
 import { PlayStatus, SuggestedTag } from "./parts";
 
 const FILTER_LABEL: Record<PlayFilter, MessageKey> = {
@@ -45,46 +42,22 @@ function FactsLine({ p }: { p: PlayOverview }) {
   }
 }
 
-/** Setup · Playbook › Sales plays (canvas: PlaybookPlays): the 19 plays as cards, with filters. */
+/** Setup · Playbook › Sales plays (canvas: PlaybookPlays): the 19 plays as cards, with filters, in the part shell. */
 export default async function PlaysPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
-  const [draft, live, progress, pending] = await Promise.all([
-    ensureDraftVersion(appDb, account.id), liveVersion(appDb, account.id), setupProgress(appDb, account), pendingPlaySuggestions(appDb, account.id),
-  ]);
-  const base = `/app/${account.slug}`;
-  const playbookHref = `${base}/setup/playbook`;
-  const here = `${playbookHref}/plays`;
+  const access = await requireAccount(slug);
+  const data = await loadPlaybook(access);
+  const here = data.hrefs.plays;
   const raw = Array.isArray(sp.filter) ? sp.filter[0] : sp.filter;
   const filter: PlayFilter = (PLAY_FILTERS as readonly string[]).includes(raw ?? "") ? (raw as PlayFilter) : "all";
-  const plays = playsOverview(draft.playbook, pending);
+  const plays = data.plays;
   const counts = playCounts(plays);
   const shown = filterPlays(plays, filter);
+  const saved = sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.play.saved")}</span></div> : null;
   return (
-    <>
-    <DraftBanner draft={draft.version} live={live?.version ?? null} />
-    <main className="sas-shell__content">
-      <header className="sas-stack-2">
-        <div className="sas-page-head">
-          <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 260px" }}>
-            <h1 className="sas-title">{t("playbook.title")}</h1>
-            <span className="sas-small">{live ? t("playbook.sub", { version: draft.version, live: live.version }) : t("playbook.sub_none", { version: draft.version })}</span>
-          </div>
-          <div className="sas-page-head__actions">
-            <a className={buttonClass("secondary")} href={`${base}/setup/test-lab`}><Icon name="flask-conical" />{t("playbook.test_in_lab")}</a>
-          </div>
-        </div>
-        <SetupSteps basePath={base} current="playbook" completed={progress} />
-      </header>
-      {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.play.saved")}</span></div> : null}
-      <div className="pb-layout">
-        <PlaybookToc playbookHref={playbookHref} playsHref={here} current="plays" />
-        <section aria-labelledby="pl-h" className="sas-stack-4 pb-main">
-          <div className="sas-stack-2" style={{ gap: 2 }}>
-            <h2 id="pl-h" className="sas-heading">{t("playbook.plays")}</h2>
-            <span className="sas-small">{t("playbook.plays.intro")}</span>
-          </div>
+    <PartShell data={data} part="plays" notice={saved}>
+      <div className="sas-stack-4 pb-part__body">
           <nav aria-label={t("playbook.plays.filter")} className="sas-views pb-filters">
             {PLAY_FILTERS.map((f) => (
               <a key={f} className="sas-view" href={f === "all" ? here : `${here}?filter=${f}`} aria-current={f === filter ? "page" : undefined}>
@@ -117,9 +90,7 @@ export default async function PlaysPage({ params, searchParams }: { params: Prom
             </ul>
           )}
           <PlatformFixed>{t("playbook.plays.core_rules")}</PlatformFixed>
-        </section>
       </div>
-    </main>
-    </>
+    </PartShell>
   );
 }

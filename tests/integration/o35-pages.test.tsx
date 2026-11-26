@@ -41,7 +41,7 @@ const { HUMAN_HANDOFF_REASON, OPEN_QUESTIONS, STATE_LEADS } = await import("@/li
 const { ensureDraftVersion } = await import("@/lib/agent/service");
 const { savePlaybookForm } = await import("@/lib/agent/playbook-save");
 const { answerQuestion } = await import("@/lib/agent/service");
-const { default: PlaybookPage } = await import("@/app/app/[account]/setup/playbook/page");
+const { default: PartPage } = await import("@/app/app/[account]/setup/playbook/[part]/page");
 const { default: PlaysPage } = await import("@/app/app/[account]/setup/playbook/plays/page");
 const { default: PlayPage } = await import("@/app/app/[account]/setup/playbook/plays/[play]/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
@@ -87,26 +87,28 @@ describe("O35 pages on the demo account", () => {
   }, 120_000);
   afterAll(async () => { await tdb.close(); });
 
-  it("Playbook: the Attempts per objection stepper renders at 2, saves, and refuses outside 1..3", async () => {
-    const html = await render(PlaybookPage, { account: slug });
+  it("Playbook › Objections: the Attempts per objection stepper renders at 2, saves, and refuses outside 1..3", async () => {
+    const objections = { account: slug, part: "objections" };
+    const html = await render(PartPage, objections);
     save("playbook", html);
     expect(html).toContain('data-testid="attempts-stepper"');
     expect(text(html)).toContain("Attempts per objection");
     expect(html).toContain('name="objectionAttempts" value="2"');
     expect(html).toContain('aria-label="Fewer attempts"');
-    // It sits right after the question budget.
-    expect(html.indexOf('data-testid="objection-attempts"')).toBeGreaterThan(html.indexOf('data-testid="question-budget"'));
+    // It moved to Objections (UX, 25 Nov): first in the part, before the objections; What it asks no longer has it.
+    expect(html.indexOf('data-testid="objection-attempts"')).toBeLessThan(html.indexOf('data-testid="objection-row"'));
+    expect(await render(PartPage, { account: slug, part: "asks" })).not.toContain('data-testid="objection-attempts"');
     expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "3"]]))).toEqual({ ok: true });
     expect((await ensureDraftVersion(db, account.id)).playbook.objectionAttempts).toBe(3);
-    expect(await render(PlaybookPage, { account: slug })).toContain('name="objectionAttempts" value="3"');
+    expect(await render(PartPage, objections)).toContain('name="objectionAttempts" value="3"');
     // At the maximum the + is off.
-    expect(await render(PlaybookPage, { account: slug })).toMatch(/aria-label="More attempts"|disabled="" aria-label="More attempts"/);
+    expect(await render(PartPage, objections)).toMatch(/aria-label="More attempts"|disabled="" aria-label="More attempts"/);
     expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "4"]]))).toMatchObject({ ok: false, errors: { objectionAttempts: "Choose a number from 1 to 3." } });
     expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "0"]]))).toMatchObject({ ok: false, errors: { objectionAttempts: "Choose a number from 1 to 3." } });
     // A form without it keeps the stored value.
     expect(await savePlaybookForm(db, account.id, form())).toEqual({ ok: true });
     expect((await ensureDraftVersion(db, account.id)).playbook.objectionAttempts).toBe(3);
-    const at3 = await render(PlaybookPage, { account: slug });
+    const at3 = await render(PartPage, objections);
     expect(at3).toMatch(/<button type="button" disabled="" aria-label="More attempts">/);
   });
 

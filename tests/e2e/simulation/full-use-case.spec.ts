@@ -189,10 +189,11 @@ test("3. Company, knowledge, playbook and agent version", async () => {
   await expect(page.getByText("Fact added. The agent can use it now.")).toBeVisible();
   await expect(page.getByText("Sensors have a 24-month warranty.")).toBeVisible();
 
-  await page.goto(`${appBase}/setup/playbook`);
+  await page.goto(`${appBase}/setup/playbook/limits`);
+  await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Change", exact: true }).click();
   await page.locator("#pb-maxDiscount").fill("10");
-  await page.getByRole("button", { name: "Save to draft" }).first().click();
-  await expect(page.getByText(/Draft saved/)).toBeVisible();
+  await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator('[data-max-discount="10"]')).toBeVisible();
 
   await page.goto(`${appBase}/setup/test-lab`);
   await page.getByRole("button", { name: /^Publish draft v\d+$/ }).click();

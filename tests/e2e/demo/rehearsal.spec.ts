@@ -507,14 +507,20 @@ step("D2 Playbook draft: accept, approve limits, save", async () => {
 }, () => [S.appBase, S.done["D1 Knowledge: resolve contradictions, approve all"] ? "ok" : ""]);
 
 step("D3 Playbook: agent name and discount limit", async () => {
-  await page.goto(`${S.appBase}/setup/playbook`);
-  note("playbook.discountBefore", await page.locator("#pb-maxDiscount").inputValue());
-  await page.locator("#pb-agentName").fill("Maya");
+  // Playbook parts: read first, one row changed at a time (each row saves on its own).
+  await page.goto(`${S.appBase}/setup/playbook/limits`);
+  note("playbook.discountBefore", (await page.locator("[data-max-discount]").getAttribute("data-max-discount")) ?? "");
+  await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Change", exact: true }).click();
   await page.locator("#pb-maxDiscount").fill("5");
-  await page.getByRole("button", { name: "Save to draft" }).first().click();
-  await expect(page.getByText(/^Draft saved/)).toBeVisible();
+  await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator('[data-max-discount="5"]')).toBeVisible();
+  await page.goto(`${S.appBase}/setup/playbook/agent`);
+  await page.locator('[data-row="name"]').getByRole("button", { name: "Change", exact: true }).click();
+  await page.locator("#pb-agentName").fill("Maya");
+  await page.locator('[data-row="name"]').getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator('[data-row="name"] strong')).toHaveText("Maya");
   await page.reload();
-  await expect(page.locator("#pb-agentName")).toHaveValue("Maya");
+  await expect(page.locator('[data-row="name"] strong')).toHaveText("Maya");
   await shot("D3-playbook");
 }, () => [S.appBase, S.done["D2 Playbook draft: accept, approve limits, save"] ? "ok" : ""]);
 
