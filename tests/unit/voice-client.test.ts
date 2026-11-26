@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { FRAME_SAMPLES, FrameChunker, LinearResampler, floatToPcm16, levelOf, pcm16ToFloat, rmsOf } from "@/lib/voice/client/audio";
-import { PlaybackSchedule } from "@/lib/voice/client/playback";
+import { GREETING_LEAD_IN_MS, PlaybackSchedule, elementReached } from "@/lib/voice/client/playback";
 import { outputChoices, playbackRoute } from "@/lib/voice/client/output";
 import { EnergyVad, PcmRing, rms } from "@/lib/voice/vad";
 import { CALL_RULES } from "@/lib/voice/call-rules";
@@ -87,6 +87,50 @@ describe("playback schedule", () => {
     p.flush();
     expect(p.isPlaying(11.06)).toBe(false);
     expect(p.place(11.06, 0.1)).toBeCloseTo(11.11);
+  });
+
+  it("lead-in: a call's first chunk starts >= 300 ms after the output was confirmed running and after it arrived, silence in front; later chunks unaffected", () => {
+    expect(GREETING_LEAD_IN_MS).toBe(300);
+    const p = new PlaybackSchedule(0.05);
+    p.newCall();
+    // The `ready` check confirmed the output at 5.0; the first agent chunk arrives 120 ms later (fake clock, seconds).
+    p.outputRunning(5);
+    const first = p.placeChunk(5.12, 0.2);
+    expect(first.start).toBeCloseTo(5.42);
+    expect(first.start - 5).toBeGreaterThanOrEqual(0.3);
+    expect(first.leadIn).toEqual({ from: 5.12, sec: expect.closeTo(0.3, 6) });
+    // A chunk arriving during the lead-in queues right after the first: no second lead-in, no gap.
+    const second = p.placeChunk(5.2, 0.2);
+    expect(second).toEqual({ start: expect.closeTo(5.62, 6), leadIn: null });
+    // An underrun later: the normal 50 ms lead, not the lead-in.
+    expect(p.placeChunk(9, 0.1)).toEqual({ start: expect.closeTo(9.05, 6), leadIn: null });
+    // A barge-in flush does not bring the lead-in back within the call.
+    p.flush();
+    expect(p.placeChunk(9.5, 0.1).leadIn).toBeNull();
+    // The next call: its first chunk gets the lead-in again; with the output confirmed long before, 300 ms after arrival.
+    p.newCall();
+    p.outputRunning(20);
+    const next = p.placeChunk(31, 0.1);
+    expect(next.start).toBeCloseTo(31.3);
+    expect(next.leadIn!.sec).toBeCloseTo(0.3);
+    // Output confirmed just now (after the chunk's clock reading): still 300 ms after that.
+    p.newCall();
+    p.outputRunning(40.1);
+    expect(p.placeChunk(40, 0.1).start).toBeCloseTo(40.4);
+    // Never confirmed (no `ready` check): 300 ms after arrival.
+    p.newCall();
+    expect(p.placeChunk(50, 0.1).start).toBeCloseTo(50.3);
+  });
+
+  it("the element's own time decides when the first audio played (currentTime advanced as far as the context had to go)", () => {
+    const mark = { ctxTime: 10, elTime: 4 };
+    // Scheduled 0.35 s ahead: the element must have played 0.35 s since the mark.
+    expect(elementReached(mark, 4.2, 10.35)).toBe(false);
+    expect(elementReached(mark, 4.345, 10.35)).toBe(true);
+    // A stalled element (time stands still) never counts, even past the start.
+    expect(elementReached(mark, 4, 10)).toBe(false);
+    expect(elementReached({ ctxTime: 10, elTime: null }, 5, 10.1)).toBe(false);
+    expect(elementReached(mark, null, 10.1)).toBe(false);
   });
 });
 

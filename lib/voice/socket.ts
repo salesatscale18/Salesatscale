@@ -160,6 +160,22 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
   /** A call where ElevenLabs speaks: stores what its speech used, once the engine has stored the call. */
   let storeSpeech: (() => Promise<void>) | null = null;
   let early: ClientMessage[] = [];
+  /**
+   * A held greeting (auth `holdGreeting`, the lead page hand-over): since when (the auth frame) and when the page's
+   * `ready` released it; logged once the call is accepted ("greeting held: …", then "greeting released after …").
+   */
+  let hold: { since: number; releasedAt: number | null; accepted: boolean; logged: boolean } | null = null;
+  const logRelease = () => {
+    if (!hold || hold.logged || !hold.accepted || hold.releasedAt === null) return;
+    hold.logged = true;
+    log.info(voiceLine(sessionId, `greeting released after ${Math.max(0, Math.round(hold.releasedAt - hold.since))}ms held`));
+  };
+  /** A `ready` from the page: with a hold, that is the release (the first one counts). */
+  const noteReady = (msg: ClientMessage) => {
+    if (msg.t !== "ready" || !hold || hold.releasedAt !== null) return;
+    hold.releasedAt = clock.now();
+    logRelease();
+  };
   let lastSeen = clock.now();
   let audioBudget = { at: clock.now(), tokens: MAX_CLIENT_AUDIO_BYTES * MAX_AUDIO_RATE };
   const timers: { auth: TimerHandle | null; ping: TimerHandle | null; hard: TimerHandle | null } = { auth: null, ping: null, hard: null };
@@ -326,6 +342,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     timers.auth = null;
     const auth = parseAuthMessage(raw);
     if (!auth) return refuse("ticket_invalid");
+    if (auth.holdGreeting) hold = { since: clock.now(), releasedAt: null, accepted: false, logged: false };
     const session = await redeemVoiceTicket(opts.db, auth.sessionId, auth.ticket, new Date(clock.now()));
     if (isClosed()) {
       if (session) await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()));
@@ -403,6 +420,13 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     sessionId = session.id;
     // A scripted stand-in also names the version's model it stands in for.
     log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId}${session.model && session.model !== model.modelId ? ` for=${session.model}` : ""} maxSec=${maxSec}${session.isTest ? " test" : ""}${speaker ? " speech=elevenlabs" : ""}`));
+    // Once per call: whether the page holds the greeting until it shows the chat (the hand-over), and if it was
+    // already released (a `ready` that came while the ticket was checked), how long it was held.
+    log.info(voiceLine(session.id, hold ? "greeting held: yes (hand-over)" : "greeting held: no"));
+    if (hold) {
+      hold.accepted = true;
+      logRelease();
+    }
     sendJson({ t: "call", maxSec, mode: model.mode });
     const deps = {
       db: opts.db, model, sessionId: session.id, clock, log, onEnding: keepAlive,
@@ -477,6 +501,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       const text = toText(data, false);
       const msg = text === null ? null : parseClientMessage(text);
       if (!msg) return; // unknown frames are ignored
+      noteReady(msg);
       if (phase === "checking" || !engine) {
         if (early.length < MAX_EARLY_MESSAGES) early.push(msg);
         return;

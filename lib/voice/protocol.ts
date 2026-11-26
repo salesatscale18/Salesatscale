@@ -43,9 +43,12 @@ export type ClientMessage =
   | ({ t: "ready" } & ReadyDiagnostics)
   /**
    * The first agent audio of the call actually started playing in the browser (once per call; log only):
-   * `sinceFirstChunkMs` from its arrival to then, `queuedMs` how far ahead it was scheduled when it arrived.
+   * `sinceFirstChunkMs` from its arrival to then, `queuedMs` how far ahead it was scheduled when it arrived,
+   * `leadInMs` the silence played in front of it (lib/voice/client/playback.ts GREETING_LEAD_IN_MS), `afterReleaseMs`
+   * from the page's releaseGreeting() (the hand-over's chat on screen) to then; absent without a release (or from an
+   * older page).
    */
-  | { t: "heard"; sinceFirstChunkMs: number; queuedMs: number }
+  | { t: "heard"; sinceFirstChunkMs: number; queuedMs: number; leadInMs?: number; afterReleaseMs?: number }
   /**
    * The order form open in another tab of the buyer's browser (relayed by the chat tab): which step it shows.
    * `step` is a fixed id, `label` the step's name as the page shows it; never what the buyer typed.
@@ -69,6 +72,11 @@ export type ReadyDiagnostics = {
   steps?: Record<ReadyStep, number | null>;
   /** The first step that had not happened by the cap (`ready` went anyway). */
   timedOut?: ReadyStep;
+  /**
+   * The <audio> element route only: whether the element's currentTime advanced (it really plays) by the end of the
+   * check; "no": it did not within the cap, and `ready` went anyway.
+   */
+  outAdvance?: "yes" | "no";
   /** AudioContext.baseLatency / outputLatency, where the browser has them. */
   baseLatencyMs?: number;
   outputLatencyMs?: number;
@@ -90,6 +98,7 @@ function parseReady(o: Record<string, unknown>): ClientMessage {
     out.steps = { mic: diagMs(s.mic) ?? null, ctx: diagMs(s.ctx) ?? null, out: diagMs(s.out) ?? null, primer: diagMs(s.primer) ?? null };
   }
   if ((READY_STEPS as readonly unknown[]).includes(o.timedOut)) out.timedOut = o.timedOut as ReadyStep;
+  if (o.outAdvance === "yes" || o.outAdvance === "no") out.outAdvance = o.outAdvance;
   const base = diagMs(o.baseLatencyMs);
   if (base !== undefined) out.baseLatencyMs = base;
   const output = diagMs(o.outputLatencyMs);
@@ -121,7 +130,13 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     case "heard": {
       const since = diagMs(o.sinceFirstChunkMs);
       const queued = diagMs(o.queuedMs);
-      return since === undefined || queued === undefined ? null : { t: "heard", sinceFirstChunkMs: since, queuedMs: queued };
+      if (since === undefined || queued === undefined) return null;
+      const leadIn = diagMs(o.leadInMs);
+      const afterRelease = diagMs(o.afterReleaseMs);
+      return {
+        t: "heard", sinceFirstChunkMs: since, queuedMs: queued,
+        ...(leadIn !== undefined ? { leadInMs: leadIn } : {}), ...(afterRelease !== undefined ? { afterReleaseMs: afterRelease } : {}),
+      };
     }
     case "mute":
       return typeof o.on === "boolean" ? { t: "mute", on: o.on } : null;

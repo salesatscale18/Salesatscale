@@ -14,7 +14,7 @@
  */
 import { MAX_CLIENT_TEXT, VOICE_SAMPLE_RATE, parseServerMessage, type ClientMessage } from "../protocol";
 import { FrameChunker, LinearResampler, floatToPcm16, levelOf, pcm16ToFloat, rmsOf } from "./audio";
-import { PlaybackSchedule } from "./playback";
+import { PlaybackSchedule, elementReached } from "./playback";
 import { outputChoices, playbackRoute, type OutputDevice, type PlaybackRoute } from "./output";
 import { LiveSpeech, type LiveLine } from "./live-text";
 import { INITIAL_SNAPSHOT, isIdlePhase, voiceReducer, type VoiceEvent, type VoiceSnapshot, type VoiceUnavailableReason } from "./state";
@@ -41,7 +41,8 @@ export type CallFailReason = "mic_denied" | "mic_unavailable" | "connect_failed"
  * - onMicGranted: the microphone was granted (prepare succeeded).
  * - onReady: the microphone is granted, the relay accepted the ticket (`call`), the agent's model is connected (the
  *   relay's first `listening`) and the page's readiness check passed (lib/voice/client/readiness.ts: mic capture
- *   live, audio context running, output moving, the 150 ms silent primer). With `holdGreeting` the greeting is still
+ *   live, audio context running, output moving (on the <audio> element route: its currentTime advanced), the 150 ms
+ *   silent primer; or its cap, so it never hangs). With `holdGreeting` the greeting is still
  *   held then: `{t:"ready"}` has not gone to the relay; releaseGreeting() sends it (or the 8 s safety net).
  * - onFailed(reason): at most once per attempt, never after onReady except "connect_failed" when the call drops
  *   before the greeting was released (the socket closes, the relay ends or refuses the call). Nothing fires for an
@@ -114,8 +115,11 @@ export class VoiceClient {
   private micLiveMark: OutputMark | null = null;
   /** The <audio> element of this call fired `playing`. */
   private elPlaying = false;
-  /** The first agent audio of this call: when it arrived, where it was scheduled; `sent` once `heard` went. */
-  private firstChunk: { recvMs: number; startAt: number; queuedMs: number; mark: OutputMark; sent: boolean } | null = null;
+  /**
+   * The first agent audio of this call: when it arrived, where it was scheduled, the lead-in silence in front of it
+   * (playback.ts GREETING_LEAD_IN_MS); `sent` once `heard` went.
+   */
+  private firstChunk: { recvMs: number; startAt: number; queuedMs: number; leadInMs: number; mark: OutputMark; sent: boolean } | null = null;
   /** Bumped by every new call and by cancel: async steps of an older attempt stop. */
   private attempt = 0;
   /**
@@ -125,6 +129,8 @@ export class VoiceClient {
   private call: {
     events: VoiceCallEvents; hold: boolean; authed: boolean; report: ReadyReport | null;
     ready: boolean; released: boolean; releaseWanted: boolean; failed: boolean;
+    /** When the page first called releaseGreeting() (performance.now(): the hand-over's chat on screen); the `heard` report. */
+    releaseCalledMs: number | null;
     timers: { release?: ReturnType<typeof setTimeout>; connect?: ReturnType<typeof setTimeout> };
   } | null = null;
   private levelBuf: Float32Array<ArrayBuffer> | null = null;
@@ -198,8 +204,10 @@ export class VoiceClient {
     this.attempt++;
     this.teardown();
     this.call = o.events || o.holdGreeting
-      ? { events: o.events ?? {}, hold: !!o.holdGreeting, authed: false, report: null, ready: false, released: false, releaseWanted: false, failed: false, timers: {} }
+      ? { events: o.events ?? {}, hold: !!o.holdGreeting, authed: false, report: null, ready: false, released: false, releaseWanted: false, failed: false, releaseCalledMs: null, timers: {} }
       : null;
+    // This call's first agent chunk gets the lead-in (silence in front of the first word).
+    this.schedule.newCall();
     this.dispatch({ type: "reset", maxSec: o.maxSec ?? null, mode: o.mode ?? null });
     this.dispatch({ type: "phase", phase: "starting" });
     try {
@@ -363,6 +371,7 @@ export class VoiceClient {
   releaseGreeting(): void {
     const c = this.call;
     if (!c || !c.hold || c.released || c.failed) return;
+    c.releaseCalledMs ??= performance.now();
     if (!c.ready) {
       c.releaseWanted = true;
       return;
@@ -484,6 +493,8 @@ export class VoiceClient {
       this.timers.ping = setInterval(() => this.sendMsg({ t: "ping" }), PING_MS);
       void this.whenOutputRuns(my).then((report) => {
         if (my !== this.attempt) return;
+        // The lead-in counts from here: the first agent word starts GREETING_LEAD_IN_MS after the output was confirmed.
+        if (this.ctx) this.schedule.outputRunning(this.ctx.currentTime);
         if (call && this.call === call) call.report = report;
         if (!hold) this.sendMsg({ t: "ready", ...report });
         this.checkReady();
@@ -665,14 +676,30 @@ export class VoiceClient {
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(out);
-    const at = this.schedule.place(ctx.currentTime, buffer.duration);
+    const { start: at, leadIn } = this.schedule.placeChunk(ctx.currentTime, buffer.duration);
+    // The call's first chunk: silence in front of it through the same output, so the route already sounds at the first word.
+    if (leadIn && leadIn.sec > 0) this.playSilence(ctx, out, leadIn.from, leadIn.sec);
     // The live text's clock is the page's (ms): this frame starts playing `at - currentTime` from now.
     const now = performance.now();
     this.live.audio(buffer.duration * 1000, now + (at - ctx.currentTime) * 1000, now);
     this.playing.add(src);
     src.onended = () => this.playing.delete(src);
     src.start(at);
-    if (!this.firstChunk) this.watchFirstAudio(ctx, at);
+    if (!this.firstChunk) this.watchFirstAudio(ctx, at, leadIn ? leadIn.sec : 0);
+  }
+
+  /** Silence through the agent's output path (the lead-in), stopped by a flush like any queued audio. */
+  private playSilence(ctx: AudioContext, out: AudioNode, from: number, sec: number) {
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, Math.max(1, Math.round(VOICE_SAMPLE_RATE * sec)), VOICE_SAMPLE_RATE);
+      src.connect(out);
+      this.playing.add(src);
+      src.onended = () => this.playing.delete(src);
+      src.start(from);
+    } catch {
+      // No silence: the first chunk still starts at its time.
+    }
   }
 
   /** The output clocks now: the context's, its output timestamp's (where the browser has one), the element's. */
@@ -688,15 +715,18 @@ export class VoiceClient {
   }
 
   /**
-   * The output has moved on since `since`: on the element route the element plays and its time advanced; on the
-   * direct route the context clock advanced by `minSec` and, where the browser reports it, its output timestamp too.
+   * The output has moved on since `since`: on the element route the context runs, the element plays and its
+   * currentTime advanced by `minSec` (any advance when 0); on the direct route the context clock advanced by `minSec`
+   * and, where the browser reports it, its output timestamp too.
    */
   private outputMovedSince(ctx: AudioContext, since: OutputMark, minSec: number): boolean {
     const now = this.outputMark(ctx);
     if (this.route === "element" && this.outEl) {
       const el = this.outEl;
       const plays = this.elPlaying || (!el.paused && el.readyState >= 2);
-      return plays && now.elTime !== null && now.elTime > (since.elTime ?? 0);
+      if (ctx.state !== "running" || !plays || now.elTime === null) return false;
+      const from = since.elTime ?? 0;
+      return now.elTime > from && now.elTime - from >= minSec;
     }
     if (now.ctxTime - since.ctxTime < minSec) return false;
     return now.outTime === null || now.outTime > (since.outTime ?? 0);
@@ -718,6 +748,8 @@ export class VoiceClient {
       ctxRunning: () => !!ctx && ctx.state === "running",
       resumeCtx: () => void ctx?.resume().catch(() => undefined),
       outputMoving: () => !!ctx && !!startMark && this.outputMovedSince(ctx, this.micLiveMark ?? startMark, 0.1),
+      // The element route: its currentTime moved at all since the check began (the report's outAdvance).
+      outputAdvanced: () => !!this.outEl && !!startMark && this.outEl.currentTime > (startMark.elTime ?? 0),
       playPrimer: (done) => {
         const out = this.outGain;
         if (!ctx || !out) throw new Error("no output");
@@ -738,11 +770,16 @@ export class VoiceClient {
   }
 
   /**
-   * The first agent audio of the call: once its scheduled start has passed and the output is moving, the page
-   * tells the relay (`heard`, log only) how long that took since the chunk arrived. Gives up after HEARD_MAX_MS.
+   * The first agent audio of the call: once its scheduled start has passed and the output has really played up to it
+   * (on the element route: the element's currentTime advanced as far as the context had to go to its start), the
+   * page tells the relay (`heard`, log only) how long that took since the chunk arrived, the lead-in silence played in
+   * front of it and, on a hand-over, how long since the page released the greeting. Gives up after HEARD_MAX_MS.
    */
-  private watchFirstAudio(ctx: AudioContext, startAt: number) {
-    const fc = { recvMs: performance.now(), startAt, queuedMs: Math.max(0, Math.round((startAt - ctx.currentTime) * 1000)), mark: this.outputMark(ctx), sent: false };
+  private watchFirstAudio(ctx: AudioContext, startAt: number, leadInSec: number) {
+    const fc = {
+      recvMs: performance.now(), startAt, queuedMs: Math.max(0, Math.round((startAt - ctx.currentTime) * 1000)), leadInMs: Math.round(leadInSec * 1000),
+      mark: this.outputMark(ctx), sent: false,
+    };
     this.firstChunk = fc;
     const my = this.attempt;
     clearInterval(this.timers.heard);
@@ -754,11 +791,17 @@ export class VoiceClient {
       }
       if (ctx.currentTime < fc.startAt || !this.outputMovedSince(ctx, fc.mark, 0)) return;
       const out = this.outputMark(ctx);
-      // Where the browser reports its output clock, the start time must have reached the output itself.
-      if (this.route !== "element" && out.outTime !== null && out.outTime < fc.startAt) return;
+      if (this.route === "element") {
+        // The element itself has played up to the start (its currentTime, not just the context's clock).
+        if (!elementReached(fc.mark, out.elTime, fc.startAt)) return;
+      } else if (out.outTime !== null && out.outTime < fc.startAt) return; // the output clock reached the start
       fc.sent = true;
       clearInterval(this.timers.heard);
-      this.sendMsg({ t: "heard", sinceFirstChunkMs: Math.round(waited), queuedMs: fc.queuedMs });
+      const released = this.call?.releaseCalledMs ?? null;
+      this.sendMsg({
+        t: "heard", sinceFirstChunkMs: Math.round(waited), queuedMs: fc.queuedMs, leadInMs: fc.leadInMs,
+        ...(released !== null ? { afterReleaseMs: Math.max(0, Math.round(performance.now() - released)) } : {}),
+      });
     }, HEARD_POLL_MS);
   }
 

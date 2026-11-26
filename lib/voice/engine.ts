@@ -547,7 +547,18 @@ export function browserReadyLine(msg: Extract<ClientMessage, { t: "ready" }>): s
   const v = (n: number | null | undefined) => (n === null || n === undefined ? "-" : String(n));
   const lat = msg.baseLatencyMs === undefined && msg.outputLatencyMs === undefined ? "-" : String((msg.baseLatencyMs ?? 0) + (msg.outputLatencyMs ?? 0));
   const s = msg.steps;
-  return `browser ready waitedMs=${v(msg.waitedMs)} route=${msg.route ?? "-"} mic=${v(s?.mic)} ctx=${v(s?.ctx)} out=${v(s?.out)} primer=${v(s?.primer)} latency=${lat}ms timedOut=${msg.timedOut ?? "-"}`;
+  return `browser ready waitedMs=${v(msg.waitedMs)} route=${msg.route ?? "-"} mic=${v(s?.mic)} ctx=${v(s?.ctx)} out=${v(s?.out)} primer=${v(s?.primer)} latency=${lat}ms timedOut=${msg.timedOut ?? "-"} outAdvance=${msg.outAdvance ?? "-"}`;
+}
+
+/**
+ * The log line of a browser's `heard` (once per call): when the first agent audio actually started playing there,
+ * `sentAgoMs` after the relay sent it ("-": unknown), from the browser's own figures: since the frame arrived, how far
+ * ahead it was queued, since the page released the held greeting (the hand-over's chat on screen; "-": no release)
+ * and the silence played in front of it (the lead-in; "-": an older page).
+ */
+export function browserHeardLine(sentAgoMs: number | null, msg: Extract<ClientMessage, { t: "heard" }>): string {
+  const v = (n: number | null | undefined) => (n === null || n === undefined ? "-" : `${n}ms`);
+  return `browser heard first audio +${sentAgoMs === null ? "-" : Math.max(0, Math.round(sentAgoMs))}ms after it was sent (browser: ${msg.sinceFirstChunkMs}ms after it arrived, queued ${msg.queuedMs}ms) afterRelease=${v(msg.afterReleaseMs)} leadIn=${v(msg.leadInMs)}`;
 }
 
 /** Languages written in a script other than Latin. */
@@ -872,7 +883,7 @@ export class VoiceEngine {
         // Log only: when the first agent audio actually started playing in the browser (once per call).
         if (this.heardLogged) return;
         this.heardLogged = true;
-        this.trace(`browser heard first audio +${this.firstAudioSentAt === null ? "-" : Math.max(0, Math.round(this.clock.now() - this.firstAudioSentAt))}ms after it was sent (browser: ${msg.sinceFirstChunkMs}ms after it arrived, queued ${msg.queuedMs}ms)`);
+        this.trace(browserHeardLine(this.firstAudioSentAt === null ? null : this.clock.now() - this.firstAudioSentAt, msg));
         return;
       case "context":
         this.onFormContext(msg);

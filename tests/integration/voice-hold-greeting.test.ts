@@ -258,14 +258,15 @@ describe("held greeting (scripted model, fake clock)", () => {
       const ws = new FakeSocket();
       const clock = new ManualClock();
       const model = new ScriptedRealtime({ clock, defaultScript: SHORT });
-      const done = handleVoiceSocket(ws, { db, deadlineSec: null, env, clock, model, limits: QUIET, log: { info: () => undefined, warn: () => undefined } });
+      const lines: string[] = [];
+      const done = handleVoiceSocket(ws, { db, deadlineSec: null, env, clock, model, limits: QUIET, log: { info: (l: string) => void lines.push(l), warn: (l: string) => void lines.push(l) } });
       const settle = async () => {
         for (let i = 0; i < 6; i++) {
           await flushAsync(4);
           await new Promise((r) => setTimeout(r, 5));
         }
       };
-      return { ws, clock, model, done, settle, run: (ms: number) => clock.advance(ms, settle) };
+      return { ws, clock, model, done, settle, lines, run: (ms: number) => clock.advance(ms, settle) };
     }
 
     it("auth holdGreeting is parsed (only a true boolean) and reaches the engine: no opener until the browser's ready", async () => {
@@ -278,9 +279,22 @@ describe("held greeting (scripted model, fake clock)", () => {
       await c.run(6_000);
       const conn = c.model.connections[0] as ScriptedConnection;
       expect(conn.sent.responses).toHaveLength(0);
+      // Logged once: the call holds its greeting (the hand-over), and nothing about a release yet.
+      expect(c.lines.filter((l) => l.includes("greeting held"))).toEqual([expect.stringMatching(/ greeting held: yes \(hand-over\)$/)]);
+      expect(c.lines.some((l) => l.includes("greeting released"))).toBe(false);
       c.ws.text({ t: "ready", waitedMs: 200 });
       await c.settle();
       expect(conn.sent.responses).toHaveLength(1);
+      // The release: how long the greeting was held (from the auth frame to the page's ready; fake clock: >= 6 s).
+      const released = c.lines.filter((l) => l.includes("greeting released"));
+      expect(released).toHaveLength(1);
+      const heldMs = Number(/greeting released after (\d+)ms held$/.exec(released[0])?.[1]);
+      expect(heldMs).toBeGreaterThanOrEqual(6_000);
+      expect(heldMs).toBeLessThan(6_500);
+      // A second ready is not a second release.
+      c.ws.text({ t: "ready" });
+      await c.settle();
+      expect(c.lines.filter((l) => l.includes("greeting released"))).toHaveLength(1);
       c.ws.text({ t: "end" });
       await c.run(100);
       await c.done;
@@ -293,6 +307,11 @@ describe("held greeting (scripted model, fake clock)", () => {
       await c.settle();
       await c.run(3_100);
       expect((c.model.connections[0] as ScriptedConnection).sent.responses).toHaveLength(1);
+      expect(c.lines.filter((l) => l.includes("greeting held"))).toEqual([expect.stringMatching(/ greeting held: no$/)]);
+      c.ws.text({ t: "ready" });
+      await c.settle();
+      // Without a hold a `ready` is no release.
+      expect(c.lines.some((l) => l.includes("greeting released"))).toBe(false);
       c.ws.text({ t: "end" });
       await c.run(100);
       await c.done;
