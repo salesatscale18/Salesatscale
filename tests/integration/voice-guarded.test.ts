@@ -428,7 +428,9 @@ describe("Classic + guards", () => {
       await c.buyer("Can we do it without the installation?");
       const ran = await c.tool("q2", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 2 }], { remove_auto_added: ["INST-1"] }));
       expect(ran.rule).not.toBe("Removal not asked");
-      // Silent otherwise: a quote made normally carries no refusal wording.
+      // Silent otherwise: a quote made normally carries no refusal wording. (The buyer gives the new quantity: since 26
+      // Nov a site count is never part of a sum, so 1 site + 2 seats no longer grounds 3.)
+      await c.buyer("Make it three seats.");
       const ok = await c.tool("q3", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 3 }]));
       expect(ok.ok).toBe(true);
       expect(String(ok.message)).not.toContain("No quote was made");

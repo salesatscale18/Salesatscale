@@ -317,7 +317,7 @@ export function resolveVoiceSettings(s: VoiceSettings | null | undefined, modelI
     elevenStability: isElevenStability(s?.elevenStability) ? s.elevenStability : DEFAULT_ELEVEN_STABILITY,
     turnEnd: s?.turnEnd === "smart" ? "smart" : "pause",
     thinking: s?.thinking && (THINKING_LEVELS as readonly string[]).includes(s.thinking) ? s.thinking : "default",
-    // A version that never stored it: on (UX review, 25 Nov). Test calls only for now (OPENER_PROTECTION_FOR_BUYER_CALLS).
+    // A version that never stored it: on (UX review, 25 Nov). Buyer calls too since 26 Nov (OPENER_PROTECTION_FOR_BUYER_CALLS).
     openerProtected: s?.openerProtected !== false,
   };
 }
@@ -469,8 +469,11 @@ export const GEMINI_TURN_TAKING_FOR_BUYER_CALLS: boolean = false;
 export const SMART_TURN_END_FOR_BUYER_CALLS: boolean = false;
 /** "Thinking effort" (OpenAI reasoning.effort) on BUYER calls. Off: test calls only. */
 export const THINKING_EFFORT_FOR_BUYER_CALLS: boolean = false;
-/** "Protect the opening line" (the engine holds the buyer's mic audio during the opener) on BUYER calls. Off: test calls only. */
-export const OPENER_PROTECTION_FOR_BUYER_CALLS: boolean = false;
+/**
+ * "Protect the opening line" (the engine holds the buyer's mic audio during the opener) on BUYER calls. ON since the
+ * owner decision of 26 Nov 2026 (proven on test calls): every call, unless the version turned it off.
+ */
+export const OPENER_PROTECTION_FOR_BUYER_CALLS: boolean = true;
 
 /**
  * Google's automaticActivityDetection (Gemini Live `realtimeInputConfig.automaticActivityDetection`, sent raw through
@@ -532,7 +535,7 @@ export function callTurnExtras(
   return out;
 }
 
-/** Whether the engine protects the opening line on this call ("Protect the opening line", test calls only for now). */
+/** Whether the engine protects the opening line on this call ("Protect the opening line"; buyer calls: OPENER_PROTECTION_FOR_BUYER_CALLS). */
 export function openerProtectionFor(s: Pick<ResolvedVoiceSettings, "openerProtected">, isTest: boolean, forBuyers: boolean = OPENER_PROTECTION_FOR_BUYER_CALLS): boolean {
   return s.openerProtected !== false && (isTest || forBuyers);
 }

@@ -28,7 +28,7 @@ import { maxCallSeconds, resolveVoiceSettings, voiceMode, type VoiceMode } from 
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } from "@/lib/voice-guarded/profile";
-import { GUARDED_SILENT_ENGINE, isGuardedEngine, isPipelineEngine, isRtElevenEngine, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
+import { BUYER_VOICE_ENGINE, GUARDED_SILENT_ENGINE, isGuardedEngine, isPipelineEngine, isRtElevenEngine, type PipelineEngineName, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { PipelineVoiceEngine, pipelinePartsFor, type PipelineOverrides, type PipelineParts } from "@/lib/voice-pipeline";
 import type { Speaker } from "@/lib/voice-pipeline/speaker";
 import { rtElevenProfile, rtElevenSpeakerFor } from "@/lib/voice-rt-eleven";
@@ -42,6 +42,16 @@ import { DEFAULT_ELEVEN_CHOICE, ELEVEN_PACE_SPEED_FOR_BUYER_CALLS, elevenSpeedFo
  * pipeline proof (lib/voice-pipeline/engine.ts PipelineVoiceEngine, which implements the same methods).
  */
 type RelayEngine = Pick<VoiceEngine, "sessionId" | "start" | "onClientMessage" | "onClientAudio" | "onClientGone" | "stop">;
+
+/**
+ * The engine a call runs on (one engine for every call, owner 26 Nov 2026). A buyer call: BUYER_VOICE_ENGINE, never
+ * read from the row. A test call: the engine its start stored on the session (lib/voice/service.ts createVoiceSession,
+ * written by the server moments before from labEngineChoice: BUYER_VOICE_ENGINE while LAB_ENGINE_SELECTOR is off; a
+ * row with no engine stored is "current", which only a start with the select on can write).
+ */
+export function callEngineOf(session: Pick<VoiceSession, "isTest" | "settings">): VoiceEngineName {
+  return session.isTest ? sessionEngine(session.settings) : BUYER_VOICE_ENGINE;
+}
 
 /** The part of a `ws` WebSocket the relay uses (a `ws` socket satisfies it). */
 export interface VoiceSocket {
@@ -324,10 +334,9 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     if (!session) return refuse("ticket_invalid");
     // The mode the call was created in must still be on (a live call never runs as scripted, or the reverse).
     const mode = voiceMode(env);
-    // The engine stored on the session (test lab, platform admins): Classic (20 Nov, lib/voice-classic), "Classic +
-    // guards" (today's engine with the Classic model side, lib/voice-guarded), its silent probe or Current. Buyer calls
-    // always run on Current.
-    const stored = session.isTest ? sessionEngine(session.settings) : "current";
+    // The engine this call runs on (callEngineOf): a buyer call always BUYER_VOICE_ENGINE (the New engine); a test call
+    // the one its start stored on the session (BUYER_VOICE_ENGINE too while the lab select is off).
+    const stored = callEngineOf(session);
     // The pipeline engines (lib/voice-pipeline): no realtime model; a listener, the chat turn and a speaker. Retired
     // from the selector and test calls only: they have no held greeting, so a page that asks for one is refused
     // (never a greeting the page did not release).

@@ -4,12 +4,12 @@
  * the scripted speaker. No paid call, no network.
  * - create_quote with a quantity the buyer never gave is refused before the tool runs (refused chip, one log line,
  *   no quote); grounded by the buyer's number, the saved sites, a product ("three in each" × 2 sites), the agent's
- *   number with a yes, or after one refusal the agent's number said aloud (no dead-lock); a buyer call is unaffected;
+ *   number with a yes, or after one refusal the agent's number said aloud (no dead-lock); buyer calls too (26 Nov);
  * - one response with several calls: every call runs (guards applied to each), every result is sent, the engine asks
  *   for no response itself, the text before the tools is dropped once, nothing is spoken twice, `rt turn` counts one
  *   tool round;
  * - the session: GPT tool rules at the top of the instructions (2.1 and mini), parallel tool calls asked for on 2.1
- *   only, the provider's session-updated logged; none of it on a buyer call.
+ *   only, the provider's session-updated logged; on a buyer call the GPT tool rules only (26 Nov).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
@@ -195,12 +195,14 @@ describe("quote quantities guard (test calls)", () => {
     await c.end();
   });
 
-  it("a buyer (non-test) call is unaffected: the same quote runs, no log line", async () => {
+  it("a buyer (non-test) call runs it too since 26 Nov 2026 (QUOTE_QUANTITY_GUARD_FOR_BUYER_CALLS): refused, then grounded", async () => {
     const c = await call({ buyerCall: true });
     await c.buyerSays("We run two restaurants.");
     await c.tool("u1", "update_deal_state", facts("2"));
-    expect(await c.tool("q1", "create_quote", quoteArgs(1))).toMatchObject({ ok: true });
-    expect(qtyLines(c.logs)).toEqual([]);
+    expect(await c.tool("q1", "create_quote", quoteArgs(1))).toMatchObject({ ok: false, rule: "Quantity not given" });
+    await c.buyerSays("Three in each.");
+    expect(await c.tool("q2", "create_quote", quoteArgs(6))).toMatchObject({ ok: true });
+    expect(qtyLines(c.logs)).toEqual(["quote quantities: refused item=SENSOR qty=1", "quote quantities: ok"]);
     await c.end();
   });
 });
@@ -249,10 +251,10 @@ describe("the session on GPT test calls", () => {
     await mini.end();
   });
 
-  it("a buyer call: none of it", async () => {
+  it("a buyer call: the GPT tool rules (part of the New engine, on for buyers since 26 Nov 2026); no parallel tool calls, no session-ack log", async () => {
     const c = await call({ buyerCall: true });
     const cfg = c.conn().cfg;
-    expect(cfg.instructions).not.toContain(GPT_TOOL_RULES);
+    expect(cfg.instructions.startsWith(`${GPT_TOOL_RULES}\n\n`)).toBe(true);
     expect(cfg.parallelToolCalls).toBeUndefined();
     expect(cfg.logSessionAck).toBeUndefined();
     await c.end();

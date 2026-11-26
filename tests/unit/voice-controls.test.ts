@@ -82,14 +82,17 @@ describe("settings: defaults, validation, capabilities", () => {
 });
 
 describe("test calls only: the constants and what a call adds", () => {
-  it("every constant is off: buyer calls send exactly what they sent before", () => {
-    expect([GEMINI_TURN_TAKING_FOR_BUYER_CALLS, SMART_TURN_END_FOR_BUYER_CALLS, THINKING_EFFORT_FOR_BUYER_CALLS, OPENER_PROTECTION_FOR_BUYER_CALLS, ELEVEN_PACE_SPEED_FOR_BUYER_CALLS]).toEqual([false, false, false, false, false]);
+  it("the experimental constants are off (buyer calls send none of them); the opener is protected for buyers too since 26 Nov 2026", () => {
+    expect([GEMINI_TURN_TAKING_FOR_BUYER_CALLS, SMART_TURN_END_FOR_BUYER_CALLS, THINKING_EFFORT_FOR_BUYER_CALLS, ELEVEN_PACE_SPEED_FOR_BUYER_CALLS]).toEqual([false, false, false, false]);
+    expect(OPENER_PROTECTION_FOR_BUYER_CALLS).toBe(true);
     const all = s({ style: "patient", pauseMs: 800, interrupt: "high", turnEnd: "smart", thinking: "high" });
     for (const m of [GEMINI, GPT, MINI, ELEVEN_RT, "scripted"]) expect(callTurnExtras(all, m, false), m).toEqual({});
-    expect(openerProtectionFor(s(), false)).toBe(false);
-    // A constant turned on (overridden here) sends it to buyers too.
+    // "Protect the opening line" on a buyer call, unless the version switched it off.
+    expect(openerProtectionFor(s(), false)).toBe(true);
+    expect(openerProtectionFor(s({ openerProtected: false }), false)).toBe(false);
+    // A constant turned on (overridden here) sends it to buyers too; off, none.
     expect(callTurnExtras(all, GPT, false, { thinking: true })).toEqual({ reasoningEffort: "high" });
-    expect(openerProtectionFor(s(), false, true)).toBe(true);
+    expect(openerProtectionFor(s(), false, false)).toBe(false);
   });
 
   it("default settings: nothing new on any model, test calls too; the opener is protected on test calls", () => {

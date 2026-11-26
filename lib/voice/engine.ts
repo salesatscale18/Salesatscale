@@ -42,7 +42,8 @@ import {
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
 import { orderFormAgreed, smallerQuoteAgreed, smallerQuoteParts } from "./form-agreement";
-import { lineSaysNumber, quantityLogLine, quantityNotGiven, quoteQuantityGuardOn, ungroundedQuoteLine } from "./quote-quantities";
+import { lineSaysNumber, quantityLogLine, quantityNotGiven, quoteQuantityGuardOn, siteTiedSkus, ungroundedQuoteLine, type BuyerLine } from "./quote-quantities";
+import { publishedCatalog } from "@/lib/catalog/service";
 import { parallelToolCallsFor } from "./gateway-realtime";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
@@ -2549,7 +2550,7 @@ export class VoiceEngine {
   }
 
   /**
-   * The quote-quantities guard (test calls): the first create_quote line whose quantity the buyer never gave
+   * The quote-quantities guard (every call): the first create_quote line whose quantity the buyer never gave
    * (lib/voice/quote-quantities.ts), with the item's name as the agent says it; null `refused` when every one is
    * grounded. Reads the conversation's buyer lines (the chat's and this call's stored ones) and the saved sites.
    */
@@ -2557,15 +2558,22 @@ export class VoiceEngine {
     const { account, conv } = this.loaded!;
     const raw = args && typeof args === "object" ? (args as { lines?: unknown }).lines : null;
     const lines = (Array.isArray(raw) ? raw : []).map((l) => ({ sku: String((l as { sku?: unknown })?.sku ?? ""), qty: Number((l as { qty?: unknown })?.qty) }));
-    const [deal, stored] = await Promise.all([
+    const [deal, stored, catalog] = await Promise.all([
       readDealState(this.db, account.id, conv.leadId),
-      this.db.select({ body: messages.body }).from(messages)
-        .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer"))),
+      this.db.select({ body: messages.body, actor: messages.actor }).from(messages)
+        .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), inArray(messages.actor, ["buyer", "agent"])))
+        .orderBy(asc(messages.createdAt)),
+      publishedCatalog(this.db, account.id),
     ]);
     const siteValue = Number(String((deal?.fields as Record<string, { value?: string } | undefined> | undefined)?.sites?.value ?? "").trim());
     const sites = Number.isInteger(siteValue) && siteValue > 0 ? siteValue : null;
-    const buyerLines = [...stored.map((m) => m.body ?? ""), ...this.lines.filter((l) => l.role === "buyer").map((l) => l.text)];
-    const refused = ungroundedQuoteLine({ lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt });
+    // Each buyer line with the agent line right before it (a bare "two" answering "How many sites?" is a site count).
+    const withAfter = (rows: readonly { role: string; text: string }[]): BuyerLine[] =>
+      rows.flatMap((l, i) => (l.role === "buyer" ? [{ text: l.text, after: i > 0 && rows[i - 1].role === "agent" ? rows[i - 1].text : null }] : []));
+    const buyerLines = [...withAfter(stored.map((m) => ({ role: m.actor, text: m.body ?? "" }))), ...withAfter(this.lines)];
+    // The items the catalog ties to sites (one per site) or adds once: its own rules, no SKU named in code.
+    const tied = siteTiedSkus(catalog?.rules ?? [], catalog?.autoAdd ?? []);
+    const refused = ungroundedQuoteLine({ lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt, perSiteSkus: tied.perSite, onceSkus: tied.once });
     if (!refused) return { refused: null, item: "" };
     this.qtyRefusedAt = this.lines.length;
     const [item] = await this.db.select({ name: catalogItems.name, plainName: catalogItems.plainName }).from(catalogItems)
@@ -2690,7 +2698,7 @@ export class VoiceEngine {
     // A quote for fewer units or sites than before goes only when the buyer asked for it (or said yes to the offer).
     const smaller = name === "create_quote" && removeGate !== "no" ? await this.smallerQuote(args).catch(() => null) : null;
     const smallerGate = smaller ? smallerQuoteAgreed(this.lines, (line) => smaller.numbers.some((n) => lineSaysNumber(line, n))) : "yes";
-    // Test calls (QUOTE_QUANTITY_GUARD_FOR_BUYER_CALLS): a quote only with quantities the buyer gave
+    // Every call (buyer calls: QUOTE_QUANTITY_GUARD_FOR_BUYER_CALLS, on since 26 Nov): a quote only with quantities the buyer gave
     // (lib/voice/quote-quantities.ts), checked last, before the tool runs: one log line per decision.
     const qtyCheck = name === "create_quote" && removeGate !== "no" && smallerGate !== "no" && quoteQuantityGuardOn(this.loaded!.session.isTest)
       ? await this.quoteQuantities(args).catch(() => null) : null;

@@ -1,4 +1,6 @@
 /**
+ * The engine of EVERY call since the owner decision of 26 Nov 2026 (BUYER_VOICE_ENGINE, lib/voice-classic/engine-choice.ts:
+ * buyer calls and, with the lab select off, every test call). Shown as "Live for buyers (23 Nov)"; it was "New".
  * "Classic + guards" (test lab engine "guarded", owner, 23 Nov 2026): today's voice engine (lib/voice/engine.ts) run
  * with the Classic (20 Nov) model side. Toward the model it is Classic: the 20 Nov voice block and tables with
  * Classic's reconciliations (lib/voice-classic/instructions.ts), Classic's tools and session fields, Classic's

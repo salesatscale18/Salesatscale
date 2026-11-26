@@ -15,7 +15,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import type { Clock, RealtimeModel } from "./realtime";
 import { ScriptedRealtime } from "./scripted-realtime";
 import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
-import { isGuardedEngine, isPipelineEngine, isRtElevenEngine, RT_ELEVEN_MODELS, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { BUYER_VOICE_ENGINE, isGuardedEngine, isPipelineEngine, isRtElevenEngine, RT_ELEVEN_MODELS, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { pipelineCallInfo, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
 import { rtElevenCallInfo, rtElevenVoiceUsed, type RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
@@ -105,7 +105,11 @@ export async function createVoiceSession(
   // ElevenLabs Realtime is for test calls only for now: a buyer call runs on the platform default (logged below).
   const pick = callModelFor(versionModelId(version?.voiceSettings, opts.env), a.isTest, opts.env);
   const versionModel = pick.modelId;
-  const wiring = opts.engine && a.isTest ? opts.engine : "current";
+  // The engine (one engine for every call, owner 26 Nov 2026): a buyer call always runs BUYER_VOICE_ENGINE, whatever
+  // `opts.engine` says; a test call runs what the start action chose (lib/voice-classic/engine-choice.ts
+  // labEngineChoice: BUYER_VOICE_ENGINE while the lab select is off), else BUYER_VOICE_ENGINE. Stored on the session
+  // below (settings.engine), which the socket reads for a test call and the lab shows ("Engine: …").
+  const wiring: VoiceEngineName = a.isTest ? opts.engine ?? BUYER_VOICE_ENGINE : BUYER_VOICE_ENGINE;
   const speech = isRtElevenEngine(wiring) || isPipelineEngine(wiring) ? null
     : speechFor({ wanted: resolveVoiceSettings(version?.voiceSettings, versionModel).speech, modelId: versionModel, engine: wiring, isTest: a.isTest });
   const speechSettings = speech?.speech === "elevenlabs" ? { speech: "elevenlabs" as const } : {};
@@ -114,19 +118,19 @@ export async function createVoiceSession(
     status: "pending", createdAt: now, model: versionModel, mode,
     ticketHash: sha256(ticket),
     ...(speech?.speech === "elevenlabs" ? { settings: speechSettings as Record<string, unknown> as VoiceSettings } : {}),
-    // A test-lab call on the Classic (20 Nov) engine: stored on the session, which the socket reads; Gemini only.
-    ...(opts.engine === "classic" && a.isTest
+    // A call on the Classic (20 Nov) engine (test lab, select on): stored on the session, which the socket reads; Gemini only.
+    ...(wiring === "classic"
       ? { settings: { engine: "classic" } as VoiceSettings, model: classicModelId(versionModelId(version?.voiceSettings, opts.env)) }
       : {}),
-    // A test-lab call on "Classic + guards" or its silent probe (lib/voice-guarded): stored on the session; any voice
-    // model, as Current.
-    ...(opts.engine && isGuardedEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine, ...speechSettings } as Record<string, unknown> as VoiceSettings } : {}),
+    // A call on the New engine ("guarded": every buyer call, every test call while the lab select is off) or its
+    // silent probe (lib/voice-guarded): stored on the session; any voice model.
+    ...(isGuardedEngine(wiring) ? { settings: { engine: wiring, ...speechSettings } as Record<string, unknown> as VoiceSettings } : {}),
     // A test-lab call on a pipeline engine (lib/voice-pipeline: listen, think, speak; Gemini Flash or the chat model
     // thinking): stored on the session.
-    ...(opts.engine && isPipelineEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
+    ...(isPipelineEngine(wiring) ? { settings: { engine: wiring } as VoiceSettings } : {}),
     // A test-lab call on a realtime + ElevenLabs engine (lib/voice-rt-eleven): stored on the session, with the
     // engine's own realtime model (GPT-Realtime 2.1 or mini, whatever the version's model is).
-    ...(opts.engine && isRtElevenEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings, model: RT_ELEVEN_MODELS[opts.engine] } : {}),
+    ...(isRtElevenEngine(wiring) ? { settings: { engine: wiring } as VoiceSettings, model: RT_ELEVEN_MODELS[wiring] } : {}),
   }).returning({ id: voiceSessions.id });
   if (pick.ignored) consoleVoiceLog.info(voiceLine(row.id, pick.ignored));
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };

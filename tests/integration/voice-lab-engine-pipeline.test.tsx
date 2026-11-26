@@ -17,6 +17,8 @@ import path from "node:path";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+// The lab's engine select switched back on (LAB_ENGINE_SELECTOR, off since 26 Nov 2026): the comparison stays covered.
+vi.mock("@/lib/voice-classic/engine-choice", async (orig) => (await import("../helpers/lab-selector")).selectorOn(await orig()));
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 vi.mock("@/lib/auth/account", () => ({
   get appDb() { return holder.db; },
@@ -140,7 +142,7 @@ describe("test lab: the retired pipeline engines", () => {
     save("pipeline-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     const options = [...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => m[1]);
-    expect(options).toEqual(["current", "guarded", "classic"]);
+    expect(options).toEqual(["guarded", "current", "classic"]);
     expect(html).not.toContain("Pipeline:");
     expect(ENGINE_ORDER).not.toContain("pipeline");
     for (const engine of ["pipeline", "pipeline_lite", "pipeline_chat"] as const) {
@@ -161,7 +163,7 @@ describe("test lab: the retired pipeline engines", () => {
       }
     }
     expect((await db.select().from(voiceSessions)).length).toBe(before);
-    expect(labEngineChoice(seller, "pipeline", { VOICE_REALTIME: "scripted" })).toBe("current");
+    expect(labEngineChoice(seller, "pipeline", { VOICE_REALTIME: "scripted" })).toBe("guarded");
     expect(sessionEngine({ engine: "Pipeline" })).toBe("current");
     expect(sessionEngine({ engine: "pipeline-chat" })).toBe("current");
   });

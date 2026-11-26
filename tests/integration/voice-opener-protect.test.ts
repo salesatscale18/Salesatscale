@@ -1,9 +1,9 @@
 /**
- * "Protect the opening line" (Voice settings › Conversation › More options; test calls only for now:
- * OPENER_PROTECTION_FOR_BUYER_CALLS off), end to end on PGlite with the FREE scripted realtime model and a hand-moved
+ * "Protect the opening line" (Voice settings › Conversation › More options; buyer calls too since 26 Nov 2026:
+ * OPENER_PROTECTION_FOR_BUYER_CALLS on), end to end on PGlite with the FREE scripted realtime model and a hand-moved
  * clock: from the call's start until the opener's audio has played (or 20 s), the buyer's microphone audio is not sent
- * to the model and nothing counts as a barge-in; then everything is as before. Off (the version's switch, or a buyer
- * call): the call behaves exactly as before. The text-output path (ElevenLabs speaks) too. No paid call.
+ * to the model and nothing counts as a barge-in; then everything is as before. Off (the version's switch): the call
+ * behaves exactly as before. The text-output path (ElevenLabs speaks) too. No paid call.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -15,7 +15,7 @@ import { VOICE_SAMPLE_RATE, type ServerMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock } from "@/lib/voice/realtime";
 import { expectBuyer, micPcm, say, ScriptedRealtime, type Script, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
 import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
-import { OPENER_PROTECT_CAP_MS } from "@/lib/voice/settings";
+import { OPENER_PROTECT_CAP_MS, OPENER_PROTECTION_FOR_BUYER_CALLS } from "@/lib/voice/settings";
 import { ScriptedSpeaker } from "@/lib/voice-pipeline/speaker";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -135,8 +135,20 @@ describe("protect the opening line (scripted realtime model, fake clock)", () =>
     await c.engine.stop("user_hangup");
   });
 
-  it("a buyer call (OPENER_PROTECTION_FOR_BUYER_CALLS off): unaffected, even with the switch on", async () => {
+  it("a buyer call (OPENER_PROTECTION_FOR_BUYER_CALLS on since 26 Nov 2026): protected as a test call", async () => {
+    expect(OPENER_PROTECTION_FOR_BUYER_CALLS).toBe(true);
     const c = await newCall({ buyerCall: true, wordMs: 1_000 });
+    expect(protectLines(c.lines)).toEqual([expect.stringMatching(/^\[voice\] \S+ opener protected: on$/)]);
+    // The opener is playing: the buyer's audio does not reach the model and cuts nothing.
+    await c.run(2_000);
+    await c.speak(600);
+    expect(c.conn().sent.audioMs).toBe(0);
+    expect(c.json().some((m) => m.t === "flush")).toBe(false);
+    await c.engine.stop("user_hangup");
+  });
+
+  it("a buyer call with the version's switch off: as before (the buyer can cut in at once)", async () => {
+    const c = await newCall({ buyerCall: true, protect: false, wordMs: 1_000 });
     expect(protectLines(c.lines)).toEqual([]);
     await c.run(2_000);
     await c.speak(600);

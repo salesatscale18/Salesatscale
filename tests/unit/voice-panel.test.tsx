@@ -38,7 +38,7 @@ describe("rows per model (same order, missing ones not rendered)", () => {
     expect(rows(h)).toEqual(["voice", "pace", "fillers", "style", "max", "pause", "interrupt", "opener"]);
     expect(h).toContain("Not on this model: Steadiness.");
     expect(h).toContain("Not on this model: Turn ending, Thinking effort.");
-    expect(h).toContain("Used in test calls only for now: Conversation style, Pause before answering, Interruption sensitivity, Protect the opening line. Buyer calls work as before.");
+    expect(h).toContain("Used in test calls only for now: Conversation style, Pause before answering, Interruption sensitivity. Buyer calls work as before.");
     // It names the always-visible Conversation style: at the section's end, outside the fold.
     expect(between(h, 'data-vs-more="conversation"', "</details>")).not.toContain("data-vs-testing");
     expect(h.indexOf("data-vs-testing")).toBeGreaterThan(h.indexOf("</details>", h.indexOf('data-vs-more="conversation"')));
@@ -49,7 +49,7 @@ describe("rows per model (same order, missing ones not rendered)", () => {
     expect(rows(h)).toEqual(["voice", "pace", "fillers", "style", "max", "turnEnd", "pause", "interrupt", "thinking", "opener"]);
     expect(h).toContain("Not on this model: Steadiness.");
     expect(h).not.toContain("Not on this model: Turn");
-    expect(h).toContain("Used in test calls only for now: Turn ending, Thinking effort, Protect the opening line. Buyer calls work as before.");
+    expect(h).toContain("Used in test calls only for now: Turn ending, Thinking effort. Buyer calls work as before.");
     // Every control it names is in the fold: the note is the fold's last line.
     expect(between(h, 'data-vs-more="conversation"', "</details>")).toContain("data-vs-testing");
     expect(h).toMatch(/<option value="model" selected="">The model&#x27;s own voice<\/option>/);
@@ -74,7 +74,8 @@ describe("rows per model (same order, missing ones not rendered)", () => {
     const h = render({ model: ELEVEN_RT as never });
     expect(rows(h)).toEqual(["voice", "pace", "fillers", "max", "opener"]);
     expect(h).toContain("Not on this model: Conversation style, Turn ending, Pause before answering, Interruption sensitivity, Thinking effort.");
-    expect(h).toContain("Used in test calls only for now: Protect the opening line. Buyer calls work as before.");
+    // "Protect the opening line" is on buyer calls too since 26 Nov 2026 (OPENER_PROTECTION_FOR_BUYER_CALLS): no test-only line.
+    expect(h).not.toContain("data-vs-testing");
   });
 
   it("the order never changes between models; no disabled rows; never an \"Advanced\" fold", () => {
@@ -160,8 +161,9 @@ describe("set aside on a model switch (values kept in the form, not posted)", ()
   });
 
   it("test-only rows per model follow the constants", () => {
-    expect(testOnlyRows(GEMINI)).toEqual(["style", "pause", "interrupt", "turnEnd", "thinking", "opener"]);
-    expect(testOnlyRows(GPT)).toEqual(["turnEnd", "thinking", "opener"]);
+    // "opener" left the list on 26 Nov 2026 (OPENER_PROTECTION_FOR_BUYER_CALLS on).
+    expect(testOnlyRows(GEMINI)).toEqual(["style", "pause", "interrupt", "turnEnd", "thinking"]);
+    expect(testOnlyRows(GPT)).toEqual(["turnEnd", "thinking"]);
   });
 });
 

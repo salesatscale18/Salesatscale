@@ -11,7 +11,8 @@
  *   whatever the version's fillers setting;
  * - Current's order_form_status line, where Current places it (before the order-form note line);
  * - a recorded call: Current's one recording rule, at the end of the voice block (where Current places it);
- * - a TEST call on a GPT-Realtime model (2.1 or mini): the short GPT tool rules at the very top (GPT_TOOL_RULES);
+ * - a call on a GPT-Realtime model (2.1 or mini; buyer calls too since 26 Nov: GPT_TOOL_RULES_FOR_BUYER_CALLS): the
+ *   short GPT tool rules at the very top (GPT_TOOL_RULES);
  *   Gemini and ElevenLabs Realtime get the text above byte for byte.
  * tests/unit/voice-guarded-instructions.test.ts asserts the result is Classic's plus exactly these.
  */
@@ -80,10 +81,10 @@ function lineStarting(text: string, start: string): string {
 }
 
 /**
- * The GPT tool rules on BUYER calls. Off: test calls only (a guarded engine runs on test calls only today; this keeps it
- * so if that changes). Turn on once test calls proved it.
+ * The GPT tool rules on BUYER calls. ON since the owner decision of 26 Nov 2026: the New engine (this profile) is the
+ * engine of every buyer call, and these rules are part of it (proven on test calls first).
  */
-export const GPT_TOOL_RULES_FOR_BUYER_CALLS = false;
+export const GPT_TOOL_RULES_FOR_BUYER_CALLS: boolean = true;
 
 /**
  * Short tool rules for the OpenAI realtime models (GPT-Realtime 2.1 and mini), at the very top of the instructions
@@ -101,7 +102,7 @@ export const GPT_TOOL_RULES = [
   "- Order: call dependent tools in order: first save the details with update_deal_state, then check_fit, then create_quote.",
 ].join("\n");
 
-/** Whether a call's instructions start with the GPT tool rules: a GPT-Realtime model, on a test call. */
+/** Whether a call's instructions start with the GPT tool rules: a GPT-Realtime model, on a test call or (GPT_TOOL_RULES_FOR_BUYER_CALLS) a buyer call. */
 export function gptToolRulesFor(modelId: string | null | undefined, isTest: boolean, forBuyers: boolean = GPT_TOOL_RULES_FOR_BUYER_CALLS): boolean {
   return voiceFamilyOf(modelId) === "openai" && isOpenAiVoiceModel(modelId) && (isTest || forBuyers);
 }

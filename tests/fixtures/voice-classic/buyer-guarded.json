@@ -1,0 +1,60 @@
+{
+  "note": "sha256 of the New (guarded) engine's TEST-call output at c7c9702, for input.json: generate-buyer-guarded.ts.txt.",
+  "cases": [
+    {
+      "id": "new-call",
+      "models": {
+        "google/gemini-3.8-live": {
+          "instructions": "955d18f611d532201f1919c04f4f95fdd9a62a0a9247d7af49d46b057a2db7d6",
+          "recorded": "824e2a6815ec43be519ae7aa602f0a9a86bbf270b974ab1fdde49de65266ee8c"
+        },
+        "openai/gpt-realtime-2.1": {
+          "instructions": "9e1e0233727609abe5e70f594e7a3dcea7975d4b74bc3cf7bfb62bb6a6e3d45e",
+          "recorded": "1a27b2634e0fa70cd9eab1b0ab8005ea51b5995e8db924b2e27ffb0a9539d0af"
+        },
+        "openai/gpt-realtime-mini": {
+          "instructions": "9e1e0233727609abe5e70f594e7a3dcea7975d4b74bc3cf7bfb62bb6a6e3d45e",
+          "recorded": "1a27b2634e0fa70cd9eab1b0ab8005ea51b5995e8db924b2e27ffb0a9539d0af"
+        }
+      }
+    },
+    {
+      "id": "continuing-chat",
+      "models": {
+        "google/gemini-3.8-live": {
+          "instructions": "3179369ae744d7969e47c2d63d1aa3bcb9650fcb34c499654026151a453b5a26",
+          "recorded": "f6759363ca074c036cb246abf994a5872b8986e0f887d062edc9a894fae0a62c"
+        },
+        "openai/gpt-realtime-2.1": {
+          "instructions": "1604334e744f10bb1d19d441286950a4f8fdaf47faf2cedf8b61b6c0ac9e5898",
+          "recorded": "86435123971704ab7dd53c76357e67a01439781adc4488f1bfc743fcb4ba96ea"
+        },
+        "openai/gpt-realtime-mini": {
+          "instructions": "1604334e744f10bb1d19d441286950a4f8fdaf47faf2cedf8b61b6c0ac9e5898",
+          "recorded": "86435123971704ab7dd53c76357e67a01439781adc4488f1bfc743fcb4ba96ea"
+        }
+      }
+    },
+    {
+      "id": "woke-he",
+      "models": {
+        "google/gemini-3.8-live": {
+          "instructions": "bae5e1ae95cce0a80a02b4a405e7bc4db90894bcbe95c2095f8ceadc9afc4ca2",
+          "recorded": "64a7a1cb129176bfb6bf79013bf7973e937e720585d74627e69711af82ee9bf1"
+        },
+        "openai/gpt-realtime-2.1": {
+          "instructions": "1a646382f44773ff8c953ef0ef13d0dffffa050a65bbbe56e44a3e9549cc03da",
+          "recorded": "7ed0f48ac084314ad6130e68c514abba11e6e48b9452456e2fc8e2d4f255afdf"
+        },
+        "openai/gpt-realtime-mini": {
+          "instructions": "1a646382f44773ff8c953ef0ef13d0dffffa050a65bbbe56e44a3e9549cc03da",
+          "recorded": "7ed0f48ac084314ad6130e68c514abba11e6e48b9452456e2fc8e2d4f255afdf"
+        }
+      }
+    }
+  ],
+  "sdk": {
+    "gemini": "4d23d896ec0da3c8d3efa076510b619ae80c9d241b49b3faf2c39d09337a1c35",
+    "openai": "ab1c132a9a5d7f61ac3541dd33edecfae3eed59dfbd170bdb7d5e4fe5453a0b4"
+  }
+}
