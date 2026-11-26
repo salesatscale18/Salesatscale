@@ -66,3 +66,26 @@ export function partForAnchor(hash: string): PlaybookPart | null {
   if (section) return OLD_SECTIONS[section[1]] ?? null;
   return id.startsWith("pb-") ? partOfKey(id) : null;
 }
+
+/** The question groups of What it asks: questions asked in chat, and the fields filled in the order form. */
+export const isOrderFormField = (f: { stage: string }): boolean => f.stage.trim() === "before_order_form";
+
+/**
+ * Moves question `index` to where question `to` is, among the questions of
+ * its own group only (asked in chat / filled in the order form): the other
+ * group's rows keep their places. One step is exactly the old editor's ↑ / ↓
+ * (a swap with the next question of the same group); a longer move is the
+ * same as pressing it that many times. Null when the two are in different
+ * groups. Pure.
+ */
+export function moveField<T extends { stage: string }>(rows: readonly T[], index: number, to: number): T[] | null {
+  const group = isOrderFormField(rows[index]);
+  if (isOrderFormField(rows[to]) !== group) return null;
+  const slots = rows.flatMap((r, i) => (isOrderFormField(r) === group ? [i] : []));
+  const items = slots.map((i) => rows[i]);
+  const [row] = items.splice(slots.indexOf(index), 1);
+  items.splice(slots.indexOf(to), 0, row);
+  const next = [...rows];
+  slots.forEach((at, k) => { next[at] = items[k]; });
+  return next;
+}

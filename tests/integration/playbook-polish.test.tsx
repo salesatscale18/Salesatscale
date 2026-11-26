@@ -53,9 +53,9 @@ describe("Playbook navigation and polish (rendered)", () => {
     fs.writeFileSync(path.join(dir, `${name}.html`), `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body style="margin:0"><div class="sas-app"><div class="sas-shell__main">${html}</div></div></body></html>`);
   };
   type Page = (p: { params: Promise<Record<string, string>>; searchParams: Promise<Record<string, string>> }) => Promise<ReactElement>;
-  const render = async (Page: Page, a: SellerAccount, params: Record<string, string> = {}) => {
+  const render = async (Page: Page, a: SellerAccount, params: Record<string, string> = {}, sp: Record<string, string> = {}) => {
     holder.access = { account: a, user: me, actingAs: false, role: "seller_admin" };
-    return renderToStaticMarkup(await Page({ params: Promise.resolve({ account: a.slug, ...params }), searchParams: Promise.resolve({}) }));
+    return renderToStaticMarkup(await Page({ params: Promise.resolve({ account: a.slug, ...params }), searchParams: Promise.resolve(sp) }));
   };
 
   beforeAll(async () => {
@@ -97,7 +97,8 @@ describe("Playbook navigation and polish (rendered)", () => {
     save("playbook", home);
     // 1. Home: one row per part, in order, each a plain link to its part (works without JS).
     const order = ["agent", "opening", "asks", "plays", "objections", "close", "limits", "never", "after"];
-    const at = order.map((p) => home.indexOf(`href="/app/acme/setup/playbook/${p}" data-part="${p}"`));
+    // A row with an amber note opens where it is fixed (`?edit=<row>` or a filter); the others open their part.
+    const at = order.map((p) => home.search(new RegExp(`href="/app/acme/setup/playbook/${p}(\\?[^"]*)?" data-part="${p}"`)));
     expect(at.every((i) => i > 0)).toBe(true);
     expect([...at].sort((x, y) => x - y)).toEqual(at);
     expect(home).not.toContain("Objections and approved answers");
@@ -111,16 +112,18 @@ describe("Playbook navigation and polish (rendered)", () => {
     expect(asks).toMatch(/<a class="pb-menu__home" href="\/app\/acme\/setup\/playbook">.*All of the playbook<\/a>/);
     expect(asks).toMatch(/aria-current="page" data-part="asks"><span class="pb-menu__name">What it asks</);
     expect(asks).toContain('href="/app/acme/setup/playbook/plays"');
-    // 2. What it asks: column "Question", "Where the answer is used", "Add question" after the list, the example in full on a second line.
-    expect(asks).toContain(">Question</th>");
-    expect(asks).toContain(">Where the answer is used</th>");
-    expect(asks).not.toContain(">Field</th>");
-    expect(asks).not.toContain(">Example question</th>");
-    expect(asks.indexOf("Add question")).toBeGreaterThan(asks.indexOf('id="pb-field.1.label"'));
-    expect(asks).toMatch(/<textarea[^>]*id="pb-field\.0\.example"[^>]*>Is it one kitchen, or more\? And how many fridges and freezers are there in each of them, roughly\?<\/textarea>/);
+    // 2. What it asks (S2, read first): columns "Question" and "Where the answer is used", "Add question" after the list, the example in full on a second line.
+    expect(asks).toContain('<span class="pb-row__value">Question</span>');
+    expect(asks).toContain('<span class="pb-item__tag">Where the answer is used</span>');
+    expect(asks).not.toContain(">Field<");
+    expect(asks.indexOf("Add question")).toBeGreaterThan(asks.indexOf('data-row="field.1"'));
+    expect(asks).toContain(">e.g. Is it one kitchen, or more? And how many fridges and freezers are there in each of them, roughly?</span>");
+    // No open fields until a row is changed.
+    expect(asks).not.toContain('id="pb-field.0.label"');
+    expect(await partHtml(acc, "asks", { edit: "field.0" })).toMatch(/<textarea[^>]*id="pb-field\.0\.example"[^>]*>Is it one kitchen, or more\? And how many fridges and freezers are there in each of them, roughly\?<\/textarea>/);
     // The role names stay; what each means is behind one link.
-    expect(asks).toMatch(/<details class="pb-disclosure" data-testid="roles-disclosure"><summary>What each role means<\/summary>/);
-    expect(asks.indexOf("What each role means")).toBeGreaterThan(asks.indexOf("Add question"));
+    expect(asks).toMatch(/<details class="pb-disclosure" data-testid="roles-disclosure"><summary>What “Needed for the quote”, “Helps the pitch” and “Filled in the order form” mean<\/summary>/);
+    expect(asks.indexOf('data-testid="roles-disclosure"')).toBeGreaterThan(asks.indexOf("Add question"));
     expect(asks).toMatch(/<details class="pb-disclosure"[^>]*><summary>How the count works<\/summary>/);
     // Stepper 2–6: at 3 both buttons work; icons, not text.
     expect(asks).toMatch(/data-testid="budget-stepper"><button type="button" aria-label="Fewer"><svg/);
@@ -128,9 +131,12 @@ describe("Playbook navigation and polish (rendered)", () => {
     // 3. How a deal closes: the Sales goal row with its helper; open, the goal grows; the ways a sale can end.
     const close = await partHtml(acc, "close");
     expect(close).toMatch(/<span class="pb-row__label" id="[^"]+">Sales goal<\/span>/);
-    expect(close).toContain("In your words. The agent reads this first.");
     expect(close).toContain(">A sale can end with<");
-    expect(await partHtml(acc, "close", { edit: "goal" })).toMatch(/<textarea class="sas-textarea pb-grow pb-grow--3 pb-fit-long" id="pb-goal"/);
+    // The full helper only while the row is open (UX: read state = value plus at most one short line).
+    expect(close).not.toContain("In your words. The agent reads this first.");
+    const goalOpen = await partHtml(acc, "close", { edit: "goal" });
+    expect(goalOpen).toMatch(/<textarea class="sas-textarea pb-grow pb-grow--3 pb-fit-long" id="pb-goal"/);
+    expect(goalOpen).toContain("In your words. The agent reads this first.");
     expect(await partHtml(acc, "close", { edit: "outcomes" })).toContain("A sale can end with</legend>");
     // Tone: one growing line, sized to its content.
     expect(await partHtml(acc, "agent", { edit: "tone" })).toMatch(/<textarea class="sas-textarea pb-grow pb-fit-line" id="pb-tone"/);
@@ -166,7 +172,7 @@ describe("Playbook navigation and polish (rendered)", () => {
   });
 
   it("Sales plays: footers name the facts used or missing, the hand-off card points to Limits, the banner and filters", async () => {
-    const html = await render(PlaysPage as Page, acc);
+    const html = await render(PlaysPage as Page, acc, {}, { show: "all" });
     save("plays", html);
     expect(html).toContain('data-testid="draft-bar"');
     // Too expensive: the seller's fact plus the filled discount limit (5%, kept in Limits) count (R3-6, A9).

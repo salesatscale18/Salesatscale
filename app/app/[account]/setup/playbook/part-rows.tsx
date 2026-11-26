@@ -10,7 +10,7 @@ import { CALL_ROLE_MAX, DEFAULT_CALL_ROLE } from "@/lib/agent/core/call-role";
 import type { PlaybookPart } from "@/lib/agent/playbook-parts";
 import { LocalNames } from "../local-names";
 import { dismissHandoffNoticeAction } from "./actions";
-import { PlatformFixed, growProps } from "./parts";
+import { PlatformFixed, enterSaves, growProps } from "./parts";
 import { restatesDiscountLimit, shortDate } from "./checks";
 import { AddRow, EditRow, PartRows, RowCommand, type ErrorOf } from "./row";
 import "./playbook.css";
@@ -18,8 +18,6 @@ import "./playbook.css";
 /** `edit`: the row opened first (from `?edit=`). */
 type Base = { slug: string; hrefs: Record<PlaybookPart, string>; edit?: string | null };
 
-/** Single-line text in a growing textarea: Enter does not add a line break. */
-const oneLine = (ev: { key: string; preventDefault: () => void }) => { if (ev.key === "Enter") ev.preventDefault(); };
 const val = (form: FormData, name: string) => String(form.get(name) ?? "");
 
 /** An input's error line and its aria attributes. */
@@ -102,7 +100,7 @@ export function AgentRows({ slug, hrefs, edit, p, names, voice }: Base & {
       <EditRow
         id="gender" label={t("playbook.agent_speaks_short")} own={["agentGender"]}
         read={<span data-gender-read={gender}>{t(`playbook.agent_gender.${gender}` as MessageKey)}</span>}
-        hint={t("playbook.agent_speaks_hint")}
+        hint={t("playbook.agent_speaks_hint")} readHint={t("playbook.agent_speaks_read")}
         editor={() => <GenderEditor value={gender} />}
         toChange={(form) => ({ kind: "set", values: { agentGender: val(form, "agentGender") } })}
       />
@@ -113,7 +111,7 @@ export function AgentRows({ slug, hrefs, edit, p, names, voice }: Base & {
         editor={(e) => (
           <>
             <label className="sas-sr" htmlFor="pb-tone">{t("playbook.tone")}</label>
-            <textarea className="sas-textarea pb-grow pb-fit-line" id="pb-tone" name="tone" rows={1} maxLength={300} defaultValue={p.tone} onKeyDown={oneLine} {...growProps()} {...aria("pb-tone", e("tone"))} />
+            <textarea className="sas-textarea pb-grow pb-fit-line" id="pb-tone" name="tone" rows={1} maxLength={300} defaultValue={p.tone} onKeyDown={enterSaves} {...growProps()} {...aria("pb-tone", e("tone"))} />
             <Err id="pb-tone" msg={e("tone")} />
           </>
         )}
@@ -196,7 +194,7 @@ export function MaxDiscountRow({ maxDiscountBp }: { maxDiscountBp: number }) {
     <EditRow
       id="maxDiscount" label={t("playbook.max_discount")} own={["maxDiscount"]}
       read={<span data-max-discount={pct}>{t("playbook.limits.discount_read", { pct })}</span>}
-      hint={t("playbook.max_discount_hint")}
+      hint={t("playbook.max_discount_hint")} readHint={t("playbook.max_discount_hint")}
       editor={(e) => (
         <>
           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -223,7 +221,7 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
   const text = (id: "offerMeetingWhen" | "handOffWhen", label: MessageKey, extra?: ReactNode) => (
     <EditRow
       id={id} label={t(label)} own={[id]}
-      read={<span className="sas-stack-2" style={{ gap: 6 }}>{p[id].trim() ? <span dir="auto" className="pb-long">{p[id]}</span> : <Empty k="playbook.not_set" />}{extra}</span>}
+      read={<span className="sas-stack-2" style={{ gap: 6 }}>{p[id].trim() ? <span dir="auto" className="pb-long">{p[id]}</span> : <Empty k="playbook.not_set" />}</span>}
       editor={(e) => (
         <>
           <label className="sas-sr" htmlFor={`pb-${id}`}>{t(label)}</label>
@@ -254,7 +252,7 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
       ) : null}
       <EditRow
         id="exceptions" label={<span id={excId}>{t("playbook.exceptions")}</span>} editable={false}
-        hint={t("playbook.exceptions_hint")}
+        readHint={t("playbook.exceptions_read")}
         read={exceptions.length === 0 ? <Empty k="playbook.exceptions_empty" /> : (
           <ul className="pb-plain-list pb-exceptions" aria-labelledby={excId}>
             {exceptions.map((x) => (
@@ -280,7 +278,7 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
 function RuleEditor({ id, name, value, e, errKey }: { id: string; name: string; value: string; e: ErrorOf; errKey: string }) {
   return (
     <>
-      <textarea className="sas-textarea pb-grow pb-fit-line" id={id} name={name} rows={1} maxLength={200} defaultValue={value} onKeyDown={oneLine} {...growProps()} {...aria(id, e(errKey))} />
+      <textarea className="sas-textarea pb-grow pb-fit-line" id={id} name={name} rows={1} maxLength={200} defaultValue={value} onKeyDown={enterSaves} {...growProps()} {...aria(id, e(errKey))} />
       <Err id={id} msg={e(errKey)} />
     </>
   );

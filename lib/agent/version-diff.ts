@@ -168,7 +168,7 @@ export function alignList<T>(before: readonly T[], after: readonly T[], key: (x:
 // ---------------------------------------------------------------------------
 
 /** The areas of a version, in the order the page shows them. */
-export const DIFF_AREAS = ["plays", "questions", "limits", "never", "agent", "opening", "objections", "close", "other", "model", "voice"] as const;
+export const DIFF_AREAS = ["plays", "questions", "limits", "never", "agent", "opening", "objections", "close", "after", "other", "model", "voice"] as const;
 export type DiffArea = (typeof DIFF_AREAS)[number];
 
 /**
@@ -400,7 +400,7 @@ function diffObjections(r: Rows, a: Playbook, b: Playbook) {
  * (also drafts where the S1 row save wrote the defaults by mistake).
  */
 function diffAfter(r: Rows, a: Playbook, b: Playbook) {
-  r.in("close");
+  r.in("after");
   const ua = unpaidRemindersOf(a);
   const ub = unpaidRemindersOf(b);
   const value = (s: { days: number; on: boolean }) => (s.on ? `${s.days} ${L("playbook.unpaid.days_after")}` : L("playbook.unpaid.off"));

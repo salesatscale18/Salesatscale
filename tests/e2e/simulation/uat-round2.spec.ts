@@ -416,36 +416,32 @@ test("B4 Playbook", async () => {
   // Agent: read first; the name row opens on Change.
   await page.goto(`${S.appBase}/setup/playbook/agent`);
   await expect(page.locator('[data-row="name"] strong')).toHaveText(`${SELLER} assistant`);
-  // What it asks: an empty label shows an error on that row (a row left fully empty is dropped on save, by design).
+  // What it asks (S2: one row at a time): an empty label shows an error on the add row.
   await page.goto(`${S.appBase}/setup/playbook/asks`);
-  await page.getByRole("button", { name: "Add question" }).click();
-  const rows = page.locator('input[id^="pb-field."][id$=".label"]');
-  const n = await rows.count();
-  await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("How many fridges do you have?");
-  await page.getByRole("button", { name: "Save to draft" }).click();
-  await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toHaveText("Give this field a name, or remove the row.");
+  await page.locator('[data-add="field.add"]').click();
+  await page.locator('[id="pb-field.new.example"]').fill("How many fridges do you have?");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator('[id="pb-field.new.label-error"]')).toHaveText("Give this field a name, or remove the row.");
   // A duplicate label shows an error on that row.
-  const first = await page.locator('[id="pb-field.0.label"]').inputValue();
-  await page.locator(`[id="pb-field.${n - 1}.label"]`).fill(first);
-  await page.getByRole("button", { name: "Save to draft" }).click();
-  await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toContainText("appears twice");
+  const first = (await page.locator('[data-row="field.0"] .pb-row__value span[dir="auto"]').first().textContent()) ?? "";
+  await page.locator('[id="pb-field.new.label"]').fill(first);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator('[id="pb-field.new.label-error"]')).toContainText("appears twice");
   // Then a valid row.
-  await page.locator(`[id="pb-field.${n - 1}.label"]`).fill("Number of fridges");
-  await page.locator(`[id="pb-field.${n - 1}.stage"]`).selectOption({ label: "Needed for the quote" });
-  await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("How many fridges do you have?");
-  await page.getByRole("button", { name: "Save to draft" }).click();
-  await expect(page.getByText(/^Draft saved/)).toBeVisible();
+  await page.locator('[id="pb-field.new.label"]').fill("Number of fridges");
+  await page.locator('[id="pb-field.new.stage"]').selectOption({ label: "Needed for the quote" });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Number of fridges", { exact: true })).toBeVisible();
   // Rows keep their order.
   await page.reload();
-  await expect(page.locator(`[id="pb-field.${n - 1}.label"]`)).toHaveValue("Number of fridges");
+  await expect(page.locator(".pb-sortable").first().locator("[data-sort-row]").last()).toContainText("Number of fridges");
   // Objections.
   await page.goto(`${S.appBase}/setup/playbook/objections`);
-  await page.getByRole("button", { name: "Add objection" }).click();
-  const o = (await page.locator('input[id^="pb-objection."][id$=".objection"]').count()) - 1;
-  await page.locator(`[id="pb-objection.${o}.objection"]`).fill("It is too expensive");
-  await page.locator(`[id="pb-objection.${o}.answer"]`).fill("One spoiled fridge costs more than a year of monitoring.");
-  await page.getByRole("button", { name: "Save to draft" }).click();
-  await expect(page.getByText(/^Draft saved/)).toBeVisible();
+  await page.locator('[data-add="objection.add"]').click();
+  await page.locator('[id="pb-objection.new.objection"]').fill("It is too expensive");
+  await page.locator('[id="pb-objection.new.answer"]').fill("One spoiled fridge costs more than a year of monitoring.");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("“It is too expensive”")).toBeVisible();
   // Limits and Agent: one row each.
   await page.goto(`${S.appBase}/setup/playbook/limits`);
   await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Change", exact: true }).click();
@@ -467,12 +463,11 @@ test("B4 Edits survive a refused save", async () => {
   // A refused save keeps what was typed: a part's editor shows the submitted values, a row stays open with its value.
   need(S.appBase);
   await page.goto(`${S.appBase}/setup/playbook/asks`);
-  await page.getByRole("button", { name: "Add question" }).click();
-  const n = await page.locator('input[id^="pb-field."][id$=".label"]').count();
-  await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("Only an example");
-  await page.getByRole("button", { name: "Save to draft" }).click();
-  await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toBeVisible();
-  await expect(page.locator(`[id="pb-field.${n - 1}.example"]`)).toHaveValue("Only an example", { timeout: 5000 });
+  await page.locator('[data-add="field.add"]').click();
+  await page.locator('[id="pb-field.new.example"]').fill("Only an example");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator('[id="pb-field.new.label-error"]')).toBeVisible();
+  await expect(page.locator('[id="pb-field.new.example"]')).toHaveValue("Only an example", { timeout: 5000 });
   await page.goto(`${S.appBase}/setup/playbook/agent`);
   await page.locator('[data-row="name"]').getByRole("button", { name: "Change", exact: true }).click();
   await page.locator("#pb-agentName").fill("");

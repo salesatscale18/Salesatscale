@@ -92,15 +92,15 @@ describe("O35 pages on the demo account", () => {
     const html = await render(PartPage, objections);
     save("playbook", html);
     expect(html).toContain('data-testid="attempts-stepper"');
-    expect(text(html)).toContain("Attempts per objection");
-    expect(html).toContain('name="objectionAttempts" value="2"');
+    expect(text(html)).toContain("Tries per objection");
+    expect(html).toContain('data-value="2"');
     expect(html).toContain('aria-label="Fewer attempts"');
     // It moved to Objections (UX, 25 Nov): first in the part, before the objections; What it asks no longer has it.
     expect(html.indexOf('data-testid="objection-attempts"')).toBeLessThan(html.indexOf('data-testid="objection-row"'));
     expect(await render(PartPage, { account: slug, part: "asks" })).not.toContain('data-testid="objection-attempts"');
     expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "3"]]))).toEqual({ ok: true });
     expect((await ensureDraftVersion(db, account.id)).playbook.objectionAttempts).toBe(3);
-    expect(await render(PartPage, objections)).toContain('name="objectionAttempts" value="3"');
+    expect(await render(PartPage, objections)).toContain('data-value="3"');
     // At the maximum the + is off.
     expect(await render(PartPage, objections)).toMatch(/aria-label="More attempts"|disabled="" aria-label="More attempts"/);
     expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "4"]]))).toMatchObject({ ok: false, errors: { objectionAttempts: "Choose a number from 1 to 3." } });
@@ -113,7 +113,9 @@ describe("O35 pages on the demo account", () => {
   });
 
   it("Sales plays: the five new plays show as default cards with their fact prompts", async () => {
-    const list = text(await render(PlaysPage, { account: slug }));
+    // A short list first, "Show all 19" for the rest.
+    expect(text(await render(PlaysPage, { account: slug }))).toContain("Show all 19");
+    const list = text(await render(PlaysPage, { account: slug }, { show: "all" }));
     for (const title of ['"Someone else decides"', '"We tried something like this and it failed"', '"It sounds complicated" or "we have no time to set it up"', '"I don\'t want to be locked in"', "A question with no approved answer"]) {
       expect(list).toContain(title);
     }

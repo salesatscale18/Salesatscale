@@ -233,8 +233,8 @@ describe("B2 and C2 against the database", () => {
     });
     const html = await partPage(acc, "asks");
     save("playbook", html);
-    expect(html).toContain("Questions before recommending");
-    expect(html).toContain('name="questionBudget" value="3"');
+    expect(html).toContain("Questions before it recommends");
+    expect(html).toContain('data-value="3"');
     expect(html).toContain('aria-label="Fewer"');
     expect(html).toContain("4 questions are needed for the quote, but the agent asks at most 3 before recommending. It will quote the last one on a stated assumption.");
     expect(html).toContain("What counts toward the 3");

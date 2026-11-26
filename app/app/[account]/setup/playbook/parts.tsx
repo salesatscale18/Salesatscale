@@ -18,6 +18,17 @@ export function growProps() {
   };
 }
 
+/**
+ * A single-line text in a growing textarea: Enter adds no line break and
+ * saves the row, as Enter does in a one-line input (not while an input
+ * method is composing).
+ */
+export function enterSaves(ev: { key: string; shiftKey?: boolean; preventDefault: () => void; currentTarget: HTMLTextAreaElement; nativeEvent?: { isComposing?: boolean } }) {
+  if (ev.key !== "Enter" || ev.nativeEvent?.isComposing) return;
+  ev.preventDefault();
+  ev.currentTarget.form?.requestSubmit();
+}
+
 /** The grey "Set by the platform" tag with a lock. */
 export function LockTag() {
   return (

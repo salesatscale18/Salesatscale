@@ -20,7 +20,7 @@ export function PartRows({ slug, part, hrefs, edit, children }: { slug: string; 
   return <Ctx.Provider value={{ slug, part, hrefs, open, setOpen }}><div className="pb-rows">{children}</div></Ctx.Provider>;
 }
 
-function useRows(): RowsCtx {
+export function useRows(): RowsCtx {
   const c = useContext(Ctx);
   if (!c) throw new Error("Playbook rows need PartRows.");
   return c;
@@ -32,7 +32,7 @@ export type ErrorOf = (key: string) => string | undefined;
 const owns = (own: readonly string[], key: string) => own.some((o) => key === o || key.startsWith(`${o}.`));
 
 /** A refused save: the row's own errors inline; anything else names its part and links there. */
-function OtherErrors({ errors, own }: { errors: Record<string, string>; own: readonly string[] }) {
+export function OtherErrors({ errors, own }: { errors: Record<string, string>; own: readonly string[] }) {
   const c = useRows();
   const other = Object.entries(errors).filter(([k]) => !owns(own, k));
   if (!other.length) return null;
@@ -53,8 +53,12 @@ function OtherErrors({ errors, own }: { errors: Record<string, string>; own: rea
   );
 }
 
-/** Runs one change through the row action, with pending state and the refusal kept for the row. */
-function useRowSave(onDone: () => void) {
+/**
+ * Runs one change through the row action, with pending state and the refusal
+ * kept for the row. `onFail`: also told when the change was refused (a move
+ * puts the row back).
+ */
+export function useRowSave(onDone: () => void, onFail?: () => void) {
   const c = useRows();
   const [pending, start] = useTransition();
   const [errors, setErrors] = useState<Record<string, string> | null>(null);
@@ -63,9 +67,10 @@ function useRowSave(onDone: () => void) {
     start(async () => {
       try {
         const r = await savePlaybookRowAction(c.slug, change);
-        if (r.ok) { setErrors(null); onDone(); } else setErrors(r.errors);
+        if (r.ok) { setErrors(null); onDone(); } else { setErrors(r.errors); onFail?.(); }
       } catch {
         setErrors({ form: t("playbook.row.failed") });
+        onFail?.();
       }
     });
   };
@@ -79,7 +84,7 @@ function useRowSave(onDone: () => void) {
  * error at the row when it is refused. Focus moves into the fields on open and
  * back to "Change" on close. `extra`: more buttons in the read state (Remove).
  */
-export function EditRow({ id, label, read, editor, toChange, own, hint, wide, changeLabel, extra, editable = true }: {
+export function EditRow({ id, label, read, editor, toChange, own, hint, readHint, wide, changeLabel, extra, editable = true, item, lead, aside, rowAttrs, after }: {
   id: string;
   label: ReactNode;
   read: ReactNode;
@@ -89,12 +94,25 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, wide, ch
   toChange?: (form: FormData) => PlaybookChange | null;
   /** Error keys this row owns (shown inline); others name their part. */
   own?: readonly string[];
+  /** The full helper: shown only while the row is open. */
   hint?: ReactNode;
+  /** At most one short muted line under the value in the read state (UX: no helper walls). */
+  readHint?: ReactNode;
   /** No label column: the value takes the row (list items). */
   wide?: boolean;
   changeLabel?: string;
   extra?: ReactNode;
   editable?: boolean;
+  /** A list item (boards PlaybookOpening2, PlaybookAsks, PlaybookObjections): "Change" is a pencil icon labelled with this text. */
+  item?: { what: string };
+  /** Before the value in the read state (a drag handle). */
+  lead?: ReactNode;
+  /** Between the value and the buttons in the read state (Default, Make default, a role tag). */
+  aside?: ReactNode;
+  /** On the row element (drag and drop: its position). */
+  rowAttrs?: Record<string, string | number | undefined>;
+  /** Under the row in the read state (a move's pending line or refusal). */
+  after?: ReactNode;
 }) {
   const c = useRows();
   const open = c.open === id;
@@ -117,8 +135,9 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, wide, ch
   const ownKeys = own ?? [];
   const e: ErrorOf = (key) => (errors && owns(ownKeys, key) ? errors[key] : undefined);
   return (
-    <div className={`pb-row${wide ? " pb-row--wide" : ""}`} data-row={id} data-open={open ? "" : undefined} aria-busy={pending || undefined}>
-      {wide ? <span className="sas-sr" id={labelId}>{label}</span> : <span className="pb-row__label" id={labelId}>{label}</span>}
+    <div className={`pb-row${wide || item ? " pb-row--wide" : ""}${item ? " pb-row--item" : ""}`} data-row={id} data-open={open ? "" : undefined} aria-busy={pending || undefined} {...rowAttrs}>
+      {wide || item ? <span className="sas-sr" id={labelId}>{label}</span> : <span className="pb-row__label" id={labelId}>{label}</span>}
+      {item && lead !== undefined ? <span className="pb-row__lead">{open ? null : lead}</span> : null}
       <div className="pb-row__value">
         {open && editor ? (
           <form
@@ -137,18 +156,24 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, wide, ch
         ) : (
           <>
             {read}
-            {hint && !wide ? <span className="sas-hint pb-row__hint">{hint}</span> : null}
+            {readHint ? <span className="sas-small pb-row__hint">{readHint}</span> : null}
           </>
         )}
       </div>
       {!open ? (
         <span className="pb-row__actions">
+          {aside}
           {editable && editor ? (
-            <button ref={changeRef} type="button" className="pb-link" onClick={() => c.setOpen(id)} aria-describedby={labelId}>{changeLabel ?? t("playbook.row.change")}</button>
+            item ? (
+              <button ref={changeRef} type="button" className="pb-icon-btn" onClick={() => c.setOpen(id)} aria-label={t("playbook.row.edit", { what: item.what })} title={t("playbook.row.change")}><Icon name="pencil" /></button>
+            ) : (
+              <button ref={changeRef} type="button" className="pb-link" onClick={() => c.setOpen(id)} aria-describedby={labelId}>{changeLabel ?? t("playbook.row.change")}</button>
+            )
           ) : null}
           {extra}
         </span>
       ) : null}
+      {!open && after ? <div className="pb-row__after">{after}</div> : null}
     </div>
   );
 }
@@ -173,12 +198,18 @@ export function RowCommand({ change, label, ariaLabel, confirmText }: { change: 
 }
 
 /** "Add …": a button that opens an empty editor at the end of a list. */
-export function AddRow({ id, label, editor, toChange, own }: { id: string; label: string; editor: (e: ErrorOf) => ReactNode; toChange: (form: FormData) => PlaybookChange | null; own: readonly string[] }) {
+export function AddRow({ id, label, editor, toChange, own, disabled, note }: {
+  id: string; label: string; editor: (e: ErrorOf) => ReactNode; toChange: (form: FormData) => PlaybookChange | null; own: readonly string[];
+  /** The list is full: the button is off and `note` says why. */
+  disabled?: boolean;
+  note?: ReactNode;
+}) {
   const c = useRows();
   if (c.open !== id) {
     return (
       <div className="pb-row pb-row--add">
-        <button type="button" className={buttonClass("secondary", "sm")} onClick={() => c.setOpen(id)}><Icon name="plus" />{label}</button>
+        <button type="button" className={buttonClass("secondary", "sm")} onClick={() => c.setOpen(id)} disabled={disabled} data-add={id}><Icon name="plus" />{label}</button>
+        {note ? <span className="sas-small pb-row__note">{note}</span> : null}
       </div>
     );
   }
