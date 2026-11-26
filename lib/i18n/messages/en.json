@@ -4683,7 +4683,7 @@
   "playbook.opening.preview_topic_default": "This topic has no {language} version, so {language} buyers get the default topic's opening.",
   "playbook.opening.preview_topic_add": "Add the {language} version",
   "info.about": "About: {label}",
-  "playbook.handoff_always_line": "Also always when the buyer is upset or insists on a person, and in a few other cases.",
+  "playbook.handoff_always_line": "Also always when the buyer is upset or insists on a person.",
   "playbook.handoff_always_list": "Whatever this says, the agent also hands over when:",
   "playbook.handoff_always_list.upset": "the buyer is upset, complains or insists on a person (on a call it asks first; a first request for a person books a call instead);",
   "playbook.handoff_always_list.legal": "the buyer raises a legal or existing-customer issue;",

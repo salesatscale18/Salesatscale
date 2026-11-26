@@ -256,7 +256,8 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
       {text("offerMeetingWhen", "playbook.meeting_when")}
       {text(
         "handOffWhen", "playbook.handoff_when", <span className="sas-hint" data-handoff-always="">{t("playbook.handoff_always")}</span>,
-        <span data-handoff-always-read="">{t("playbook.handoff_always_line")}</span>, <HandoffAlways />,
+        // The one fact line, with the full always-on list behind the (i) right after it (it continues there).
+        <><span data-handoff-always-read="">{t("playbook.handoff_always_line")}</span>{"⁠"}<InfoTip label={t("playbook.handoff_when")} wide><HandoffAlways /></InfoTip></>,
       )}
       {handOffNotice ? (
         // O1: dismissed per user (cookie). Its own form and action, which do not save the playbook.

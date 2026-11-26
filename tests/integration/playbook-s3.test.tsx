@@ -202,7 +202,7 @@ describe("Playbook S3: previews; no objections gap", () => {
     it("Limits: the always-on hand-over line in the read state", async () => {
       const html = await part("limits");
       save("limits", html);
-      expect(text(html)).toContain("Also always when the buyer is upset or insists on a person, and in a few other cases.");
+      expect(text(html)).toContain("Also always when the buyer is upset or insists on a person.");
       expect(html).toContain('data-handoff-always-read=""');
     });
     it("one-line part descriptions; short stepper hints; the rest behind the disclosures", async () => {
