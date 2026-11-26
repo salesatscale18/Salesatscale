@@ -9,7 +9,7 @@ import type { EntryPart } from "@/lib/agent/playbook-save";
 import { partOfKey, type PlaybookPart } from "@/lib/agent/playbook-parts";
 import { PART_LABEL } from "./summaries";
 import { savePlaybookPartAction, type PlaybookFormState } from "./actions";
-import { ReminderWording, SignedNotPaidCard, unpaidValues } from "./after-order";
+import { SignedNotPaidCard, unpaidValues } from "./after-order";
 import { unpaidRemindersOf, type PlaybookWithUnpaid, type UnpaidReminderSettings } from "@/lib/orders/unpaid-reminders";
 import "./playbook.css";
 
@@ -54,7 +54,7 @@ function OtherPartLinks({ errors, part, hrefs }: { errors: Record<string, string
 // After the order
 // ---------------------------------------------------------------------------
 
-/** After the order (board UnpaidReminders): what happens when a buyer signs and does not pay. */
+/** After the order (board UnpaidReminders): what happens when a buyer signs and does not pay. The wording the buyer gets is in the part's preview (S3, preview.tsx AfterPreviewPanel). */
 export function AfterPart({ slug, hrefs, p, liveUnpaid }: { slug: string; hrefs: Record<string, string>; p: Playbook; liveUnpaid: UnpaidReminderSettings }) {
   const [state, action, pending] = useActionState<PlaybookFormState, FormData>(savePlaybookPartAction, { status: "idle" });
   const e = state.status === "error" ? state.errors : {};
@@ -67,7 +67,6 @@ export function AfterPart({ slug, hrefs, p, liveUnpaid }: { slug: string; hrefs:
         initial={unpaidValues(draft, state.status === "error" ? state.values.unpaidReminders : undefined)} errors={e}
         draft={draft} live={liveUnpaid} onBlocked={setBlocked}
       />
-      <ReminderWording />
     </PartForm>
   );
 }

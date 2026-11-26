@@ -112,15 +112,16 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
     it("the Sales plays card and the Playbook home line show it", async () => {
       const plays = await render(PlaysPage);
       const card = plays.match(/data-play="too_expensive"[\s\S]*?<\/a>/)?.[0] ?? "";
-      expect(card).toContain('data-facts="facts"');
-      expect(card).toContain("1 fact");
-      expect(card).toContain("add what the problem costs a typical customer, smaller starting set, what a discount can be traded for, what the price includes");
+      // S3 (UX): a row is name + summary + state; the facts line stays on the play's own page. With the limit it is Ready.
+      expect(card).not.toContain("data-facts=");
+      expect(card).toContain('data-state="ready"');
       const pb = await render(PlaybookPage);
       const row = pb.match(/data-part="plays">[\s\S]*?<\/a>/)?.[0] ?? "";
-      // R4 A4 / O1: 19 plays, 1 with facts (the discount limit), 15 would be sharper (an amber note on the row and in Worth a look).
+      // R4 A4 / O1: 19 plays, 1 with facts (the discount limit). S3 (UX): plays work without facts, so no amber note
+      // and no Worth a look entry while at least one play has facts.
       expect(row).toContain(">19 plays · 1 with your facts<");
-      expect(row).toContain('data-gap="plays">15 sales plays would be sharper with your facts.<');
-      expect(pb).toMatch(/<li data-gap="plays">15 sales plays would be sharper with your facts\. <a href="\/app\/[a-z0-9-]+\/setup\/playbook\/plays\?filter=needs">Add facts<\/a><\/li>/);
+      expect(row).not.toContain('data-gap="plays"');
+      expect(pb).not.toContain('<li data-gap="plays">');
       // The own-card and ready counts are on the Sales plays filter chips.
       expect(plays).toMatch(/Your own cards <span class="pb-count">0<\/span>/);
       expect(plays).toMatch(/Ready <span class="pb-count">4<\/span>/);

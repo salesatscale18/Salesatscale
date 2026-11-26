@@ -5,8 +5,7 @@ import { t, type MessageKey } from "@/lib/i18n";
 import { PlatformFixed } from "../parts";
 import { loadPlaybook } from "../data";
 import { PartShell } from "../shell";
-import { filterPlays, PLAY_FILTERS, playCounts, playState, PLAYS_SHORT_LIST, type PlayFilter, type PlayOverview, type PlayState } from "./overview";
-import { SuggestedTag } from "./parts";
+import { filterPlays, PLAY_FILTERS, playCounts, playState, PLAYS_SHORT_LIST, type PlayFilter, type PlayState } from "./overview";
 
 const FILTER_LABEL: Record<PlayFilter, MessageKey> = {
   all: "playbook.plays.filter.all", ready: "playbook.plays.filter.ready", needs: "playbook.plays.filter.needs", suggested: "playbook.plays.filter.suggested", own: "playbook.plays.filter.own",
@@ -15,30 +14,8 @@ const FILTER_LABEL: Record<PlayFilter, MessageKey> = {
 const STATE_LABEL: Record<PlayState, MessageKey> = {
   ready: "playbook.plays.state.ready", needs: "playbook.plays.state.needs", suggested: "playbook.plays.state.suggested", own: "playbook.plays.state.own",
 };
-const STATE_CLASS: Record<PlayState, string> = { ready: "sas-pill", needs: "pb-state-needs", suggested: "sas-pill pb-state-suggested", own: "sas-pill sas-pill--info" };
-
-/** What the play's facts are (the old card's bottom line), as a small line under the summary. */
-function FactsLine({ p }: { p: PlayOverview }) {
-  const line = p.factsLine;
-  switch (line.kind) {
-    case "facts":
-      return (
-        <span className="sas-small pb-play__facts" data-facts="facts">
-          {t(line.n === 1 ? "playbook.plays.facts_short_one" : "playbook.plays.facts_short", { n: line.n })}
-          {line.missing.length ? <span data-missing="">{" · "}{t("playbook.plays.add_missing", { what: line.missing.join(", ") })}</span> : null}
-          {p.suggested ? <>{" "}<SuggestedTag /></> : null}
-        </span>
-      );
-    case "limits":
-      return <span className="sas-small pb-play__facts" data-facts="limits">{t("playbook.plays.uses_handoff")}</span>;
-    case "suggested":
-      return <span className="sas-small pb-play__facts" data-facts="suggested">{line.facts ? t(line.facts === 1 ? "playbook.plays.suggested_fact" : "playbook.plays.suggested_facts", { n: line.facts }) : t("playbook.plays.suggested_card")}</span>;
-    case "needs":
-      return <span className="sas-small pb-play__facts" data-facts="needs">{line.text}</span>;
-    case "none":
-      return <span className="sas-small pb-play__facts" data-facts="none">{t("playbook.plays.no_facts")}</span>;
-  }
-}
+// Plays work without facts (UX after S2): "Needs your facts" in the muted tag style, like Ready.
+const STATE_CLASS: Record<PlayState, string> = { ready: "sas-pill", needs: "sas-pill", suggested: "sas-pill pb-state-suggested", own: "sas-pill sas-pill--info" };
 
 /**
  * Setup · Playbook › Sales plays (board PlaybookPlays2): the 19 plays as rows
@@ -83,7 +60,6 @@ export default async function PlaysPage({ params, searchParams }: { params: Prom
                   <span className="pb-play__text">
                     <span className="pb-play__name">{p.title}</span>
                     <span className="sas-small pb-play__line" dir="auto">{p.line}</span>
-                    <FactsLine p={p} />
                   </span>
                   <span className={STATE_CLASS[state]} data-state={state}>{t(STATE_LABEL[state])}</span>
                   <Icon name="chevron-right" />
@@ -96,7 +72,13 @@ export default async function PlaysPage({ params, searchParams }: { params: Prom
       {short ? (
         <div className="pb-rows__note"><a className="pb-link" href={`${here}?show=all`} data-show-all="">{t("playbook.plays.show_all_n", { n: matching.length })}</a></div>
       ) : null}
-      <div className="pb-rows__note"><PlatformFixed>{t("playbook.plays.core_rules")}</PlatformFixed></div>
+      <div className="pb-rows__note sas-stack-2">
+        <details className="pb-disclosure" data-testid="plays-how">
+          <summary>{t("playbook.plays.how")}</summary>
+          <p className="sas-small" style={{ margin: 0, paddingBlockStart: 8 }}>{t("playbook.plays.intro")}</p>
+        </details>
+        <PlatformFixed>{t("playbook.plays.core_rules")}</PlatformFixed>
+      </div>
     </PartShell>
   );
 }

@@ -452,7 +452,8 @@ describe("Playbook S1 against the database", () => {
       ["opening", "topic.1", ["What leads ask about · 3 of 6", "alerts at night", "Make default", "First question", "How do you check them today?", "Each lead page picks one of these topics", "Preview"], ['id="pb-opener.topic.1.en"', 'id="pb-opener.topic.1.he"']],
       ["asks", "field.0", ["Questions before it recommends", "Where the answer is used", "Needed for the quote", "e.g. How many fridges?"], ['id="pb-field.0.label"', 'id="pb-field.0.stage"']],
       ["objections", "objection.0", ["Tries per objection", "Buyer says", "Approved answer", "From: Call 2"], ['id="pb-objection.0.answer"', 'id="pb-objection.0.source"']],
-      ["after", "", ["Signed, not paid yet", "Reminder wording"], []],
+      // S3: the wording the buyer gets is the part's preview ("What the buyer gets").
+      ["after", "", ["Signed, not paid yet", "What the buyer gets"], []],
     ];
     for (const [part, edit, readTexts, editTexts] of PARTS) {
       it(`${part}: the shell (menu, picker, Previous / Next, draft bar) and its rows${edit ? ", read first and one row open" : ""}`, async () => {

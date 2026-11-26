@@ -18,9 +18,9 @@ export const PART_LABEL: Record<PlaybookPart, MessageKey> = {
   close: "playbook.part.close", limits: "playbook.part.limits", never: "playbook.part.never", after: "playbook.part.after",
 };
 
-/** One line under the part's name in its view. */
+/** One line under the part's name in its view (UX: one line each; the rest sits behind the part's "How … works" disclosure). */
 export const PART_SUB: Record<PlaybookPart, MessageKey> = {
-  agent: "playbook.part_sub.agent", opening: "playbook.opening.hint", asks: "playbook.fields_hint", plays: "playbook.plays.intro", objections: "playbook.objections_hint",
+  agent: "playbook.part_sub.agent", opening: "playbook.part_sub.opening", asks: "playbook.part_sub.asks", plays: "playbook.part_sub.plays", objections: "playbook.part_sub.objections",
   close: "playbook.part_sub.close", limits: "playbook.part_sub.limits", never: "playbook.part_sub.never", after: "playbook.part_sub.after",
 };
 
@@ -90,10 +90,15 @@ export type GapNote = { id: string; part: PlaybookPart | null; text: string; lin
 
 /**
  * The gaps shown on home ("Worth a look"): an opening without its question,
- * chat questions without an example, plays that ask for the seller's facts and
- * have none, and buyer questions the agent could not answer (Knowledge).
+ * chat questions without an example, objections buyers raised with no approved
+ * answer, plays that ask for facts while no play has any, and buyer questions
+ * the agent could not answer (Knowledge).
  */
-export function gapNotes(p: Playbook, ctx: { plays: PlaysSummary; unanswered: number; href: { part: (part: PlaybookPart) => string; playsNeeds: string; questions: string } }): GapNote[] {
+export function gapNotes(p: Playbook, ctx: {
+  plays: PlaysSummary; unanswered: number; href: { part: (part: PlaybookPart) => string; playsNeeds: string; questions: string };
+  /** Objections buyers raised with no approved answer (S3, lib/agent/objection-gaps.ts): the words to quote and the "add" link. */
+  objections?: { words: string; href: string }[];
+}): GapNote[] {
   const out: GapNote[] = [];
   const o = readOpener(p.opener);
   // A gap that one row fixes opens that row (`?edit=<row>`); several rows: the part's list.
@@ -101,7 +106,16 @@ export function gapNotes(p: Playbook, ctx: { plays: PlaysSummary; unanswered: nu
   const missing = p.fields.flatMap((f, i) => (f.stage !== "before_order_form" && !f.example?.trim() ? [i] : []));
   const noExample = missing.length;
   if (noExample) out.push({ id: "examples", part: "asks", text: t(noExample === 1 ? "playbook.gap.examples_one" : "playbook.gap.examples", { n: noExample }), link: t("playbook.gap.add_examples"), href: noExample === 1 ? `${ctx.href.part("asks")}?edit=field.${missing[0]}` : ctx.href.part("asks") });
-  if (ctx.plays.sharper) out.push({ id: "plays", part: "plays", text: t(ctx.plays.sharper === 1 ? "playbook.gap.plays_one" : "playbook.gap.plays", { n: ctx.plays.sharper }), link: t("playbook.gap.add_facts"), href: ctx.href.playsNeeds });
+  const obj = ctx.objections ?? [];
+  if (obj.length) {
+    out.push({
+      id: "objections", part: "objections",
+      text: obj.length === 1 ? t("playbook.gap.objections_one", { words: t("playbook.sum.quote", { text: obj[0].words }) }) : t("playbook.gap.objections", { n: obj.length }),
+      link: t("playbook.gap.add_one"), href: obj.length === 1 ? obj[0].href : ctx.href.part("objections"),
+    });
+  }
+  // Plays work without facts (UX after S2): a note only when no play has the seller's facts yet.
+  if (ctx.plays.sharper && ctx.plays.withFacts === 0) out.push({ id: "plays", part: "plays", text: t(ctx.plays.sharper === 1 ? "playbook.gap.plays_one" : "playbook.gap.plays", { n: ctx.plays.sharper }), link: t("playbook.gap.add_facts"), href: ctx.href.playsNeeds });
   if (ctx.unanswered) out.push({ id: "questions", part: null, text: t(ctx.unanswered === 1 ? "playbook.gap.questions_one" : "playbook.gap.questions", { n: ctx.unanswered }), link: t("playbook.gap.answer_them"), href: ctx.href.questions });
   return out;
 }

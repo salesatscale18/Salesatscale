@@ -69,7 +69,7 @@ describe("diffVersions", () => {
     const rows = diffVersions(version(base()), version(b), opts);
     expect(rows.map((r) => [r.area, r.item, text(r.before), text(r.after)])).toEqual([
       ["limits", "Discount without approval", "5%", "8%"],
-      ["objections", "Attempts per objection", "2", "3"],
+      ["objections", "Tries per objection", "2", "3"],
     ]);
   });
 
