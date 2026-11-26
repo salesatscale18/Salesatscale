@@ -118,6 +118,21 @@ describe("reply figure check (text chat)", () => {
     expect(form).toMatchObject({ outcome: "refused", rule: "Quote waits for the seller's approval or was cancelled" });
   });
 
+  it("a held quote's lines are data for the agent; their prices are withheld like its totals", async () => {
+    const c = await conv();
+    const lines = [{ sku: "SNS-200", qty: 2 }];
+    const llm = new ScriptedLlm([
+      use("t0", "update_deal_state", { updates: [], next_step: null, objection: null, recommendation_confirmed: true, price_asked: true, asked: null }),
+      use("t1", "create_quote", { lines, discount_percent: 0, offer: null, sites: null, remove_auto_added: null, exception: "exc1", headline: null, assumed: null }),
+      say("The sensors come to ₪1,180.00 before VAT. Shall I send the order form?"),
+      say("I've asked the team to approve it, and I'll let you know here."),
+    ]);
+    await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "Sounds right, send it." });
+    const [held] = await db.select().from(toolCalls).where(and(eq(toolCalls.conversationId, c.conversationId), eq(toolCalls.name, "create_quote")));
+    expect(held.result).toMatchObject({ status: "awaiting_seller_approval", lines: [{ sku: "SNS-200", name: "Wireless fridge sensor", qty: 2, charge: "one-time", total_before_vat: "₪1,180.00" }] });
+    expect(lastUserText(llm.requests[3])).toMatch(/Your reply states 1,180\.00, but the quote waits for the team's approval/);
+  });
+
   it("failing twice with nothing left: a person takes over with the draft as the suggested reply", async () => {
     const c = await conv();
     const llm = new ScriptedLlm([say("₪7,000."), say("₪7,200.")]);

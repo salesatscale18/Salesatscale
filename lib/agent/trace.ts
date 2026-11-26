@@ -53,7 +53,8 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
     case "update_deal_state": {
       const ups = arr(input.updates) as Obj[];
       sent = ups.length ? ups.map((u) => `${str(u.key)} = ${str(u.value)}`).join(", ") : "No field changes";
-      if (input.objection && typeof input.objection === "object") sent += `; objection: ${str((input.objection as Obj).text)}`;
+      // Objections recorded since O1 carry buyer_words; older ones text.
+      if (input.objection && typeof input.objection === "object") sent += `; objection: ${str((input.objection as Obj).text) || str((input.objection as Obj).buyer_words)}`;
       const kept = arr(result.kept_verified).map(str);
       const placeholders = arr(result.rejected_placeholder).map(str);
       got = `Saved ${arr(result.saved).length}${kept.length ? `; kept verified: ${kept.join(", ")}` : ""}${placeholders.length ? `; not saved (no real value): ${placeholders.join(", ")}` : ""}`;

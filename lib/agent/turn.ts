@@ -284,7 +284,8 @@ export async function runBuyerTurn(
         const held = quotesNow.length ? quotesNow.at(-1)!.r.result.status === "awaiting_seller_approval" : stageFacts.quote === "awaiting_approval";
         const withheld = held
           ? allowedFigures(pending.filter((p) => p.r.outcome === "ok" && (p.name === "check_fit" || p.name === "check_offer" || p.name === "create_quote"))
-            .map((p) => [p.r.result.totals, (p.r.result.offer as { totals?: unknown } | null | undefined)?.totals, p.r.result.now]))
+            // A held create_quote's lines carry line prices (data for the agent), withheld like its totals.
+            .map((p) => [p.r.result.totals, (p.r.result.offer as { totals?: unknown } | null | undefined)?.totals, p.r.result.now, p.name === "create_quote" && p.r.result.status === "awaiting_seller_approval" ? p.r.result.lines : null]))
           : [];
         const bad = unverifiedFigures(draft, allowed, withheld);
         if (!bad.length) break;
