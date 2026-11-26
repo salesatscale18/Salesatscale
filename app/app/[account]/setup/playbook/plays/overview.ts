@@ -89,6 +89,20 @@ export function filterPlays(plays: PlayOverview[], f: PlayFilter): PlayOverview[
   }
 }
 
+/**
+ * A play's state on its row (board PlaybookPlays2), from what playsOverview
+ * already knows: the seller's own card → "Your own"; open suggestions from the
+ * sources → "Suggested"; asks for facts and has none (needsFacts, the "Needs
+ * your facts" filter) → "Needs your facts"; anything else → "Ready".
+ */
+export type PlayState = "own" | "suggested" | "needs" | "ready";
+export function playState(p: Pick<PlayOverview, "own" | "suggested" | "needsFacts">): PlayState {
+  return p.own ? "own" : p.suggested ? "suggested" : p.needsFacts ? "needs" : "ready";
+}
+
+/** The short list shown first under "All" (board PlaybookPlays2), with "Show all 19" for the rest. */
+export const PLAYS_SHORT_LIST = 6;
+
 /** The counts on the filter buttons. */
 export function playCounts(plays: PlayOverview[]): Record<PlayFilter, number> {
   return Object.fromEntries(PLAY_FILTERS.map((f) => [f, filterPlays(plays, f).length])) as Record<PlayFilter, number>;

@@ -17,6 +17,11 @@ import { and, eq } from "drizzle-orm";
 import { agentVersions, users, type Playbook, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { changedKeys } from "../helpers/playbook-change-keys";
+import { isOrderFormField, moveField } from "@/lib/agent/playbook-parts";
+
+/** The last stored question in the same group as the first one (0 when it is alone in its group). */
+const lastInGroupOfFirst = (fields: readonly { stage: string }[]): number =>
+  fields.length ? Math.max(...fields.map((f, i) => (isOrderFormField(f) === isOrderFormField(fields[0]) ? i : 0))) : 0;
 
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn(() => { throw new Error("no model calls in this test"); }) }));
 
@@ -96,6 +101,8 @@ function changesFor(p: Playbook): { name: string; change: Change }[] {
     { name: "set questionBudget", change: { kind: "set", values: { questionBudget: "5" } } },
     { name: "set objectionAttempts", change: { kind: "set", values: { objectionAttempts: "1" } } },
     { name: "set outcomes", change: { kind: "set", values: {}, outcomes: { orderForm: false, bankTransfer: true, meeting: false } } },
+    // S2: Opening's "First question" row.
+    { name: "set openerQuestion", change: { kind: "set", values: {}, openerQuestion: { en: "What do you use today?", he: "" } } },
     { name: "part name", change: { kind: "part", part: "name", entries: [["agentName", "Noa"], ["agentNameLocal.he", "נועה"]] } },
     {
       name: "part opening",
@@ -119,7 +126,9 @@ function changesFor(p: Playbook): { name: string; change: Change }[] {
       out.push({ name: `${list} edit`, change: { kind: "edit", list, index: 0, item: edit } as Change });
       out.push({ name: `${list} delete`, change: { kind: "delete", list, index: 0 } });
     }
-    if (n >= 2) out.push({ name: `${list} move`, change: { kind: "move", list, index: 0, to: n - 1 } });
+    // S2: a question moves inside its own group (chat / order form), so it goes to the last row of its group.
+    const last = list === "fields" ? lastInGroupOfFirst(p.fields) : n - 1;
+    if (n >= 2 && last > 0) out.push({ name: `${list} move`, change: { kind: "move", list, index: 0, to: last } });
   }
   if (listOf(p, "openerTopics").length >= 2) out.push({ name: "setDefault", change: { kind: "setDefault", index: listOf(p, "openerTopics").length - 1 } });
   if (p.exceptions?.length) out.push({ name: "removeException", change: { kind: "removeException", id: p.exceptions[0].id } });
@@ -172,7 +181,7 @@ describe("a row save changes only that row", () => {
           if (change.kind === "add") expect(a.slice(0, -1)).toEqual(b);
           if (change.kind === "edit") expect(a.slice(1)).toEqual(b.slice(1));
           if (change.kind === "delete") expect(a).toEqual(b.slice(1));
-          if (change.kind === "move") expect(a).toEqual(move(b, 0, b.length - 1));
+          if (change.kind === "move") expect(a).toEqual(change.list === "fields" ? moveField(b as Playbook["fields"], 0, change.to) : move(b, 0, b.length - 1));
         }
       });
     }
@@ -237,9 +246,9 @@ describe("a row save changes only that row", () => {
       const cmp = await loadVersionComparison(db, acc.id, { languages: ["en", "he"], platformDetails: false });
       const items = cmp!.changes.map((r) => [r.area, r.item, r.before?.map((s) => s.text).join(""), r.after?.map((s) => s.text).join("")]);
       expect(items).toEqual([
-        ["close", "Signed, not paid yet · First reminder", "3 days after signing", "2 days after signing"],
-        ["close", "Signed, not paid yet · Second reminder", "Off", "5 days after signing"],
-        ["close", "Signed, not paid yet · Tell your team", "9 days after signing", "7 days after signing"],
+        ["after", "Signed, not paid yet · First reminder", "3 days after signing", "2 days after signing"],
+        ["after", "Signed, not paid yet · Second reminder", "Off", "5 days after signing"],
+        ["after", "Signed, not paid yet · Tell your team", "9 days after signing", "7 days after signing"],
       ]);
       expect(countChanges(live, draft, false)).toBe(3);
       expect(JSON.stringify(cmp!.changes)).not.toContain("unpaidReminders");

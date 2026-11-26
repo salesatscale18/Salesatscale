@@ -7,6 +7,7 @@ import type { Db } from "@/db/types";
 import type { Playbook } from "@/db/schema";
 import { isPlayKey, parsePlaybookRows, parsePlayRow, playbookRowsFromForm, type PlaybookErrors, type PlaybookRowsInput, type PlayRowInput } from "./playbook";
 import { ensureDraftVersion, saveDraftPlaybook } from "./service";
+import { moveField } from "./playbook-parts";
 import { refreshAgentNameAuto } from "./names-auto";
 import { UNPAID_DEFAULTS, UNPAID_STEPS, unpaidRemindersOf, type PlaybookWithUnpaid, type UnpaidRowsInput } from "@/lib/orders/unpaid-reminders";
 import { readOpener } from "./core/opener";
@@ -233,13 +234,15 @@ export type EntryPart = (typeof ENTRY_PARTS)[number];
 
 /**
  * One typed change to the draft playbook. `set`: single values (and the
- * outcome checkboxes); `add` / `edit` / `delete` / `move`: one item of a list;
+ * outcome checkboxes, the opener's first question in both languages);
+ * `add` / `edit` / `delete` / `move`: one item of a list (a question moves
+ * among the questions of its own group: see moveField);
  * `setDefault`: the opener's default topic; `removeException`: one approved
  * exception (they are never typed); `part`: a part's whole editor as form
  * entries (the one-page form's inputs, read by playbookRowsFromForm).
  */
 export type PlaybookChange =
-  | { kind: "set"; values: Partial<Record<ScalarKey, string>>; outcomes?: Playbook["outcomes"] }
+  | { kind: "set"; values: Partial<Record<ScalarKey, string>>; outcomes?: Playbook["outcomes"]; openerQuestion?: { en: string; he: string } }
   | { [L in ListKey]: { kind: "add"; list: L; item: ListItem[L] } }[ListKey]
   | { [L in ListKey]: { kind: "edit"; list: L; index: number; item: ListItem[L] } }[ListKey]
   | { kind: "delete"; list: ListKey; index: number }
@@ -310,6 +313,7 @@ export function applyPlaybookChange(input: PlaybookRowsInput, change: PlaybookCh
       const next: PlaybookRowsInput = { ...input };
       for (const k of SCALAR_KEYS) if (typeof change.values[k] === "string") (next as Record<ScalarKey, string | undefined>)[k] = change.values[k];
       if (change.outcomes) next.outcomes = { orderForm: !!change.outcomes.orderForm, bankTransfer: !!change.outcomes.bankTransfer, meeting: !!change.outcomes.meeting };
+      if (change.openerQuestion) next.opener = { ...(input.opener ?? { topics: [], defaultTopic: "0" }), question: { en: change.openerQuestion.en, he: change.openerQuestion.he } };
       return { ok: true, input: next };
     }
     case "add":
@@ -324,6 +328,10 @@ export function applyPlaybookChange(input: PlaybookRowsInput, change: PlaybookCh
       else if (change.kind === "delete") { rows.splice(change.index, 1); order.splice(change.index, 1); }
       else {
         if (!Number.isInteger(change.to) || change.to < 0 || change.to >= rows.length) return bad;
+        if (change.list === "fields") {
+          const moved = moveField(rows as PlaybookRowsInput["fields"], change.index, change.to);
+          return moved ? { ok: true, input: LISTS.fields.put(input, moved) } : bad;
+        }
         const [row] = rows.splice(change.index, 1);
         rows.splice(change.to, 0, row);
         const [at] = order.splice(change.index, 1);
@@ -433,7 +441,13 @@ export function readPlaybookChange(raw: unknown): PlaybookChange | null {
         if (s !== null) values[k] = s;
       }
       const o = r.outcomes && typeof r.outcomes === "object" ? (r.outcomes as Record<string, unknown>) : null;
-      return { kind: "set", values, ...(o ? { outcomes: { orderForm: o.orderForm === true, bankTransfer: o.bankTransfer === true, meeting: o.meeting === true } } : {}) };
+      const q = r.openerQuestion && typeof r.openerQuestion === "object" ? (r.openerQuestion as Record<string, unknown>) : null;
+      const qEn = q ? str(q.en) : null;
+      return {
+        kind: "set", values,
+        ...(o ? { outcomes: { orderForm: o.orderForm === true, bankTransfer: o.bankTransfer === true, meeting: o.meeting === true } } : {}),
+        ...(q && qEn !== null ? { openerQuestion: { en: qEn, he: str(q.he) ?? "" } } : {}),
+      };
     }
     case "add": case "edit": {
       if (!list) return null;

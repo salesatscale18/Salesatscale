@@ -26,10 +26,15 @@ export function DraftBar({ bar }: { bar: DraftBarData }) {
       <span className="pb-draftbar__text"><strong>{text.lead}</strong>{text.rest ? <> <span className="pb-muted">{text.rest}</span></> : null}</span>
       <span className="pb-draftbar__actions">
         {bar.compareHref ? <a className={buttonClass("secondary", "sm")} href={bar.compareHref} data-compare-with-live="">{t("compare.with_live")}</a> : null}
-        <form action={publishAction}>
-          <input type="hidden" name="slug" value={bar.slug} />
-          <button type="submit" className={buttonClass("primary", "sm")} data-publish="">{t("lab.publish", { version: bar.draftVersion })}</button>
-        </form>
+        {bar.changes === 0 ? (
+          // Nothing to publish: Publish stays visible but off (the action and its checks are unchanged).
+          <button type="button" className={buttonClass("secondary", "sm")} disabled data-publish="" data-publish-off="">{t("lab.publish", { version: bar.draftVersion })}</button>
+        ) : (
+          <form action={publishAction}>
+            <input type="hidden" name="slug" value={bar.slug} />
+            <button type="submit" className={buttonClass("primary", "sm")} data-publish="">{t("lab.publish", { version: bar.draftVersion })}</button>
+          </form>
+        )}
       </span>
     </section>
   );

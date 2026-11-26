@@ -34,8 +34,8 @@ describe("the default reminders key", () => {
     const changed = { ...base, unpaidReminders: { first: { days: 3, on: true }, second: { days: 5, on: false }, team: { days: 7, on: true } } } as PlaybookWithUnpaid;
     const rows = diffVersions(v(base), v(changed), opts);
     expect(rows.map((r) => [r.area, r.item, r.before?.map((s) => s.text).join(""), r.after?.map((s) => s.text).join("")])).toEqual([
-      ["close", "Signed, not paid yet · First reminder", "2 days after signing", "3 days after signing"],
-      ["close", "Signed, not paid yet · Second reminder", "5 days after signing", "Off"],
+      ["after", "Signed, not paid yet · First reminder", "2 days after signing", "3 days after signing"],
+      ["after", "Signed, not paid yet · Second reminder", "5 days after signing", "Off"],
     ]);
     expect(rows.some((r) => r.area === "other")).toBe(false);
   });

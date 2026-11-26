@@ -80,8 +80,8 @@ describe("gap notes: only what can be computed today", () => {
   it("opening question, examples, plays without facts, unanswered buyer questions; each with its link", () => {
     const p = pb({ fields: [{ key: "a", label: "A", stage: "before_quote" }, { key: "b", label: "B", stage: "optional", example: "B?" }, { key: "c", label: "C", stage: "before_order_form" }] });
     expect(gapNotes(p, { plays, unanswered: 2, href })).toEqual([
-      { id: "opening_question", part: "opening", text: "No opening question yet. The agent asks the general one.", link: "Add one", href: "/pb/opening" },
-      { id: "examples", part: "asks", text: "1 question has no example question.", link: "Add examples", href: "/pb/asks" },
+      { id: "opening_question", part: "opening", text: "No opening question yet. The agent asks the general one.", link: "Add one", href: "/pb/opening?edit=question" },
+      { id: "examples", part: "asks", text: "1 question has no example question.", link: "Add examples", href: "/pb/asks?edit=field.0" },
       { id: "plays", part: "plays", text: "14 sales plays would be sharper with your facts.", link: "Add facts", href: "/pb/plays?filter=needs" },
       { id: "questions", part: null, text: "2 buyer questions the agent couldn't answer.", link: "Answer them", href: "/k?view=questions" },
     ]);
@@ -89,6 +89,10 @@ describe("gap notes: only what can be computed today", () => {
   it("none when all is filled (order-form fields need no example)", () => {
     const p = pb({ fields: [{ key: "c", label: "C", stage: "before_order_form" }], opener: { topics: [], defaultTopic: 0, question: { en: "How?" } } });
     expect(gapNotes(p, { plays: { ...plays, sharper: 0 }, unanswered: 0, href })).toEqual([]);
+    // One row fixes it: that row opens (its index in the stored list); several: the list.
+    const examples = (fields: Playbook["fields"]) => gapNotes(pb({ fields }), { plays, unanswered: 0, href }).find((g) => g.id === "examples")?.href;
+    expect(examples([{ key: "c", label: "C", stage: "before_order_form" }, { key: "b", label: "B", stage: "optional" }])).toBe("/pb/asks?edit=field.1");
+    expect(examples([{ key: "a", label: "A", stage: "before_quote" }, { key: "b", label: "B", stage: "optional" }])).toBe("/pb/asks");
     // A Hebrew-only question still counts as a question.
     expect(gapNotes(pb({ fields: [], opener: { topics: [], defaultTopic: 0, question: { en: "", he: "איך?" } } }), { plays: { ...plays, sharper: 0 }, unanswered: 0, href })).toEqual([]);
   });

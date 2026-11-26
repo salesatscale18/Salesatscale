@@ -128,20 +128,21 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
   });
 
   describe("A9. Objections and questions; the stepper", () => {
-    it("the approved answer grows; × sits in its own block (top of the card on a phone); the example is plain text", async () => {
+    it("the approved answer grows; delete sits at the end of the row (no handle: order does not matter); the example is plain text", async () => {
       const html = await render(PartPage, { part: "objections" });
       save("playbook", html);
-      const row = html.match(/<li class="pb-obj-row"[\s\S]*?<\/li>/)?.[0] ?? "";
-      expect(row).toMatch(/<textarea class="sas-textarea pb-grow pb-grow--3" id="pb-objection\.0\.answer"/);
-      expect(row).toMatch(/<div class="pb-obj-remove"><button/);
+      const row = html.match(/data-row="objection\.0"[\s\S]*?data-remove=""/)?.[0] ?? "";
+      expect(row).toContain('aria-label="Remove: ');
+      expect(row).not.toContain("pb-handle");
+      // S2: open, the answer grows with its text.
+      const open = await render(PartPage, { part: "objections" }, { edit: "objection.0" });
+      expect(open).toMatch(/<textarea class="sas-textarea pb-grow pb-grow--3 pb-fit-long" id="pb-objection\.0\.answer"/);
       const pbCss = fs.readFileSync("app/app/[account]/setup/playbook/playbook.css", "utf8");
-      expect(pbCss).toMatch(/@media \(max-width: 767px\) \{[\s\S]*?\.pb-obj-remove \{ position: absolute; inset-block-start: 6px; inset-inline-end: 0;/);
-      // The example: borderless and transparent until hover or focus.
-      expect(pbCss).toMatch(/\.sas-textarea\.pb-q-example \{[^}]*border-color: transparent; background: transparent;/);
-      expect(pbCss).toMatch(/\.sas-textarea\.pb-q-example:hover \{ border-color: var\(--line\); \}/);
-      // ↑ keeps its distance from the role select.
-      expect(pbCss).toMatch(/\.pb-row-actions \{[^}]*padding-inline-start: 8px;/);
-      expect(await render(PartPage, { part: "asks" })).toContain('<col style="width:124px"/>');
+      // On a phone the buyer's words and the answer stack.
+      expect(pbCss).toMatch(/@media \(max-width: 767px\) \{[\s\S]*?\.pb-obj \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+      // The example question: plain muted text under the question in the read state.
+      const asks = await render(PartPage, { part: "asks" });
+      expect(asks).toMatch(/<span class="sas-small( pb-warn-text)?" (dir="auto" data-example=""|data-example-missing="")>/);
     });
 
     it("− is off at 2 and + at 6; both work in between", async () => {

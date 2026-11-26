@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { Icon } from "@/components/sas/icon";
 import { requireAccount } from "@/lib/auth/account";
-import { agentNameRows } from "@/lib/agent/core/names";
+import { agentGenderOf, agentNameRows, localAgentName } from "@/lib/agent/core/names";
 import { isPlaybookPart } from "@/lib/agent/playbook-parts";
 import { HANDOFF_NOTICE_COOKIE, showHandoffNotice } from "@/lib/agent/handoff-notice";
 import { unpaidRemindersOf } from "@/lib/orders/unpaid-reminders";
@@ -12,7 +12,8 @@ import { t } from "@/lib/i18n";
 import { loadPlaybook } from "../data";
 import { PartShell } from "../shell";
 import { AgentRows, CloseRows, LimitsRows, NeverRows } from "../part-rows";
-import { AfterPart, AsksPart, ObjectionsPart, OpeningPart } from "../part-editors";
+import { AfterPart } from "../part-editors";
+import { AsksRows, ObjectionsRows, OpeningRows } from "../list-rows";
 
 /** The notice cookie, or nothing outside a request (render tests). */
 async function noticeCookie(): Promise<string | undefined> {
@@ -21,9 +22,9 @@ async function noticeCookie(): Promise<string | undefined> {
 
 /**
  * Setup · Playbook › one part (boards PlaybookAgent, PlaybookClose,
- * PlaybookLimits, PlaybookNever, …). Agent, How a deal closes, Limits and
- * Never do are read first, one row edited at a time; Opening, What it asks,
- * Objections and After the order keep their editors. Always the draft.
+ * PlaybookLimits, PlaybookNever, PlaybookOpening2, PlaybookAsks,
+ * PlaybookObjections). Every part but After the order is read first, one row
+ * edited at a time; After the order keeps its editor. Always the draft.
  * Sales plays keep their own pages (plays/).
  */
 export default async function PlaybookPartPage({ params, searchParams }: { params: Promise<{ account: string; part: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -67,14 +68,21 @@ export default async function PlaybookPartPage({ params, searchParams }: { param
     case "never":
       body = <NeverRows {...base} p={p} />;
       break;
-    case "opening":
-      body = <OpeningPart {...base} p={p} company={account.tradeName} companyLocal={account.tradeNameLocal} key={JSON.stringify(p.opener ?? null)} />;
+    case "opening": {
+      const company = account.tradeName;
+      const local = account.tradeNameLocal;
+      const names = {
+        en: { agent: localAgentName(p, "en", company), company: local?.en?.trim() || company },
+        he: { agent: localAgentName(p, "he", company), company: local?.he?.trim() || company },
+      };
+      body = <OpeningRows {...base} p={p} names={names} gender={agentGenderOf(p)} />;
       break;
+    }
     case "asks":
-      body = <AsksPart {...base} p={p} orderFormHref={`${data.base}/setup/order-form`} key={JSON.stringify([p.fields, p.questionBudget ?? null])} />;
+      body = <AsksRows {...base} p={p} orderFormHref={`${data.base}/setup/order-form`} />;
       break;
     case "objections":
-      body = <ObjectionsPart {...base} p={p} key={JSON.stringify([p.objections, p.objectionAttempts ?? null])} />;
+      body = <ObjectionsRows {...base} p={p} />;
       break;
     case "after":
       body = <AfterPart {...base} p={p} liveUnpaid={unpaidRemindersOf(data.live?.playbook ?? null)} key={JSON.stringify(unpaidRemindersOf(p))} />;

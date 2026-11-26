@@ -45,7 +45,8 @@ export default async function PlaybookPage({ params }: { params: Promise<{ accou
                   const gap = gaps.find((x) => x.part === part);
                   return (
                     <li key={part}>
-                      <a className="pb-home__row" href={data.hrefs[part]} data-part={part}>
+                      {/* A row with an amber note goes where that gap is fixed (the row in edit state, or the list). */}
+                      <a className="pb-home__row" href={gap?.href ?? data.hrefs[part]} data-part={part}>
                         <span className="pb-home__icon" aria-hidden="true"><Icon name={PART_ICON[part]} /></span>
                         <span className="pb-home__name">{t(PART_LABEL[part])}{NEW_PARTS.has(part) ? <span className="pb-new">{t("playbook.new")}</span> : null}</span>
                         <span className="pb-home__summary" dir="auto">{data.lines[part].summary}</span>

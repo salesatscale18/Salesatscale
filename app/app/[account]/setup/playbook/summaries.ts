@@ -96,9 +96,11 @@ export type GapNote = { id: string; part: PlaybookPart | null; text: string; lin
 export function gapNotes(p: Playbook, ctx: { plays: PlaysSummary; unanswered: number; href: { part: (part: PlaybookPart) => string; playsNeeds: string; questions: string } }): GapNote[] {
   const out: GapNote[] = [];
   const o = readOpener(p.opener);
-  if (!o.question) out.push({ id: "opening_question", part: "opening", text: t("playbook.gap.opening_question"), link: t("playbook.gap.add_one"), href: ctx.href.part("opening") });
-  const noExample = chatQuestions(p).filter((f) => !f.example?.trim()).length;
-  if (noExample) out.push({ id: "examples", part: "asks", text: t(noExample === 1 ? "playbook.gap.examples_one" : "playbook.gap.examples", { n: noExample }), link: t("playbook.gap.add_examples"), href: ctx.href.part("asks") });
+  // A gap that one row fixes opens that row (`?edit=<row>`); several rows: the part's list.
+  if (!o.question) out.push({ id: "opening_question", part: "opening", text: t("playbook.gap.opening_question"), link: t("playbook.gap.add_one"), href: `${ctx.href.part("opening")}?edit=question` });
+  const missing = p.fields.flatMap((f, i) => (f.stage !== "before_order_form" && !f.example?.trim() ? [i] : []));
+  const noExample = missing.length;
+  if (noExample) out.push({ id: "examples", part: "asks", text: t(noExample === 1 ? "playbook.gap.examples_one" : "playbook.gap.examples", { n: noExample }), link: t("playbook.gap.add_examples"), href: noExample === 1 ? `${ctx.href.part("asks")}?edit=field.${missing[0]}` : ctx.href.part("asks") });
   if (ctx.plays.sharper) out.push({ id: "plays", part: "plays", text: t(ctx.plays.sharper === 1 ? "playbook.gap.plays_one" : "playbook.gap.plays", { n: ctx.plays.sharper }), link: t("playbook.gap.add_facts"), href: ctx.href.playsNeeds });
   if (ctx.unanswered) out.push({ id: "questions", part: null, text: t(ctx.unanswered === 1 ? "playbook.gap.questions_one" : "playbook.gap.questions", { n: ctx.unanswered }), link: t("playbook.gap.answer_them"), href: ctx.href.questions });
   return out;

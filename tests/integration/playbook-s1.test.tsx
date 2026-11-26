@@ -123,7 +123,19 @@ function entriesOf(f: Old): [string, string][] {
 const move = <T,>(xs: T[], from: number, to: number) => { const r = [...xs]; const [x] = r.splice(from, 1); r.splice(to, 0, x); return r; };
 
 /** Each change, with what a seller did in the old form to get the same values. */
-const CASES: { name: string; change: Change; old: (f: Old) => void }[] = [
+/** S2: chat questions and order-form fields mixed in the stored list (as a seller who changed roles gets). */
+const INTERLEAVED = (p: Playbook): Playbook => ({
+  ...p,
+  fields: [
+    { key: "fridges", label: "Number of fridges", stage: "before_quote", example: "How many fridges?" },
+    { key: "signer", label: "Signer", stage: "before_order_form" },
+    { key: "today", label: "How they check today", stage: "optional", hint: "Free text" },
+    { key: "po", label: "PO number", stage: "before_order_form" },
+    { key: "sites", label: "Sites", stage: "before_quote" },
+  ],
+});
+
+const CASES: { name: string; change: Change; old: (f: Old) => void; prep?: (p: Playbook) => Playbook }[] = [
   { name: "set tone", change: { kind: "set", values: { tone: "  Calm and   short. " } }, old: (f) => { f.tone = "  Calm and   short. "; } },
   { name: "set gender", change: { kind: "set", values: { agentGender: "male" } }, old: (f) => { f.agentGender = "male"; } },
   { name: "set goal", change: { kind: "set", values: { goal: "Close more fridge deals.\nWith care." } }, old: (f) => { f.goal = "Close more fridge deals.\nWith care."; } },
@@ -171,6 +183,33 @@ const CASES: { name: string; change: Change; old: (f: Old) => void }[] = [
   {
     name: "After the order editor", old: (f) => { f.unpaid = { first: { days: "3", on: true }, second: { days: "6", on: false }, team: { days: "9", on: true } }; },
     change: { kind: "part", part: "after", entries: [["unpaid.shown", "1"], ["unpaid.first.days", "3"], ["unpaid.first.on", "on"], ["unpaid.second.days", "6"], ["unpaid.team.days", "9"], ["unpaid.team.on", "on"]] },
+  },
+  // --- S2 (Lists): the read-first rows of Opening, What it asks and Objections ---
+  { name: "S2 first question", change: { kind: "set", values: {}, openerQuestion: { en: "  What do you use   today? ", he: "מה אתם משתמשים היום?" } }, old: (f) => { f.question = { en: "  What do you use   today? ", he: "מה אתם משתמשים היום?" }; } },
+  { name: "S2 first question cleared", change: { kind: "set", values: {}, openerQuestion: { en: "", he: "" } }, old: (f) => { f.question = { en: "", he: "" }; } },
+  { name: "S2 first question, Hebrew only", change: { kind: "set", values: {}, openerQuestion: { en: "", he: "איך?" } }, old: (f) => { f.question = { en: "", he: "איך?" }; } },
+  { name: "S2 topic move by drag, two places up (default follows)", change: { kind: "move", list: "openerTopics", index: 2, to: 0 }, old: (f) => { f.topics = move(f.topics, 2, 0); f.defaultTopic = 2; } },
+  { name: "S2 topic move ↓ of the default", change: { kind: "move", list: "openerTopics", index: 1, to: 2 }, old: (f) => { f.topics = move(f.topics, 1, 2); f.defaultTopic = 2; } },
+  { name: "S2 topic set default on the first", change: { kind: "setDefault", index: 0 }, old: (f) => { f.defaultTopic = 0; } },
+  { name: "S2 topic add, Hebrew only", change: { kind: "add", list: "openerTopics", item: { en: "", he: "יומן טמפרטורות" } }, old: (f) => { f.topics.push({ en: "", he: "יומן טמפרטורות" }); } },
+  { name: "S2 field add to the order form", change: { kind: "add", list: "fields", item: { label: "PO number", stage: "before_order_form", example: "" } }, old: (f) => { f.fields.push({ key: "", hint: "", label: "PO number", stage: "before_order_form", example: "" }); } },
+  { name: "S2 field edit: order-form field asked in chat", change: { kind: "edit", list: "fields", index: 2, item: { key: "signer", label: "Signer", stage: "optional", example: "Who signs?" } }, old: (f) => { f.fields[2] = { ...f.fields[2], stage: "optional", example: "Who signs?" }; } },
+  { name: "S2 field edit keeps the hint", change: { kind: "edit", list: "fields", index: 1, item: { key: "today", label: "How they check now", stage: "optional", example: "", hint: "Free text" } }, old: (f) => { f.fields[1] = { ...f.fields[1], label: "How they check now" }; } },
+  { name: "S2 objection add without a source", change: { kind: "add", list: "objections", item: { objection: "We are too small", answer: "It starts with one fridge.", source: "" } }, old: (f) => { f.objections.push({ objection: "We are too small", answer: "It starts with one fridge.", source: "" }); } },
+  { name: "S2 objection edit adds a source", change: { kind: "edit", list: "objections", index: 1, item: { objection: "Not now", answer: "When would suit you?", source: "Call 4" } }, old: (f) => { f.objections[1] = { ...f.objections[1], source: "Call 4" }; } },
+  // Questions of the two groups mixed in the stored list: a move stays inside its group, like the old ↑ / ↓.
+  {
+    name: "S2 field move ↓ past an order-form field (the old ↓: a swap)", prep: INTERLEAVED,
+    change: { kind: "move", list: "fields", index: 0, to: 2 }, old: (f) => { [f.fields[0], f.fields[2]] = [f.fields[2], f.fields[0]]; },
+  },
+  {
+    name: "S2 field move by drag to the top (the old ↑ three times)", prep: INTERLEAVED,
+    change: { kind: "move", list: "fields", index: 4, to: 0 },
+    old: (f) => { for (const [a, b] of [[4, 2], [2, 0]] as const) [f.fields[a], f.fields[b]] = [f.fields[b], f.fields[a]]; },
+  },
+  {
+    name: "S2 field move inside the order form, past a chat question", prep: INTERLEAVED,
+    change: { kind: "move", list: "fields", index: 1, to: 3 }, old: (f) => { [f.fields[1], f.fields[3]] = [f.fields[3], f.fields[1]]; },
   },
 ];
 
@@ -230,11 +269,12 @@ describe("Playbook S1 against the database", () => {
     for (const variant of ["rich", "sparse"] as const) {
       for (const c of CASES) {
         it(`${variant}: ${c.name}`, async () => {
-          if (variant === "sparse" && /topic (edit|delete|move|set)|remove exception|never (edit|delete|move)|objection (edit|delete)|field (edit|delete|move)/.test(c.name)) return;
+          if (variant === "sparse" && (c.prep || /topic (edit|delete|move|set)|remove exception|never (edit|delete|move)|objection (edit|delete)|field (edit|delete|move)/.test(c.name))) return;
           const start = async (id: string) => {
             const d = await ensureDraftVersion(db, id);
             const base = (await import("@/lib/agent/playbook")).defaultPlaybook("Polar", 500);
-            await saveDraftPlaybook(db, id, variant === "rich" ? RICH(base) : { ...base, agentNameAuto: d.playbook.agentNameAuto } as Playbook);
+            const prep = c.prep ?? ((p: Playbook) => p);
+            await saveDraftPlaybook(db, id, variant === "rich" ? prep(RICH(base)) : { ...base, agentNameAuto: d.playbook.agentNameAuto } as Playbook);
           };
           await start(accNew.id);
           await start(accOld.id);
@@ -280,6 +320,11 @@ describe("Playbook S1 against the database", () => {
       // An out-of-date row (index gone) is refused, not applied elsewhere.
       expect(await savePlaybookChange(db, accNew.id, { kind: "delete", list: "neverDo", index: 9 })).toMatchObject({ ok: false, errors: { "never.9": expect.stringContaining("changed in the meantime") } });
       expect(await savePlaybookChange(db, accNew.id, { kind: "move", list: "fields", index: 0, to: 7 })).toMatchObject({ ok: false });
+      // S2: a question never moves into the other group (chat / order form); the first question keeps the language rule.
+      expect(await savePlaybookChange(db, accNew.id, { kind: "move", list: "fields", index: 0, to: 2 })).toMatchObject({ ok: false, errors: { "field.0": expect.stringContaining("changed in the meantime") } });
+      expect(await savePlaybookChange(db, accNew.id, { kind: "set", values: {}, openerQuestion: { en: "איך?", he: "" } })).toMatchObject({ ok: false, errors: { "opener.question.en": expect.any(String) } });
+      expect(await savePlaybookChange(db, accNew.id, { kind: "set", values: {}, openerQuestion: { en: "x".repeat(201), he: "" } })).toMatchObject({ ok: false, errors: { "opener.question.en": "Use 200 characters or fewer." } });
+      expect(await savePlaybookChange(db, accNew.id, { kind: "add", list: "openerTopics", item: { en: "Monitoring your fridges", he: "" } })).toMatchObject({ ok: false, errors: { "opener.topic.3.en": "This topic appears twice." } });
       expect(await draftOf(accNew.id)).toEqual(before);
     });
 
@@ -402,11 +447,11 @@ describe("Playbook S1 against the database", () => {
     const PARTS: [string, string, string[], string[]][] = [
       ["agent", "name", ["Speaks as", "Who takes calls", "our sales manager", "Female"], ['id="pb-agentName"', "Names in other languages", ">Save</button>", ">Cancel</button>"]],
       ["close", "goal", ["Sales goal", "A sale can end with", "Order form and card payment"], ['id="pb-goal"']],
-      ["limits", "handOffWhen", ["Discount without approval", "10% maximum", "Offer a call when", "Hand over to a person when", "When the buyer asks for a person, the agent says yes", "Approved exceptions", "Installation is free from 3 sites"], ['id="pb-handOffWhen"', "When the buyer asks for a person, the agent says yes"]],
+      ["limits", "handOffWhen", ["Discount without approval", "10% maximum", "Offer a call when", "Hand over to a person when", "Approved exceptions", "Installation is free from 3 sites"], ['id="pb-handOffWhen"', "When the buyer asks for a person, the agent says yes"]],
       ["never", "never.1", ["Never name a competitor.", "Add rule", "Covered by Limits"], ['id="pb-never.1"']],
-      ["opening", "", ["What leads usually ask about", "Preview"], []],
-      ["asks", "", ["Questions before recommending", "Where the answer is used", "Needed for the quote"], []],
-      ["objections", "", ["Attempts per objection", "Approved answer"], []],
+      ["opening", "topic.1", ["What leads ask about · 3 of 6", "alerts at night", "Make default", "First question", "How do you check them today?", "Each lead page picks one of these topics", "Preview"], ['id="pb-opener.topic.1.en"', 'id="pb-opener.topic.1.he"']],
+      ["asks", "field.0", ["Questions before it recommends", "Where the answer is used", "Needed for the quote", "e.g. How many fridges?"], ['id="pb-field.0.label"', 'id="pb-field.0.stage"']],
+      ["objections", "objection.0", ["Tries per objection", "Buyer says", "Approved answer", "From: Call 2"], ['id="pb-objection.0.answer"', 'id="pb-objection.0.source"']],
       ["after", "", ["Signed, not paid yet", "Reminder wording"], []],
     ];
     for (const [part, edit, readTexts, editTexts] of PARTS) {
@@ -423,7 +468,7 @@ describe("Playbook S1 against the database", () => {
         if (!edit) return;
         // Read first: no open fields, a Change per row.
         expect(html).not.toMatch(/<form class="pb-row__form"/);
-        expect(html).toContain(">Change</button>");
+        expect(html).toMatch(/>Change<\/button>|aria-label="Change: /);
         const open = await render(PartPage, { part }, { edit });
         save(`part-${part}-edit`, open);
         expect(open.match(/<form class="pb-row__form"/g)?.length).toBe(1);
