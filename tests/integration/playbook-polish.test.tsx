@@ -175,10 +175,11 @@ describe("Playbook navigation and polish (rendered)", () => {
     const html = await render(PlaysPage as Page, acc, {}, { show: "all" });
     save("plays", html);
     expect(html).toContain('data-testid="draft-bar"');
-    // Too expensive: the seller's fact plus the filled discount limit (5%, kept in Limits) count (R3-6, A9).
-    expect(html).toMatch(/2 facts<span[^>]*data-missing="">[^<]*add what the problem costs a typical customer, smaller starting set, what a discount can be traded for, what the price includes/);
-    expect(html).toContain("Uses your hand-off rule in Limits");
-    expect(html).toContain("Add approved comparison facts");
+    // S3 (UX): a row is name, one-line summary and state; the facts line ("2 facts · add …", "Uses your hand-off
+    // rule in Limits") stays on the play's own page (named empty slots: the next test).
+    expect(html).not.toContain("data-facts=");
+    expect(html).not.toContain("Add approved comparison facts");
+    expect(html).toMatch(/data-play="too_expensive" data-play-state="ready"/);
     expect(html).toContain("sas-views pb-filters");
     expect(html).toMatch(/All <span class="pb-count">19<\/span>/);
     expect(html).toMatch(/aria-current="page" data-part="plays"><span class="pb-menu__name">Sales plays</);

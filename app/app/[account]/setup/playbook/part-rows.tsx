@@ -13,6 +13,7 @@ import { dismissHandoffNoticeAction } from "./actions";
 import { PlatformFixed, enterSaves, growProps } from "./parts";
 import { restatesDiscountLimit, shortDate } from "./checks";
 import { AddRow, EditRow, PartRows, RowCommand, type ErrorOf } from "./row";
+import { useAgentDraft } from "./preview";
 import "./playbook.css";
 
 /** `edit`: the row opened first (from `?edit=`). */
@@ -37,11 +38,12 @@ export type AgentNamesView = { rows: NameRow[]; source: string; notice: string |
 
 function NameEditor({ name, names, e }: { name: string; names: AgentNamesView; e: ErrorOf }) {
   const [typed, setTyped] = useState(name);
+  const follow = useAgentDraft("name");
   const errors: Record<string, string | undefined> = Object.fromEntries(names.rows.map((r) => [`agentNameLocal.${r.lang}`, e(`agentNameLocal.${r.lang}`)]));
   return (
     <>
       <label className="sas-sr" htmlFor="pb-agentName">{t("playbook.agent_name")}</label>
-      <input className="sas-input pb-fit-name" id="pb-agentName" name="agentName" maxLength={60} value={typed} onChange={(ev) => setTyped(ev.target.value)} {...aria("pb-agentName", e("agentName"))} />
+      <input className="sas-input pb-fit-name" id="pb-agentName" name="agentName" maxLength={60} value={typed} onChange={(ev) => { setTyped(ev.target.value); follow(ev.target.value); }} {...aria("pb-agentName", e("agentName"))} />
       <Err id="pb-agentName" msg={e("agentName")} />
       <LocalNames
         id="pb-names" inputPrefix="agentNameLocal" rows={names.rows} what={t("names.col_agent")} column={t("names.col_agent")} maxLength={60}
@@ -54,11 +56,12 @@ function NameEditor({ name, names, e }: { name: string; names: AgentNamesView; e
 
 function GenderEditor({ value }: { value: string }) {
   const [gender, setGender] = useState(value);
+  const follow = useAgentDraft("gender");
   return (
     <span role="radiogroup" aria-label={t("playbook.agent_speaks")} className="pb-seg pb-seg--lg">
       {AGENT_GENDERS.map((g) => (
         <label key={g} data-gender={g} data-on={gender === g ? "" : undefined}>
-          <input type="radio" className="sas-sr" name="agentGender" value={g} checked={gender === g} onChange={() => setGender(g)} />
+          <input type="radio" className="sas-sr" name="agentGender" value={g} checked={gender === g} onChange={() => { setGender(g); follow(g); }} />
           {t(`playbook.agent_gender.${g}`)}
         </label>
       ))}
@@ -218,9 +221,9 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
 }) {
   const excId = useId();
   const exceptions: PlaybookException[] = p.exceptions ?? [];
-  const text = (id: "offerMeetingWhen" | "handOffWhen", label: MessageKey, extra?: ReactNode) => (
+  const text = (id: "offerMeetingWhen" | "handOffWhen", label: MessageKey, extra?: ReactNode, readHint?: ReactNode) => (
     <EditRow
-      id={id} label={t(label)} own={[id]}
+      id={id} label={t(label)} own={[id]} readHint={readHint}
       read={<span className="sas-stack-2" style={{ gap: 6 }}>{p[id].trim() ? <span dir="auto" className="pb-long">{p[id]}</span> : <Empty k="playbook.not_set" />}</span>}
       editor={(e) => (
         <>
@@ -237,7 +240,7 @@ export function LimitsRows({ slug, hrefs, edit, p, handOffNotice }: Base & {
     <PartRows slug={slug} part="limits" hrefs={hrefs} edit={edit}>
       <MaxDiscountRow maxDiscountBp={p.maxDiscountBp} />
       {text("offerMeetingWhen", "playbook.meeting_when")}
-      {text("handOffWhen", "playbook.handoff_when", <span className="sas-hint" data-handoff-always="">{t("playbook.handoff_always")}</span>)}
+      {text("handOffWhen", "playbook.handoff_when", <span className="sas-hint" data-handoff-always="">{t("playbook.handoff_always")}</span>, <span data-handoff-always-read="">{t("playbook.handoff_always_read")}</span>)}
       {handOffNotice ? (
         // O1: dismissed per user (cookie). Its own form and action, which do not save the playbook.
         <form action={dismissHandoffNoticeAction} className="sas-alert pb-notice pb-rows__note" role="status" data-testid="handoff-notice">
@@ -304,14 +307,15 @@ export function NeverRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbook, "
             )}
             editor={(e) => <><label className="sas-sr" htmlFor={`pb-never.${i}`}>{label}</label><RuleEditor id={`pb-never.${i}`} name="rule" value={rule} e={e} errKey={`never.${i}`} /></>}
             toChange={(form) => ({ kind: "edit", list: "neverDo", index: i, item: val(form, "rule") })}
-            extra={<RowCommand change={{ kind: "delete", list: "neverDo", index: i }} label={t("playbook.row.remove_short")} ariaLabel={t("playbook.row.remove", { what: rule })} />}
+            extra={<RowCommand change={{ kind: "delete", list: "neverDo", index: i }} label={t("playbook.row.remove_short")} ariaLabel={t("playbook.row.remove", { what: rule })} focusAfter={i < p.neverDo.length - 1 ? `never.${i}` : "never.add"} />}
           />
         );
       })}
       <AddRow
         id="never.add" label={t("playbook.never.add")} own={[`never.${p.neverDo.length}`, "never"]}
         editor={(e) => <><label className="sas-sr" htmlFor="pb-never.new">{t("playbook.never.rule", { n: p.neverDo.length + 1 })}</label><RuleEditor id="pb-never.new" name="rule" value="" e={e} errKey={`never.${p.neverDo.length}`} /></>}
-        toChange={(form) => (val(form, "rule").trim() ? { kind: "add", list: "neverDo", item: val(form, "rule") } : null)}
+        newId={`never.${p.neverDo.length}`}
+        toChange={(form) => (val(form, "rule").trim() ? { kind: "add", list: "neverDo", item: val(form, "rule") } : { refuse: { [`never.${p.neverDo.length}`]: t("playbook.never.rule_required") } })}
       />
       <div className="pb-rows__note"><PlatformFixed>{t("playbook.never_hint")}</PlatformFixed></div>
     </PartRows>

@@ -10,14 +10,24 @@ import { savePlaybookRowAction } from "./actions";
 import { PART_LABEL } from "./summaries";
 import "./playbook.css";
 
-/** What a part's rows share: the account, the part links, and which row is open (one at a time). */
-type RowsCtx = { slug: string; part: PlaybookPart; hrefs: Record<PlaybookPart, string>; open: string | null; setOpen: (id: string | null) => void };
+/**
+ * What a part's rows share: the account, the part links, which row is open (one at a time), and where keyboard
+ * focus goes after a save (`focusTo`): the saved row's edit control, the new row's after an add, the next row's
+ * (or the Add button) after a delete. Rows are keyed by their text, so the saved row is often a new element.
+ */
+type RowsCtx = {
+  slug: string; part: PlaybookPart; hrefs: Record<PlaybookPart, string>; open: string | null; setOpen: (id: string | null) => void;
+  focusWant: { id: string; at: number } | null; focusTo: (id: string | null) => void;
+};
 const Ctx = createContext<RowsCtx | null>(null);
 
 /** `edit`: the row to open first (a link such as `limits?edit=handOffWhen`). */
 export function PartRows({ slug, part, hrefs, edit, children }: { slug: string; part: PlaybookPart; hrefs: Record<PlaybookPart, string>; edit?: string | null; children: ReactNode }) {
-  const [open, setOpen] = useState<string | null>(edit ?? null);
-  return <Ctx.Provider value={{ slug, part, hrefs, open, setOpen }}><div className="pb-rows">{children}</div></Ctx.Provider>;
+  const [open, setOpenState] = useState<string | null>(edit ?? null);
+  const [focusWant, setFocusWant] = useState<{ id: string; at: number } | null>(null);
+  const setOpen = (id: string | null) => { if (id !== null) setFocusWant(null); setOpenState(id); };
+  const focusTo = (id: string | null) => setFocusWant(id ? { id, at: Date.now() } : null);
+  return <Ctx.Provider value={{ slug, part, hrefs, open, setOpen, focusWant, focusTo }}><div className="pb-rows">{children}</div></Ctx.Provider>;
 }
 
 export function useRows(): RowsCtx {
@@ -27,6 +37,20 @@ export function useRows(): RowsCtx {
 }
 
 export type ErrorOf = (key: string) => string | undefined;
+
+/** A row's save refused before it is sent (an empty Add): the message per input key, shown at the row. */
+export type RowRefusal = { refuse: Record<string, string> };
+
+/** Moves focus to this element when the rows asked for it (`focusTo(id)`), once; a request older than 5 s is ignored. */
+export function useFocusTarget(id: string, ref: { current: HTMLElement | null }, active = true) {
+  const c = useRows();
+  const want = c.focusWant;
+  useEffect(() => {
+    if (!active || !want || want.id !== id || Date.now() - want.at > 5000 || !ref.current) return;
+    ref.current.focus();
+    c.focusTo(null);
+  });
+}
 
 /** Errors of keys this row owns (`never.2`, `agentNameLocal.he`, …). */
 const owns = (own: readonly string[], key: string) => own.some((o) => key === o || key.startsWith(`${o}.`));
@@ -84,14 +108,16 @@ export function useRowSave(onDone: () => void, onFail?: () => void) {
  * error at the row when it is refused. Focus moves into the fields on open and
  * back to "Change" on close. `extra`: more buttons in the read state (Remove).
  */
-export function EditRow({ id, label, read, editor, toChange, own, hint, readHint, wide, changeLabel, extra, editable = true, item, lead, aside, rowAttrs, after }: {
+export function EditRow({ id, label, read, editor, toChange, own, hint, readHint, wide, changeLabel, extra, editable = true, item, lead, aside, rowAttrs, after, focusAfter }: {
   id: string;
   label: ReactNode;
   read: ReactNode;
   /** The fields; `e(key)` gives the row's own error for an input (also for aria-invalid). */
   editor?: (e: ErrorOf) => ReactNode;
-  /** The change to save from the row's form; null keeps it open (nothing to save). */
-  toChange?: (form: FormData) => PlaybookChange | null;
+  /** The change to save from the row's form; null keeps it open (nothing to save); a refusal shows its message at the row. */
+  toChange?: (form: FormData) => PlaybookChange | null | RowRefusal;
+  /** Where focus goes after a successful save (default: this row's edit control; an Add row: the new row's). */
+  focusAfter?: string;
   /** Error keys this row owns (shown inline); others name their part. */
   own?: readonly string[];
   /** The full helper: shown only while the row is open. */
@@ -120,8 +146,9 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, readHint
   const formRef = useRef<HTMLFormElement>(null);
   const wasOpen = useRef(false);
   const close = () => c.setOpen(null);
-  const { pending, errors, setErrors, run } = useRowSave(close);
+  const { pending, errors, setErrors, run } = useRowSave(() => { close(); c.focusTo(focusAfter ?? id); });
   const labelId = useId();
+  useFocusTarget(id, changeRef, !open);
 
   useEffect(() => {
     if (open) formRef.current?.querySelector<HTMLElement>("input:not([type=hidden]), textarea, select, button")?.focus();
@@ -142,7 +169,12 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, readHint
         {open && editor ? (
           <form
             ref={formRef} className="pb-row__form" aria-labelledby={labelId} noValidate
-            onSubmit={(ev) => { ev.preventDefault(); run(toChange?.(new FormData(ev.currentTarget)) ?? null); }}
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              const change = toChange?.(new FormData(ev.currentTarget)) ?? null;
+              if (change && "refuse" in change) setErrors(change.refuse);
+              else run(change);
+            }}
             onKeyDown={(ev) => { if (ev.key === "Escape") { ev.preventDefault(); setErrors(null); close(); } }}
           >
             {editor(e)}
@@ -182,8 +214,9 @@ export function EditRow({ id, label, read, editor, toChange, own, hint, readHint
  * A button in a read row that saves one change at once (Remove), with its own
  * pending state and the refusal shown at the row.
  */
-export function RowCommand({ change, label, ariaLabel, confirmText }: { change: PlaybookChange; label: string; ariaLabel?: string; confirmText?: string }) {
-  const { pending, errors, run } = useRowSave(() => {});
+export function RowCommand({ change, label, ariaLabel, confirmText, focusAfter }: { change: PlaybookChange; label: string; ariaLabel?: string; confirmText?: string; focusAfter?: string }) {
+  const c = useRows();
+  const { pending, errors, run } = useRowSave(() => { if (focusAfter) c.focusTo(focusAfter); });
   return (
     <>
       <button
@@ -198,20 +231,24 @@ export function RowCommand({ change, label, ariaLabel, confirmText }: { change: 
 }
 
 /** "Add …": a button that opens an empty editor at the end of a list. */
-export function AddRow({ id, label, editor, toChange, own, disabled, note }: {
-  id: string; label: string; editor: (e: ErrorOf) => ReactNode; toChange: (form: FormData) => PlaybookChange | null; own: readonly string[];
+export function AddRow({ id, label, editor, toChange, own, disabled, note, newId }: {
+  id: string; label: string; editor: (e: ErrorOf) => ReactNode; toChange: (form: FormData) => PlaybookChange | null | RowRefusal; own: readonly string[];
+  /** The id of the row an add creates: focus goes to its edit control after the save. */
+  newId?: string;
   /** The list is full: the button is off and `note` says why. */
   disabled?: boolean;
   note?: ReactNode;
 }) {
   const c = useRows();
+  const addRef = useRef<HTMLButtonElement>(null);
+  useFocusTarget(id, addRef, c.open !== id);
   if (c.open !== id) {
     return (
       <div className="pb-row pb-row--add">
-        <button type="button" className={buttonClass("secondary", "sm")} onClick={() => c.setOpen(id)} disabled={disabled} data-add={id}><Icon name="plus" />{label}</button>
+        <button ref={addRef} type="button" className={buttonClass("secondary", "sm")} onClick={() => c.setOpen(id)} disabled={disabled} data-add={id}><Icon name="plus" />{label}</button>
         {note ? <span className="sas-small pb-row__note">{note}</span> : null}
       </div>
     );
   }
-  return <EditRow id={id} label={label} read={null} editor={editor} toChange={toChange} own={own} wide />;
+  return <EditRow id={id} label={label} read={null} editor={editor} toChange={toChange} own={own} wide focusAfter={newId ?? id} />;
 }

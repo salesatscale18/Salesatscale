@@ -314,3 +314,46 @@
   .pb-list-head, .pb-part__chips { padding-inline: 16px; }
   .sas-app a.pb-play { padding-inline: 16px; }
 }
+
+/* S3: a part with a preview (Agent, Opening, After the order): the part (~640px) and the preview column on the right,
+   sticky while the part scrolls. Narrower screens: the preview opens from a "Preview" button as a sheet (as Lead pages). */
+.pb-part-layout[data-with-preview] { grid-template-columns: 220px minmax(0, 640px) minmax(260px, 300px); }
+.pb-part-layout[data-with-preview] .pb-part-main { max-width: 640px; }
+.pb-pv { position: sticky; top: 16px; min-width: 0; }
+.pb-pv__toggle { display: none; }
+.pb-pv__sheet { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; }
+.pb-pv__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pb-pv__close { display: none; }
+.pb-pv__bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.pb-pv__bar > .sas-small { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.pb-tint { background: var(--primary-soft); color: var(--primary); border-radius: 4px; padding-inline: 2px; }
+.pb-pv__step { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pb-pv__step[data-off] { opacity: .6; }
+.pb-pv__when { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 8px; font-size: 14px; }
+.pb-pv__sms { display: flex; flex-direction: column; gap: 4px; }
+.pb-pv__sms .sas-small { display: inline-flex; align-items: center; gap: 4px; }
+.pb-pv__sms .sas-ico { width: 14px; height: 14px; }
+.pb-pv__sms-text { padding: 8px 10px; border-radius: var(--radius-md); background: var(--surface-sunken); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.pb-pv__need { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--line); background: var(--surface); }
+/* Opening: a topic's text picks it for the preview. */
+.sas-app .pb-pick { display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; border-radius: var(--radius-sm); }
+.sas-app .pb-pick:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-app .pb-pick[aria-pressed="true"] > span > span:first-child { color: var(--primary); font-weight: 600; }
+/* Objections: raised by buyers with no approved answer. */
+.pb-gapline { display: flex; flex-direction: column; gap: 6px; border-inline-start: 3px solid var(--warning); }
+.pb-gapline__title { font-weight: 600; color: var(--warning); }
+.pb-gapline__item { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; justify-content: space-between; }
+.pb-gapline__item > span { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 1359px) {
+  .pb-part-layout[data-with-preview] { grid-template-columns: 220px minmax(0, 1fr); padding-block-end: 64px; }
+  .pb-part-layout[data-with-preview] .pb-part-main { max-width: 760px; }
+  .pb-pv { position: static; grid-column: 1 / -1; }
+  .pb-pv__toggle { display: inline-flex; position: fixed; inset-block-end: 16px; inset-inline-end: 16px; z-index: 40; box-shadow: var(--shadow-pop); }
+  .pb-pv__sheet { display: none; }
+  .pb-pv[data-open] .pb-pv__sheet { display: flex; position: fixed; inset: 0; z-index: 50; overflow-y: auto; overscroll-behavior: contain; border: 0; border-radius: 0; margin: 0; }
+  .pb-pv[data-open] .pb-pv__head { position: sticky; inset-block-start: -16px; z-index: 2; margin: -16px -16px 0; padding: 12px 16px; background: var(--surface-raised); border-bottom: 1px solid var(--line); }
+  .pb-pv__close { display: inline-flex; }
+}
+@media (max-width: 899px) {
+  .pb-part-layout[data-with-preview] { grid-template-columns: minmax(0, 1fr); }
+}

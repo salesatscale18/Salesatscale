@@ -1,18 +1,18 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { Playbook, PlaybookField } from "@/db/schema";
 import { Icon } from "@/components/sas/icon";
-import { t, type Locale, type MessageKey } from "@/lib/i18n";
+import { t, type MessageKey } from "@/lib/i18n";
 import { MAX_OPENER_TOPICS, readOpener } from "@/lib/agent/core/opener";
 import { QUESTION_BUDGET, QUESTION_CEILING, questionBudgetOf } from "@/lib/agent/core/stage";
 import { MAX_OBJECTION_ATTEMPTS, MIN_OBJECTION_ATTEMPTS, objectionAttemptsOf } from "@/lib/agent/core/objections";
-import type { AgentGender } from "@/lib/agent/core/names";
 import type { ListKey, PlaybookChange } from "@/lib/agent/playbook-save";
 import { isOrderFormField, type PlaybookPart } from "@/lib/agent/playbook-parts";
-import { AddRow, EditRow, OtherErrors, PartRows, useRowSave, useRows, type ErrorOf } from "./row";
+import { AddRow, EditRow, OtherErrors, PartRows, useRowSave, useRows, type ErrorOf, type RowRefusal } from "./row";
 import { SortHelp, moved, useSortable } from "./sortable";
-import { OpenerPreview } from "./opening";
+import { usePreview } from "./preview";
+import type { ObjectionGapView } from "./gaps";
 import { PlatformFixed, enterSaves, growProps } from "./parts";
 import "./playbook.css";
 
@@ -87,26 +87,30 @@ function Handle(props: ReturnType<ReturnType<typeof useSortable>["handleProps"]>
  * One list item: its edit row, a delete icon and other one-click changes
  * (Make default), with their pending state and refusal at the row.
  */
-function ListItem({ id, what, read, editor, toChange, own, remove, lead, aside, command, status, rowAttrs }: {
+function ListItem({ id, what, read, editor, toChange, own, remove, lead, aside, command, status, rowAttrs, nextFocus }: {
   id: string; what: string; read: ReactNode; editor: (e: ErrorOf) => ReactNode; toChange: (form: FormData) => PlaybookChange | null; own: readonly string[];
   remove: PlaybookChange; lead?: ReactNode; aside?: ReactNode;
   /** A one-click change in the read state (Make default). */
   command?: { change: PlaybookChange; label: string; ariaLabel: string };
   status?: ReactNode;
   rowAttrs?: Record<string, string | number | undefined>;
+  /** Where focus goes after a delete: the next row's edit control, or the Add button. */
+  nextFocus: string;
 }) {
-  const save = useRowSave(() => {});
+  const rows = useRows();
+  const lastRun = useRef<"remove" | "command" | null>(null);
+  const save = useRowSave(() => rows.focusTo(lastRun.current === "remove" ? nextFocus : id));
   return (
     <EditRow
       id={id} label={what} item={{ what }} read={read} editor={editor} toChange={toChange} own={own} lead={lead} rowAttrs={rowAttrs}
       aside={(
         <>
           {aside}
-          {command ? <button type="button" className="pb-link" disabled={save.pending} aria-label={command.ariaLabel} onClick={() => save.run(command.change)} data-command="">{command.label}</button> : null}
+          {command ? <button type="button" className="pb-link" disabled={save.pending} aria-label={command.ariaLabel} onClick={() => { lastRun.current = "command"; save.run(command.change); }} data-command="">{command.label}</button> : null}
         </>
       )}
       extra={(
-        <button type="button" className="pb-icon-btn" disabled={save.pending} aria-label={t("playbook.row.remove", { what })} title={t("playbook.row.remove_short")} onClick={() => save.run(remove)} data-remove="">
+        <button type="button" className="pb-icon-btn" disabled={save.pending} aria-label={t("playbook.row.remove", { what })} title={t("playbook.row.remove_short")} onClick={() => { lastRun.current = "remove"; save.run(remove); }} data-remove="">
           <Icon name={save.pending ? "loader" : "trash"} />
         </button>
       )}
@@ -160,8 +164,6 @@ function SavedStepper({ id, field, label, hint, value, min, max, fewer, more, te
 // Opening (board PlaybookOpening2)
 // ---------------------------------------------------------------------------
 
-export type OpeningNames = Partial<Record<Locale, { agent: string; company: string }>>;
-
 /** A topic in English and Hebrew. `at`: the inputs' id; `errAt`: its error keys (`opener.topic.<i>`). */
 function TopicEditor({ at, errAt, en, he, e }: { at: string; errAt: string; en: string; he: string; e: ErrorOf }) {
   return (
@@ -193,10 +195,10 @@ function TwoLanguages({ en, he }: { en: string; he: string }) {
 /**
  * Opening (board PlaybookOpening2): the topics as rows (drag or ↑ / ↓, exactly
  * one Default, Make default, change, delete, add up to 6), the first question
- * as one row, the hint that each lead page picks a topic, and the preview of
- * the saved opener.
+ * as one row and the hint that each lead page picks a topic. The preview is
+ * the part's right column (preview.tsx): picking a topic's text shows its message.
  */
-export function OpeningRows({ slug, hrefs, edit, p, names, gender }: Base & { p: Pick<Playbook, "opener">; names: OpeningNames; gender: AgentGender }) {
+export function OpeningRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbook, "opener"> }) {
   const o = readOpener(p.opener);
   const topics = o.topics.map((x) => ({ en: x.en, he: x.he ?? "" }));
   const question = { en: o.question?.en ?? "", he: o.question?.he ?? "" };
@@ -226,7 +228,6 @@ export function OpeningRows({ slug, hrefs, edit, p, names, gender }: Base & { p:
       />
       <div className="pb-rows__note sas-stack-4">
         <span className="pb-hint-line" data-topic-hint=""><Icon name="info" />{t("playbook.opening.lead_page_hint")}</span>
-        <OpeningPreview names={names} gender={gender} topic={o.topics[o.defaultTopic]} question={o.question ?? { en: "" }} />
       </div>
     </PartRows>
   );
@@ -236,6 +237,8 @@ function TopicList({ topics, defaultTopic }: { topics: { en: string; he: string 
   const keys = rowKeys(topics.map((x) => `${x.en}|${x.he}`));
   const name = (x: { en: string; he: string }) => x.en || x.he;
   const m = useMoves({ rows: topics, keys, list: "openerTopics", serverIndex: (i) => i, what: name, helpId: "pb-sort-help-topics" });
+  const pv = usePreview();
+  const shownTopic = pv.topic !== null && pv.topic < topics.length ? pv.topic : defaultTopic;
   return (
     <>
       <div className="pb-list-head" id="pb-topics-h">{t("playbook.opening.topics_head", { n: topics.length, max: MAX_OPENER_TOPICS })}</div>
@@ -250,12 +253,20 @@ function TopicList({ topics, defaultTopic }: { topics: { en: string; he: string 
               <ListItem
                 id={`topic.${i}`} what={name(x)} own={[`opener.topic.${i}`, "opener.topics"]}
                 lead={<Handle {...m.sort.handleProps(pos)} />}
-                read={<TwoLanguages en={x.en} he={x.he} />}
+                read={(
+                  <button
+                    type="button" className="pb-pick" aria-pressed={i === shownTopic} onClick={() => pv.setTopic(i)}
+                    aria-label={t("playbook.preview.show_topic", { topic: name(x) })} data-pick-topic={i}
+                  >
+                    <TwoLanguages en={x.en} he={x.he} />
+                  </button>
+                )}
                 aside={isDefault ? <span className="sas-pill sas-pill--info" data-default="">{t("playbook.opening.default")}</span> : null}
                 command={isDefault ? undefined : { change: { kind: "setDefault", index: i }, label: t("playbook.opening.make_default_short"), ariaLabel: t("playbook.opening.make_default", { topic: name(x) }) }}
                 editor={(e) => <TopicEditor at={`opener.topic.${i}`} errAt={`opener.topic.${i}`} en={x.en} he={x.he} e={e} />}
                 toChange={(form) => ({ kind: "edit", list: "openerTopics", index: i, item: { en: val(form, "en"), he: val(form, "he") } })}
                 remove={{ kind: "delete", list: "openerTopics", index: i }}
+                nextFocus={i < topics.length - 1 ? `topic.${i}` : "topic.add"}
                 status={m.status(keys[i])}
                 rowAttrs={{ "data-topic": i, "data-is-default": isDefault ? "" : undefined }}
               />
@@ -267,31 +278,12 @@ function TopicList({ topics, defaultTopic }: { topics: { en: string; he: string 
         id="topic.add" label={t("playbook.opening.add_topic")} own={[`opener.topic.${topics.length}`, "opener.topics"]}
         disabled={topics.length >= MAX_OPENER_TOPICS} note={t("playbook.opening.topics_max", { n: MAX_OPENER_TOPICS })}
         editor={(e) => <TopicEditor at="opener.topic.new" errAt={`opener.topic.${topics.length}`} en="" he="" e={e} />}
-        toChange={(form) => (val(form, "en").trim() || val(form, "he").trim() ? { kind: "add", list: "openerTopics", item: { en: val(form, "en"), he: val(form, "he") } } : null)}
+        newId={`topic.${topics.length}`}
+        toChange={(form) => (val(form, "en").trim() || val(form, "he").trim()
+          ? { kind: "add", list: "openerTopics", item: { en: val(form, "en"), he: val(form, "he") } }
+          : { refuse: { [`opener.topic.${topics.length}.en`]: t("playbook.opening.topic_required") } })}
       />
     </>
-  );
-}
-
-/** The saved opener as the lead gets it, in English or Hebrew (the default topic and the first question). */
-function OpeningPreview({ names, gender, topic, question }: { names: OpeningNames; gender: AgentGender; topic: { en: string; he?: string } | undefined; question: { en: string; he?: string } }) {
-  const [lang, setLang] = useState<Locale>("en");
-  return (
-    <aside className="pb-preview sas-stack-2" aria-labelledby="pb-op-pv-h" data-testid="opening-preview">
-      <span className="pb-aside__head">
-        <strong id="pb-op-pv-h" style={{ fontSize: 13 }}>{t("playbook.opening.preview")}</strong>
-        <span role="group" aria-label={t("playbook.opening.language")} className="pb-seg">
-          {(["en", "he"] as const).map((l) => (
-            <button key={l} type="button" aria-pressed={lang === l} onClick={() => setLang(l)}>{t(l === "he" ? "playbook.opening.hebrew" : "playbook.opening.english")}</button>
-          ))}
-        </span>
-      </span>
-      <OpenerPreview lang={lang} agent={names[lang]?.agent ?? ""} company={names[lang]?.company ?? ""} gender={gender} topic={topic ? { en: topic.en, he: topic.he } : undefined} question={{ en: question.en, he: question.he }} />
-      <span className="sas-small">{t("playbook.opening.preview_legend_seller")}</span>
-      <PlatformFixed>{t("playbook.opening.preview_fixed")}</PlatformFixed>
-      {lang === "he" && !topic?.he?.trim() && !question.he?.trim() ? <span className="sas-small">{t("playbook.opening.preview_he_fallback")}</span> : null}
-      <span className="sas-small">{t("playbook.opening.preview_once")}</span>
-    </aside>
   );
 }
 
@@ -345,8 +337,13 @@ function FieldEditor({ at, label, example, stage, stages, e, errAt }: { at: stri
 
 type FieldAt = { f: Playbook["fields"][number]; i: number };
 
+/** An added question; with no name it is refused at the row with the message an emptied question gets. */
+const addField = (f: FormData, n: number): PlaybookChange | RowRefusal => (val(f, "label").trim()
+  ? { kind: "add", list: "fields", item: { label: val(f, "label"), stage: val(f, "stage"), example: val(f, "example") } }
+  : { refuse: { [`field.${n}.label`]: t("playbook.field.name_required") } });
+
 /** One group of questions (asked in chat, or filled in the order form) as sortable rows with a column header. */
-function FieldList({ rows, stages, helpId, headId }: { rows: FieldAt[]; stages: PlaybookField["stage"][]; helpId: string; headId: string }) {
+function FieldList({ rows, stages, helpId, headId, addId }: { rows: FieldAt[]; stages: PlaybookField["stage"][]; helpId: string; headId: string; addId: string }) {
   const keys = rowKeys(rows.map((r) => r.f.key || r.f.label));
   const m = useMoves({ rows, keys, list: "fields", serverIndex: (pos) => rows[pos].i, what: (r) => r.f.label, helpId });
   return (
@@ -378,6 +375,7 @@ function FieldList({ rows, stages, helpId, headId }: { rows: FieldAt[]; stages: 
                 editor={(e) => <FieldEditor at={at} label={r.f.label} example={r.f.example ?? ""} stage={r.f.stage} stages={stages} e={e} errAt={at} />}
                 toChange={(form) => ({ kind: "edit", list: "fields", index: r.i, item: { key: r.f.key || undefined, label: val(form, "label"), stage: val(form, "stage"), example: val(form, "example"), hint: r.f.hint || undefined } })}
                 remove={{ kind: "delete", list: "fields", index: r.i }}
+                nextFocus={rows[pos + 1] ? `field.${rows[pos + 1].i - (rows[pos + 1].i > r.i ? 1 : 0)}` : addId}
                 status={m.status(k)}
                 rowAttrs={{ "data-field": r.i, "data-stage": r.f.stage }}
               />
@@ -443,22 +441,23 @@ export function AsksRows({ slug, hrefs, edit, p, orderFormHref }: Base & { p: Pi
   return (
     <PartRows slug={slug} part="asks" hrefs={hrefs} edit={edit}>
       <SavedStepper
-        id="pb-questionBudget" field="questionBudget" label="playbook.questions.budget_short" hint="playbook.questions.budget_hint" value={budget}
+        id="pb-questionBudget" field="questionBudget" label="playbook.questions.budget_short" hint="playbook.questions.budget_hint_short" value={budget}
         min={QUESTION_BUDGET.min} max={QUESTION_BUDGET.max} fewer="playbook.questions.fewer" more="playbook.questions.more" testId="question-budget"
       />
       {before > budget ? (
         <div className="pb-rows__note"><div className="sas-alert sas-alert--warning" role="status" data-testid="budget-warning"><Icon name="alert-triangle" /><span>{t(before - budget === 1 ? "playbook.fields.too_many" : "playbook.fields.too_many_other", { n: before, max: budget, extra: before - budget })}</span></div></div>
       ) : null}
       <span className="sas-sr" id="pb-asks-h">{t("playbook.fields")}</span>
-      {main.length === 0 ? <div className="pb-row pb-row--wide"><span className="pb-muted">{t("playbook.fields_empty")}</span></div> : <FieldList rows={main} stages={MAIN_STAGES} helpId="pb-sort-help-asks" headId="pb-asks-h" />}
+      {main.length === 0 ? <div className="pb-row pb-row--wide"><span className="pb-muted">{t("playbook.fields_empty")}</span></div> : <FieldList rows={main} stages={MAIN_STAGES} helpId="pb-sort-help-asks" headId="pb-asks-h" addId="field.add" />}
       <AddRow
         id="field.add" label={t("playbook.field.add")} own={[`field.${n}`, "fields"]}
         editor={(e) => <FieldEditor at="field.new" label="" example="" stage="before_quote" stages={MAIN_STAGES} e={e} errAt={`field.${n}`} />}
-        toChange={(f) => (val(f, "label").trim() || val(f, "example").trim() ? { kind: "add", list: "fields", item: { label: val(f, "label"), stage: val(f, "stage"), example: val(f, "example") } } : null)}
+        newId={`field.${n}`} toChange={(f) => addField(f, n)}
       />
       <div className="pb-rows__note sas-stack-2" data-testid="roles-disclosure-row">
         <details className="pb-disclosure" data-testid="roles-disclosure">
           <summary>{t("playbook.field.roles_link")}</summary>
+          <p className="sas-small" style={{ margin: 0, paddingBlockStart: 10 }} data-roles-intro="">{t("playbook.field.roles_intro")}</p>
           <ul className="sas-stack-2" data-testid="field-roles" style={{ listStyle: "none", margin: 0, padding: "10px 0 0", gap: 4 }}>
             {(["before_quote", "optional", "before_order_form"] as const).map((s) => (
               <li key={s} className="sas-small" data-role={s}><strong style={{ color: "var(--ink)" }}>{t(STAGE_LABEL[s])}</strong>: {t(STAGE_HELP[s])}</li>
@@ -482,11 +481,11 @@ export function AsksRows({ slug, hrefs, edit, p, orderFormHref }: Base & { p: Pi
           <summary className="sas-small" style={{ cursor: "pointer" }} id="pb-form-fields-h">{t("playbook.fields.order_form_own", { n: form.length })}</summary>
           <span className="sas-hint" style={{ display: "block", paddingBlock: 8 }}>{t("playbook.fields.order_form_own_hint")}</span>
           <div className="pb-rows pb-rows--inset">
-            {form.length ? <FieldList rows={form} stages={FORM_STAGES} helpId="pb-sort-help-form" headId="pb-form-fields-h" /> : null}
+            {form.length ? <FieldList rows={form} stages={FORM_STAGES} helpId="pb-sort-help-form" headId="pb-form-fields-h" addId="field.add_form" /> : null}
             <AddRow
               id="field.add_form" label={t("playbook.fields.order_form_add")} own={[`field.${n}`, "fields"]}
               editor={(e) => <FieldEditor at="field.new_form" label="" example="" stage="before_order_form" stages={FORM_STAGES} e={e} errAt={`field.${n}`} />}
-              toChange={(f) => (val(f, "label").trim() || val(f, "example").trim() ? { kind: "add", list: "fields", item: { label: val(f, "label"), stage: val(f, "stage"), example: val(f, "example") } } : null)}
+              newId={`field.${n}`} toChange={(f) => addField(f, n)}
             />
           </div>
         </details>
@@ -523,12 +522,18 @@ const objectionOf = (form: FormData) => ({ objection: val(form, "objection"), an
  * answer, "From: …" only when filled; change, delete), Add objection. No drag:
  * the order of objections does not matter.
  */
-export function ObjectionsRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbook, "objections" | "objectionAttempts"> }) {
+export function ObjectionsRows({ slug, hrefs, edit, p, prefill, gaps }: Base & {
+  p: Pick<Playbook, "objections" | "objectionAttempts">;
+  /** The buyer's words "Add an answer" opens the add row with (`?words=`). */
+  prefill?: string | null;
+  /** Objections buyers raised with no approved answer (S3; lib/agent/objection-gaps.ts). */
+  gaps?: ObjectionGapView | null;
+}) {
   const n = p.objections.length;
   return (
     <PartRows slug={slug} part="objections" hrefs={hrefs} edit={edit}>
       <SavedStepper
-        id="pb-objectionAttempts" field="objectionAttempts" label="playbook.objections.tries" hint="playbook.objections.attempts_hint" value={objectionAttemptsOf(p)}
+        id="pb-objectionAttempts" field="objectionAttempts" label="playbook.objections.tries" hint="playbook.objections.attempts_hint_short" value={objectionAttemptsOf(p)}
         min={MIN_OBJECTION_ATTEMPTS} max={MAX_OBJECTION_ATTEMPTS} fewer="playbook.objections.attempts_fewer" more="playbook.objections.attempts_more" testId="objection-attempts"
       />
       {n === 0 ? <div className="pb-row pb-row--wide"><span className="pb-muted">{t("playbook.objections_empty")}</span></div> : (
@@ -557,6 +562,7 @@ export function ObjectionsRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbo
                     editor={(e) => <ObjectionEditor at={at} errAt={at} o={{ objection: o.objection, answer: o.answer, source }} e={e} />}
                     toChange={(form) => ({ kind: "edit", list: "objections", index: i, item: objectionOf(form) })}
                     remove={{ kind: "delete", list: "objections", index: i }}
+                    nextFocus={i < n - 1 ? `objection.${i}` : "objection.add"}
                     rowAttrs={{ "data-testid": "objection-row" }}
                   />
                 </div>
@@ -567,9 +573,26 @@ export function ObjectionsRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbo
       )}
       <AddRow
         id="objection.add" label={t("playbook.objection.add")} own={[`objection.${n}`, "objections"]}
-        editor={(e) => <ObjectionEditor at="objection.new" errAt={`objection.${n}`} o={{ objection: "", answer: "", source: "" }} e={e} />}
-        toChange={(form) => (val(form, "objection").trim() || val(form, "answer").trim() ? { kind: "add", list: "objections", item: objectionOf(form) } : null)}
+        editor={(e) => <ObjectionEditor at="objection.new" errAt={`objection.${n}`} o={{ objection: prefill ?? "", answer: "", source: "" }} e={e} />}
+        newId={`objection.${n}`}
+        toChange={(form) => (val(form, "objection").trim()
+          ? { kind: "add", list: "objections", item: objectionOf(form) }
+          : { refuse: { [`objection.${n}.objection`]: t("playbook.objection.required") } })}
       />
+      {gaps?.items.length ? (
+        <div className="pb-rows__note pb-gapline" data-testid="objection-gaps" role="group" aria-labelledby="pb-obj-gap-h">
+          <span className="pb-gapline__title" id="pb-obj-gap-h">{t("playbook.objections.gap.title")}</span>
+          <ul className="pb-plain-list">
+            {gaps.items.map((g) => (
+              <li key={g.href} className="pb-gapline__item" data-gap-deals={g.deals}>
+                <span dir="auto">{g.text}{g.play ? <span className="pb-muted"> · {g.play}</span> : null}</span>
+                <a className="pb-link" href={g.href} data-gap-add="">{t("playbook.objections.gap.add")}</a>
+              </li>
+            ))}
+          </ul>
+          <span className="sas-small">{t("playbook.objections.gap.how")}</span>
+        </div>
+      ) : null}
     </PartRows>
   );
 }

@@ -1,8 +1,9 @@
+import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { Icon } from "@/components/sas/icon";
-import { requireAccount } from "@/lib/auth/account";
-import { agentGenderOf, agentNameRows, localAgentName } from "@/lib/agent/core/names";
+import { appDb, requireAccount } from "@/lib/auth/account";
+import { agentNameRows } from "@/lib/agent/core/names";
 import { isPlaybookPart } from "@/lib/agent/playbook-parts";
 import { HANDOFF_NOTICE_COOKIE, showHandoffNotice } from "@/lib/agent/handoff-notice";
 import { unpaidRemindersOf } from "@/lib/orders/unpaid-reminders";
@@ -14,6 +15,11 @@ import { PartShell } from "../shell";
 import { AgentRows, CloseRows, LimitsRows, NeverRows } from "../part-rows";
 import { AfterPart } from "../part-editors";
 import { AsksRows, ObjectionsRows, OpeningRows } from "../list-rows";
+import { AfterPreviewPanel, AgentPreview, OpeningPreview } from "../preview";
+import { previewLanguages } from "../previews";
+import { afterPreview } from "../after-preview";
+import { objectionGapView } from "../gaps";
+import { readOpener } from "@/lib/agent/core/opener";
 
 /** The notice cookie, or nothing outside a request (render tests). */
 async function noticeCookie(): Promise<string | undefined> {
@@ -39,7 +45,11 @@ export default async function PlaybookPartPage({ params, searchParams }: { param
   const base = { slug: account.slug, hrefs: data.hrefs, edit };
   const saved = sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.saved")}</span></div> : null;
 
+  const langs = previewLanguages(account.languages);
+  const opener = { agentName: p.agentName, agentNameLocal: p.agentNameLocal, agentNameAuto: p.agentNameAuto, agentGender: p.agentGender, opener: p.opener };
+  const names = { tradeName: account.tradeName, tradeNameLocal: account.tradeNameLocal };
   let body;
+  let preview: ReactNode = null;
   switch (part) {
     case "agent": {
       const rows = agentNameRows(p, data.nameLanguages);
@@ -54,6 +64,7 @@ export default async function PlaybookPartPage({ params, searchParams }: { param
           names={{ rows, source: p.agentName, notice: asWritten.length ? t("names.as_written_notice", { languages: asWritten.join(", ") }) : null, marketsHref: `${data.base}/markets` }}
         />
       );
+      preview = <AgentPreview p={opener} account={names} langs={langs} />;
       break;
     }
     case "close":
@@ -69,24 +80,23 @@ export default async function PlaybookPartPage({ params, searchParams }: { param
       body = <NeverRows {...base} p={p} />;
       break;
     case "opening": {
-      const company = account.tradeName;
-      const local = account.tradeNameLocal;
-      const names = {
-        en: { agent: localAgentName(p, "en", company), company: local?.en?.trim() || company },
-        he: { agent: localAgentName(p, "he", company), company: local?.he?.trim() || company },
-      };
-      body = <OpeningRows {...base} p={p} names={names} gender={agentGenderOf(p)} />;
+      const o = readOpener(p.opener);
+      body = <OpeningRows {...base} p={p} />;
+      preview = <OpeningPreview p={opener} account={names} langs={langs} topics={o.topics.map((x) => x.en || x.he || "")} defaultTopic={o.defaultTopic} />;
       break;
     }
     case "asks":
       body = <AsksRows {...base} p={p} orderFormHref={`${data.base}/setup/order-form`} />;
       break;
-    case "objections":
-      body = <ObjectionsRows {...base} p={p} />;
+    case "objections": {
+      const prefill = typeof sp.words === "string" ? sp.words.slice(0, 200) : null;
+      body = <ObjectionsRows {...base} p={p} prefill={prefill} gaps={await objectionGapView(appDb, account.id, p, data.hrefs.objections)} />;
       break;
+    }
     case "after":
       body = <AfterPart {...base} p={p} liveUnpaid={unpaidRemindersOf(data.live?.playbook ?? null)} key={JSON.stringify(unpaidRemindersOf(p))} />;
+      preview = <AfterPreviewPanel data={afterPreview(p, account, langs)} langs={langs} />;
       break;
   }
-  return <PartShell data={data} part={part} notice={saved}>{body}</PartShell>;
+  return <PartShell data={data} part={part} notice={saved} preview={preview}>{body}</PartShell>;
 }

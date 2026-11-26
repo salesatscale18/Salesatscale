@@ -124,7 +124,7 @@ describe("Playbook S2: the list parts", () => {
       expect(html).toContain('lang="he" dir="rtl" data-he="" style="align-self:flex-start">יומני טמפרטורה אוטומטיים</span>');
       expect(text(html)).toContain("First question How do you check them today?");
       expect(text(html)).toContain("Each lead page picks one of these topics. A lead with no topic gets the default.");
-      expect(html).toContain('data-testid="opening-preview"');
+      expect(html).toContain('data-testid="opening-preview-en"');
       expect(text(html)).toContain("You asked about monitoring your fridge temperatures");
       expect(html).toMatch(/data-add="topic.add"[^>]*>|<button[^>]*data-add="topic.add"/);
     });

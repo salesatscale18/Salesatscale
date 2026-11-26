@@ -79,12 +79,19 @@ describe("summaries from the saved draft", () => {
 describe("gap notes: only what can be computed today", () => {
   it("opening question, examples, plays without facts, unanswered buyer questions; each with its link", () => {
     const p = pb({ fields: [{ key: "a", label: "A", stage: "before_quote" }, { key: "b", label: "B", stage: "optional", example: "B?" }, { key: "c", label: "C", stage: "before_order_form" }] });
-    expect(gapNotes(p, { plays, unanswered: 2, href })).toEqual([
+    // S3 (UX): plays work without facts, so the plays note shows only while no play has the seller's facts.
+    expect(gapNotes(p, { plays: { ...plays, withFacts: 0 }, unanswered: 2, href })).toEqual([
       { id: "opening_question", part: "opening", text: "No opening question yet. The agent asks the general one.", link: "Add one", href: "/pb/opening?edit=question" },
       { id: "examples", part: "asks", text: "1 question has no example question.", link: "Add examples", href: "/pb/asks?edit=field.0" },
       { id: "plays", part: "plays", text: "14 sales plays would be sharper with your facts.", link: "Add facts", href: "/pb/plays?filter=needs" },
       { id: "questions", part: null, text: "2 buyer questions the agent couldn't answer.", link: "Answer them", href: "/k?view=questions" },
     ]);
+    expect(gapNotes(p, { plays, unanswered: 0, href }).map((g) => g.id)).toEqual(["opening_question", "examples"]);
+    // S3: objections buyers raised with no approved answer; one opens "add" with the words, several the list.
+    const one = gapNotes(p, { plays, unanswered: 0, href, objections: [{ words: "too expensive", href: "/pb/objections?edit=objection.add&words=too+expensive" }] });
+    expect(one.find((g) => g.id === "objections")).toEqual({ id: "objections", part: "objections", text: "No matching answer for “too expensive”.", link: "Add one", href: "/pb/objections?edit=objection.add&words=too+expensive" });
+    const two = gapNotes(p, { plays, unanswered: 0, href, objections: [{ words: "a", href: "x" }, { words: "b", href: "y" }] });
+    expect(two.find((g) => g.id === "objections")).toMatchObject({ text: "2 objections buyers raised match none of your answers.", href: "/pb/objections" });
   });
   it("none when all is filled (order-form fields need no example)", () => {
     const p = pb({ fields: [{ key: "c", label: "C", stage: "before_order_form" }], opener: { topics: [], defaultTopic: 0, question: { en: "How?" } } });
