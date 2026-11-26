@@ -16,7 +16,7 @@ import { translator } from "@/lib/i18n";
 import { aboutLine, leadFormText, SHOW_ABOUT_TOPIC } from "@/lib/lead-pages/form-text";
 import { corsHeaders } from "@/lib/lead-pages/origin";
 import {
-  checkLocal, nextUrl, pageUrlOf, previewFromHash, readAd, readConsent, scriptBase, tellPixels, type ConsentWindow,
+  checkLocal, freshFromHash, nextUrl, pageUrlOf, previewFromHash, readAd, readConsent, scriptBase, tellPixels, type ConsentWindow,
 } from "@/lib/lead-pages/snippet-core";
 import { funnelEmpty, rawFromForm, seenOriginSuggestion, snippetCode, snippetPreviewUrl, type FunnelStep } from "@/lib/lead-pages/view";
 
@@ -139,6 +139,11 @@ describe("public/lp/v1.js", () => {
     ];
     for (const [w, tc] of wins) expect(core.readConsent(w, tc)).toBe(readConsent(w, tc));
     for (const h of [`#sas-preview=${TOKEN}`, "#x", "", `#a&sas-preview=${TOKEN}`]) expect(core.previewFromHash(h)).toBe(previewFromHash(h));
+    // A preview's "Start over" (owner, 26 Nov): the fragment flag, read the same way on both sides.
+    for (const h of [`#sas-preview=${TOKEN}&sas-fresh=1`, `#sas-preview=${TOKEN}`, "#sas-fresh=10", "#a&sas-fresh=1&b", ""]) expect(core.freshFromHash(h)).toBe(freshFromHash(h));
+    expect(freshFromHash(`#sas-preview=${TOKEN}&sas-fresh=1`)).toBe(true);
+    expect(previewFromHash(`#sas-preview=${TOKEN}&sas-fresh=1`)).toBe(TOKEN);
+    expect(freshFromHash(`#sas-preview=${TOKEN}`)).toBe(false);
     for (const s of ["https://a.b/lp/v1.js", "nope", ""]) expect(core.scriptBase(s)).toBe(scriptBase(s));
     for (const [n, p] of [["R", "1"], ["Rina", "0545550142"], ["", ""]]) expect(plain(core.checkLocal(n, p))).toEqual(checkLocal(n, p));
     for (const h of ["https://acme.com/offer?x=1#y", "https://acme.com", "nope"]) expect(core.pageUrlOf(h)).toBe(pageUrlOf(h));

@@ -43,6 +43,22 @@ export function LeadForm({ action, beacon, strings, fields, consentTicked, conse
     }
   }, [beacon]);
 
+  // A preview form brought back from the browser's back-forward cache (after a send): empty again, ready to send.
+  const formRef = useRef<HTMLFormElement>(null);
+  const isPreview = !!hidden.preview;
+  useEffect(() => {
+    if (!isPreview) return;
+    const onShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      formRef.current?.reset();
+      setSending(false);
+      setErrors([]);
+      setAlert(null);
+    };
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, [isPreview]);
+
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (sending) return;
@@ -83,7 +99,7 @@ export function LeadForm({ action, beacon, strings, fields, consentTicked, conse
   };
 
   return (
-    <form className="lp-form" method="post" action={action} onSubmit={onSubmit} noValidate dir={dir} data-lead-form="">
+    <form ref={formRef} className="lp-form" method="post" action={action} onSubmit={onSubmit} noValidate dir={dir} data-lead-form="">
       <LeadFormFields
         strings={strings} fields={fields} consentTicked={consentTicked} consentLine={consentLine} privacyHref={privacyHref}
         hidden={hidden} errors={errors} alert={alert} sending={sending}

@@ -6,12 +6,19 @@
  */
 import type { ReactNode } from "react";
 
-export type HandoverButtonStrings = { talkNow: string; chatWriting: string; continueChat: string };
+export type HandoverButtonStrings = { talkNow: string; chatWriting: string; continueChat: string; tryAgain?: string };
 
-/** The ring while the conversation gets ready (static once ready, and with reduced motion). */
+/**
+ * The ring: calm and static (`ready`), or turning while the conversation gets ready (static with reduced motion).
+ * With a `label` it is the status itself; without one it is decoration (a visible line says the status).
+ */
 export function HandoverRing({ ready, label }: { ready: boolean; label: string }) {
+  const status = !ready && !!label;
   return (
-    <div className={`lp-ring${ready ? " lp-ring--done" : ""}`} role={ready ? undefined : "status"} aria-label={ready ? undefined : label} data-ring={ready ? "done" : "busy"}>
+    <div
+      className={`lp-ring${ready ? " lp-ring--done" : ""}`} role={status ? "status" : undefined} aria-label={status ? label : undefined}
+      aria-hidden={status ? undefined : true} data-ring={ready ? "done" : "busy"}
+    >
       <b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z" /></svg></b>
     </div>
   );
@@ -57,26 +64,50 @@ export function HandoverText({ thanks, connecting, preview = false }: { thanks: 
   );
 }
 
-/** "Talk now" + "Chat in writing" when voice is offered, else "Continue to the chat". */
-export function HandoverButtons({ voiceOffered, strings, disabled, onTalk, onWrite }: {
+/**
+ * "Talk now" + "Chat in writing" when voice is offered, else "Continue to the chat".
+ * `talk`: "retry" shows "Try again" in Talk now's place (after a call that could not start), "none" leaves
+ * only "Chat in writing" (then the main button). `talkLoading`: Talk now shows as loading (busy, not greyed
+ * without reason) until the chat under the hand-over can start a call.
+ */
+export function HandoverButtons({ voiceOffered, strings, disabled, onTalk, onWrite, talk = "talk", talkLoading = false }: {
   voiceOffered: boolean;
   strings: HandoverButtonStrings;
   disabled: boolean;
   onTalk?: () => void;
   onWrite?: () => void;
+  talk?: "talk" | "retry" | "none";
+  talkLoading?: boolean;
 }) {
+  const loading = talk === "talk" && talkLoading;
   return (
     <div className="lp-actions">
       {voiceOffered ? (
         <>
-          <button type="button" className="lp-btn lp-btn--primary" onClick={onTalk} disabled={disabled} data-handover-talk=""><Mic />{strings.talkNow}</button>
-          <button type="button" className="lp-btn" onClick={onWrite} disabled={disabled} data-handover-write=""><Bubble />{strings.chatWriting}</button>
+          {talk === "none" ? null : (
+            <button
+              type="button" className="lp-btn lp-btn--primary" onClick={loading ? undefined : onTalk} disabled={disabled}
+              aria-busy={loading || undefined} data-loading={loading ? "" : undefined}
+              {...(talk === "retry" ? { "data-handover-retry": "" } : { "data-handover-talk": "" })}
+            >
+              {loading ? <span className="lp-spin" aria-hidden="true" /> : <Mic />}{talk === "retry" ? strings.tryAgain : strings.talkNow}
+            </button>
+          )}
+          <button type="button" className={`lp-btn${talk === "none" ? " lp-btn--primary" : ""}`} onClick={onWrite} disabled={disabled} data-handover-write=""><Bubble />{strings.chatWriting}</button>
         </>
       ) : (
         <button type="button" className="lp-btn lp-btn--primary" onClick={onWrite} disabled={disabled} data-handover-continue=""><Bubble />{strings.continueChat}</button>
       )}
     </div>
   );
+}
+
+/**
+ * "Start over" (preview runs only; the server decides whether to render it, never for a real buyer):
+ * back to the empty preview form, so the next send makes a new preview run.
+ */
+export function StartOverLink({ href, label }: { href: string; label: string }) {
+  return <p className="lp-startover" data-preview-start-over=""><a href={href}>{label}</a></p>;
 }
 
 /** "Conversation by Sales at Scale" at the bottom. */

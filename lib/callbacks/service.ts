@@ -10,7 +10,7 @@
  * shape (lead events): lib/callbacks/rules.ts.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, notLike } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { auditLog, conversations, dealStates, leadEvents, leads, messages, sellerAccounts, toolCalls } from "@/db/schema";
@@ -22,7 +22,7 @@ import { formatBuyerLocal, formatDueLocal, isoInZone, zonedInstant } from "@/lib
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { isWebChat } from "@/lib/simulator/rules";
-import { hasDialablePhone } from "@/lib/leads/unverified";
+import { hasDialablePhone, PREVIEW_RUN_PHONE_PREFIX } from "@/lib/leads/unverified";
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { isLocale, t } from "@/lib/i18n";
 import { handBack, takeOver } from "@/lib/agent/conversation";
@@ -176,6 +176,8 @@ async function callbackNeeds(db: Db, accountId: string, now: Date): Promise<Call
     .where(and(
       eq(leadEvents.accountId, accountId), inArray(leadEvents.type, [...CALLBACK_EVENT_TYPES]), gt(leadEvents.createdAt, new Date(now.getTime() - LOOKBACK_MS)),
       eq(leads.accountId, accountId), eq(leads.isTest, false), inArray(leads.status, ["new", "waiting_for_reply", "agent_handling", "human_handling", "meeting_booked"]),
+      // Lead page preview runs (test leads) never ask the team for a callback.
+      notLike(leads.phone, `${PREVIEW_RUN_PHONE_PREFIX}%`),
     ));
   const lead = new Map(rows.map((r) => [r.leadId, r]));
   return currentCallbacks(rows)

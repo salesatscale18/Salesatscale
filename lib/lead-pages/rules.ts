@@ -187,6 +187,8 @@ export type SubmissionFields = {
   /** The honeypot was filled in (a bot). */
   honeypot: boolean;
   ft: string; preview: string;
+  /** A preview's "Start over": the send makes a new preview run even when one for this number exists. */
+  fresh: boolean;
   /** The snippet's page (origin and path): where the buyer saw the consent line. Used only when its origin is the checked one. */
   pageUrl: string;
   ad: Record<string, string>;
@@ -217,6 +219,7 @@ export function readSubmission(body: Record<string, unknown>): SubmissionFields 
     honeypot: !!pick(HONEYPOT_FIELD).trim(),
     ft: pick("ft").trim(),
     preview: pick("preview").trim(),
+    fresh: /^(1|true)$/i.test(pick("fresh").trim()),
     pageUrl: pick("page_url").trim().slice(0, 500),
     ad,
   };

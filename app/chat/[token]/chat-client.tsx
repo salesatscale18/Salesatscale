@@ -25,6 +25,7 @@ import { BookingCard, CardRow, chipsBefore, NewTimeCard, SmsChip, TalkNowCard, u
 import type { ChatReach } from "@/lib/chat/reach";
 import { cursorOf, placeBookingCards } from "@/lib/chat/booking-order";
 import type { TalkNow } from "@/lib/follow-ups/named-time";
+import type { HoldGreetingControls } from "@/app/h/[token]/call-ready";
 
 export type ChatStrings = {
   bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string; expired: string;
@@ -46,7 +47,12 @@ export type ChatSms = { stopUrl: string; stopped: boolean; fromSms: boolean; res
  * document): start the call inside the parent's own click (so the tap unlocks audio and the microphone prompt
  * comes from it), and focus the composer. `canCall`: the voice client exists (the chat is mounted with voice).
  */
-export type ChatControls = { startCall(): void; focusComposer(): void; canCall: boolean };
+export type ChatControls = {
+  /** `holdGreeting` (the hand-over's readiness contract, app/h/[token]/call-ready.ts): honoured only once the call supports it. */
+  startCall(opts?: { holdGreeting?: boolean }): void;
+  focusComposer(): void;
+  canCall: boolean;
+} & Partial<HoldGreetingControls>;
 
 /** A message on the page: from the server, or the buyer's own still on its way (pending). */
 type Shown = BuyerMessage & { pending?: "sending" | "confirmed" | "failed" };
@@ -124,7 +130,7 @@ const dayKeyIn = (timeZone: string) => (d: Date) => new Intl.DateTimeFormat("en-
  * The layout never flips; banner, header, card, separators and bar take the
  * lead's direction and every bubble is dir="auto".
  */
-export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", rememberZone = false, voice = null, simulated = true, sms = null, reach: initialReach = null, talkNow = null, controls, guardBack = true }: {
+export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", rememberZone = false, voice = null, simulated = true, sms = null, reach: initialReach = null, talkNow = null, controls, guardBack = true, startOver = null }: {
   token: string; lang: string; seller: string; initials: string; strings: ChatStrings; initial: BuyerChat;
   /** A simulated buyer's chat: the "Simulated chat" banner shows (never on a real buyer's chat). */
   simulated?: boolean;
@@ -147,6 +153,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   controls?: (api: ChatControls) => void;
   /** The Back guard (board VoiceBubbleBack); off while a parent keeps the chat off screen. Default on. */
   guardBack?: boolean;
+  /** A lead page preview run only (decided on the server, never for a real buyer): "Start over" to the empty preview form. */
+  startOver?: { href: string; label: string } | null;
 }) {
   // Reach RB: card state, and the buyer's own zone for every time on the page (the browser's, else the stored or market one).
   const [reach, setReach] = useState<ChatReach | null>(initialReach);
@@ -578,6 +586,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       {sms && sms.fromSms && !sms.stopped ? (
         <div className="c-stopbar" dir={dir}><a href={sms.stopUrl} data-sms-stop="">{strings.smsStop}</a></div>
       ) : null}
+      {startOver ? <div className="c-stopbar" dir={dir} data-preview-start-over=""><a href={startOver.href}>{startOver.label}</a></div> : null}
       {sms?.resumed && !sms.stopped ? <div className="c-notice c-notice--ok" role="status" dir={dir}>{strings.smsOnDone}</div> : null}
       {showBar && clientRef.current ? (
         <BuyerCallBar

@@ -24,15 +24,24 @@ import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { activeChatToken, ensureChatLink, recordChatOpen, resolveChatLink, type ChatContext } from "@/lib/simulator/service";
 import { chatPath } from "@/lib/simulator/token";
 import { safeBrand } from "@/lib/simulator/rules";
-import { hasDialablePhone } from "@/lib/leads/unverified";
+import { hasDialablePhone, isPreviewRunLead } from "@/lib/leads/unverified";
 import { nudgeBuyer, type NudgeDeps } from "@/lib/sms/service";
 import {
   handoverVariant, phoneInSellingMarkets, sellingPrefixes, SMS_PER_IP_DAILY, SMS_PER_PAGE_DAILY,
   type HandoverVariant, type LeadPageSms,
 } from "./rules";
+import { startOverUrl } from "./preview-run";
 import { cookieHoldsLead, handoverExpired, submissionIdFromHandoverToken } from "./tokens";
 
 const SYSTEM = { userId: null, actingAs: false } as const;
+
+/**
+ * The chat may open in this browser: this submission created the lead, the browser holds the lead's
+ * sas_lp cookie, or it is a preview submission on a preview-run test lead (the seller's preview token
+ * was checked when it was sent; such a lead is never a real buyer's).
+ */
+const chatInBrowser = (sub: LeadPageSubmission, lead: Lead, cookie: string | null): boolean =>
+  sub.leadCreated || cookieHoldsLead(cookie, lead.id) || (sub.preview && isPreviewRunLead(lead));
 
 /** /h/ is rate limited per IP like /c/: 60 per 10 minutes. */
 export const HANDOVER_LIMIT = { limit: 60, windowSeconds: 600 } as const;
@@ -65,6 +74,8 @@ export type HandoverState =
     /** Only for the "chat" variant: the chat behind the lead's link, and its token (in the page body, never in a URL). */
     chat: { ctx: ChatContext; token: string } | null;
     submissionId: string;
+    /** A preview run only (decided here, never for a real buyer): "Start over" to the empty preview form. */
+    startOver: string | null;
   };
 
 export type HandoverInput = { token: string; cookie: string | null; ip: string; now?: Date; env?: Record<string, string | undefined>; sms?: NudgeDeps };
@@ -83,7 +94,7 @@ export async function loadHandover(db: Db, input: HandoverInput): Promise<Handov
   }
 
   const optedOut = lead.status === "opted_out";
-  const inBrowser = sub.leadCreated || cookieHoldsLead(input.cookie, lead.id);
+  const inBrowser = chatInBrowser(sub, lead, input.cookie);
   let chat: { ctx: ChatContext; token: string } | null = null;
   if (sub.consent && !optedOut && inBrowser) {
     const started = await ensureChatStarted(db, { accountId: account.id, leadId: lead.id, now });
@@ -103,6 +114,7 @@ export async function loadHandover(db: Db, input: HandoverInput): Promise<Handov
   const variant = handoverVariant({ consent: sub.consent, optedOut, inBrowser, chatReady: !!chat });
   return {
     kind: "ready", variant, page, account, brandColor, sms, submissionId: sub.id,
+    startOver: sub.preview && isPreviewRunLead(lead) && sub.via !== "own_form" ? startOverUrl(page, now) : null,
     firstName: sub.answers?.firstName ?? "",
     chat: variant === "chat" ? chat : null,
   };
@@ -150,7 +162,7 @@ export async function recordHandoverChoice(
   const row = await loadRow(db, input.token);
   if (!row) return { ok: false, reason: "not_found" };
   if (handoverExpired(row.sub.createdAt, now)) return { ok: false, reason: "expired" };
-  if (!row.sub.consent || !(row.sub.leadCreated || cookieHoldsLead(input.cookie, row.lead.id))) return { ok: false, reason: "not_allowed" };
+  if (!row.sub.consent || !chatInBrowser(row.sub, row.lead, input.cookie)) return { ok: false, reason: "not_allowed" };
   await db.update(leadPageSubmissions).set({ chatChoice: input.choice, handoverAt: now })
     .where(and(eq(leadPageSubmissions.id, row.sub.id), eq(leadPageSubmissions.accountId, row.account.id), isNull(leadPageSubmissions.handoverAt)));
   if (!(await input.staffViewer(row.account.id))) await recordChatOpen(db, row.account.id, row.lead.id, now, "link");

@@ -459,9 +459,9 @@ export async function latestLeadsOfPage(db: Db, accountId: string, pageId: strin
   const [rows, [count]] = await Promise.all([
     db.select({
       leadId: leadPageSubmissions.leadId, at, preview: sql<boolean>`bool_and(${leadPageSubmissions.preview})`,
-      fullName: leads.fullName, buyerRef: leads.buyerRef,
+      fullName: leads.fullName, buyerRef: leads.buyerRef, phone: leads.phone,
     }).from(leadPageSubmissions).innerJoin(leads, join).where(where)
-      .groupBy(leadPageSubmissions.leadId, leads.fullName, leads.buyerRef)
+      .groupBy(leadPageSubmissions.leadId, leads.fullName, leads.buyerRef, leads.phone)
       .orderBy(desc(at)).limit(Math.min(Math.max(limit, 1), 50)),
     // As the Leads list counts them (`?page=`): test leads left out.
     db.select({ n: sql<number>`count(distinct ${leadPageSubmissions.leadId})::int` }).from(leadPageSubmissions).innerJoin(leads, join)

@@ -1,5 +1,5 @@
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
-import { isUnverifiedLead } from "@/lib/leads/unverified";
+import { isPreviewRunLead, isUnverifiedLead } from "@/lib/leads/unverified";
 import { unverifiedClaims, type UnverifiedClaim } from "@/lib/leads/unverified-claims";
 import { leadPageSourceOf } from "@/lib/lead-pages/service";
 import { Icon } from "@/components/sas/icon";
@@ -229,6 +229,8 @@ export default async function ConversationsPage({ params, searchParams }: { para
                       // An unverified returning lead: "not verified · same number as {name}" (the two leads are easy to tell apart).
                       const claim = needs || !isUnverifiedLead(r.lead) ? null : claims.get(r.lead.id);
                       const unverifiedLine = needs || !isUnverifiedLead(r.lead) ? null
+                        // A lead page preview run (a test lead): "Preview run".
+                        : isPreviewRunLead(r.lead) ? t("lead.preview_run_plain")
                         : claim?.sameAs ? t("lead.unverified.row", { name: claim.sameAs.fullName }) : t("lead.unverified.row_plain");
                       const p = needs || unverifiedLine ? null : listPreview(r, me.id, r.lastMessageId ? facts.get(r.lastMessageId) : undefined);
                       return (

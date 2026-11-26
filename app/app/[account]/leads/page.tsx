@@ -1,4 +1,5 @@
-import { isUnverifiedLead } from "@/lib/leads/unverified";
+import { isPreviewRunLead, isUnverifiedLead } from "@/lib/leads/unverified";
+import { formatDateTimeIn } from "@/lib/format";
 import { unverifiedClaims, type UnverifiedClaim } from "@/lib/leads/unverified-claims";
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
@@ -444,7 +445,10 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                         const href = rowHref(`/app/${account.slug}`, lead.id, personStep ? null : shown);
                         const claim = isUnverifiedLead(lead) ? claims.get(lead.id) : undefined;
                         // An unverified returning lead: "not verified · same number as {name}", so the two leads are easy to tell apart.
-                        const unverifiedLine = isUnverifiedLead(lead)
+                        // A lead page preview run (a test lead): "Preview run · {time}"; else an unverified returning lead's line.
+                        const unverifiedLine = isPreviewRunLead(lead)
+                          ? <span data-preview-run="">{t("lead.preview_run", { time: formatDateTimeIn(lead.createdAt, viewerZone ?? account.timezone) })}</span>
+                          : isUnverifiedLead(lead)
                           ? <span data-unverified="">{claim?.sameAs ? t("lead.unverified.row", { name: claim.sameAs.fullName }) : t("lead.unverified.row_plain")}</span>
                           : null;
                         return (

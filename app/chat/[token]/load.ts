@@ -28,6 +28,7 @@ import { storedBuyerZone } from "@/lib/team-calls/zone";
 import type { BuyerNames } from "@/lib/agent/core/names";
 import type { ChatClient, ChatSms } from "./chat-client";
 import { chatStrings } from "./strings";
+import { startOverForLead } from "@/lib/lead-pages/preview-run";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -98,11 +99,14 @@ export async function loadBuyerChat(token: string, ctx: ChatContext, sp: SearchP
   };
   const reach = await chatReach(appDb, ctx);
   const talkNow = sms?.fromSms ? await talkNowFor(appDb, ctx) : null;
+  // A lead page preview run (a test lead, never a real buyer's): "Start over" back to the empty preview form.
+  const startOverHref = await startOverForLead(appDb, ctx.account.id, ctx.lead, new Date());
   return {
     lang, names, initials, rootStyle,
     props: {
       token, lang, seller: names.seller, initials, strings,
       initial: chat, timeZone, rememberZone: !simulated && !(await viewerIsStaff()), simulated, sms, reach, talkNow,
+      startOver: startOverHref ? { href: startOverHref, label: tr("buyer.lp.preview.start_over") } : null,
       // The call is English: the agent's English name, as it says it on the call.
       voice: voiceOn ? { agentName: (await chatNames(appDb, ctx.account, "en")).agent, gender: names.gender, tabKey } : null,
     },

@@ -17,6 +17,8 @@ import { displayStateOf, isArchived } from "@/lib/lead-pages/archive";
 import { getLeadPage, latestLeadsOfPage, leadPageReadiness, pageSubmissionCounts, type ReadinessKey } from "@/lib/lead-pages/service";
 import { bySource, pageFunnel, parseStatsPeriod, rangeOfDays, STATS_PERIODS } from "@/lib/lead-pages/stats";
 import { previewTokenValid } from "@/lib/lead-pages/tokens";
+import { FRESH_PARAM, SNIPPET_FRESH } from "@/lib/lead-pages/preview-run";
+import { isPreviewRunLead } from "@/lib/leads/unverified";
 import {
   CONNECTION_LABEL, countText, countsVisits, fieldsLine, funnelEmpty, funnelSteps, marketLine, ownFormAction, ownFormExample, ownFormPreviewField,
   READINESS_LABEL, seenOriginSuggestion, shortAddress, snippetCode, snippetPreviewUrl, sourceLabel, topicLine,
@@ -87,6 +89,8 @@ export default async function LeadPageView({ params, searchParams }: { params: P
   const own = page.connection === "own_form";
   const plValid = !!pl && previewTokenValid(pl, page.id, now);
   const previewUrl = !plValid || own ? null : snippet && page.address ? snippetPreviewUrl(page.address, pl) : `${link}?preview=${encodeURIComponent(pl)}`;
+  // "Start over": the same preview with the fresh flag, so the next send makes a new preview run (lib/lead-pages/preview-run.ts).
+  const startOverPreviewUrl = previewUrl ? `${previewUrl}&${snippet && page.address ? SNIPPET_FRESH : `${FRESH_PARAM}=1`}` : null;
   const code = snippetCode(publicUrl("/"), page.publicKey);
   const action = ownFormAction(publicUrl("/"), page.publicKey);
   const seen = snippet || own ? seenOriginSuggestion(page) : null;
@@ -270,6 +274,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                   <span className="lpg-actions">
                     <CopyButton value={previewUrl} />
                     <a className={buttonClass("ghost", "sm")} href={previewUrl} target="_blank" rel="noopener noreferrer"><Icon name="arrow-up-right" />{t("lead_pages.link.open")}</a>
+                    {startOverPreviewUrl ? <a className={buttonClass("ghost", "sm")} href={startOverPreviewUrl} target="_blank" rel="noopener noreferrer" data-preview-start-over=""><Icon name="rotate-ccw" />{t("lead_pages.link.start_over")}</a> : null}
                   </span>
                 </>
               ) : (
@@ -381,6 +386,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                   <span className="lpg-actions">
                     <CopyButton value={previewUrl} />
                     <a className={buttonClass("ghost", "sm")} href={previewUrl} target="_blank" rel="noopener noreferrer"><Icon name="arrow-up-right" />{t("lead_pages.link.open")}</a>
+                    {startOverPreviewUrl ? <a className={buttonClass("ghost", "sm")} href={startOverPreviewUrl} target="_blank" rel="noopener noreferrer" data-preview-start-over=""><Icon name="rotate-ccw" />{t("lead_pages.link.start_over")}</a> : null}
                   </span>
                 </>
               ) : (
@@ -445,7 +451,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                     <li key={r.leadId} data-lead={r.leadId}>
                       <a href={`/app/${account.slug}/leads/${r.leadId}`}><strong><bdi>{r.fullName}</bdi></strong></a>
                       {stage ? <span className="sas-small"> · {t(STEP_LABEL[stage.step])}</span> : null}
-                      {r.preview ? <span className="lpg-tag" data-test-lead="">{t("lead_pages.latest.test")}</span> : null}
+                      {r.preview ? <span className="lpg-tag" data-test-lead="" data-preview-run={isPreviewRunLead(r) ? "" : undefined}>{t(isPreviewRunLead(r) ? "lead_pages.latest.preview_run" : "lead_pages.latest.test")}</span> : null}
                       <span className="sas-small sas-when lpg-latest__when" title={r.at.toISOString()}>{timeAgo(r.at, now, account.timezone)}</span>
                     </li>
                   );
