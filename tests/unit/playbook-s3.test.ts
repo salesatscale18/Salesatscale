@@ -1,7 +1,7 @@
 /**
  * Playbook rethink, slice S3: the pure parts. The previews are the real
- * template output (the same functions that write the buyer's messages), the
- * objections gap matching rule, and the Compare versions labels. No model call.
+ * template output (the same functions that write the buyer's messages) and
+ * the Compare versions labels. No model call.
  */
 import { describe, expect, it } from "vitest";
 import type { Playbook } from "@/db/schema";
@@ -11,10 +11,8 @@ import { buyerNames } from "@/lib/agent/core/names";
 import { reminderText } from "@/lib/orders/unpaid-reminders";
 import { smsText } from "@/lib/sms/texts";
 import { diffVersions } from "@/lib/agent/version-diff";
-import { normalizeWords, objectionGaps, playAnswered, sameObjection } from "@/lib/agent/objection-gaps";
 import { genderedSpan, openerPreview, previewLanguages } from "@/app/app/[account]/setup/playbook/previews";
 import { afterPreview, SAMPLE_ORDER } from "@/app/app/[account]/setup/playbook/after-preview";
-import { gapAddHref, gapView } from "@/app/app/[account]/setup/playbook/gaps";
 
 const pb = (patch: Partial<Playbook> & Record<string, unknown> = {}): Playbook => ({ ...defaultPlaybook("Polar Demo", 500), ...patch }) as Playbook;
 const account = { tradeName: "Polar Demo", tradeNameLocal: { he: "פולאר" } };
@@ -110,52 +108,6 @@ describe("After the order: what the buyer gets, from the real templates", () => 
     expect(a.team.title).toBe("Signed 7 days ago, not paid");
     expect(a.team.detail).toContain("2 reminders sent");
     expect(a.buyer.he).toBeUndefined();
-  });
-});
-
-describe("objections gap: the matching rule", () => {
-  const p = pb({
-    objections: [{ objection: "We already pay for an alarm company.", answer: "An alarm covers doors." }],
-    plays: { competitor: { facts: [{ text: "We log every 5 minutes." }] }, proof: { own: { when: "w", do: ["a"], example: "", notThis: "" } } } as Playbook["plays"],
-    maxDiscountBp: 0,
-  });
-  it("normalizes case and punctuation; equal or contained (4 letters at least)", () => {
-    expect(normalizeWords("  It's TOO expensive!! ")).toBe("it s too expensive");
-    expect(sameObjection("too expensive", "That's too expensive for us.")).toBe(true);
-    expect(sameObjection("We already pay for an alarm company.", "we already pay for an alarm company")).toBe(true);
-    expect(sameObjection("no", "no budget")).toBe(false);
-    expect(sameObjection("cost", "costly")).toBe(false);
-  });
-  it("a play with the seller's facts, own card or (Too expensive) a discount limit is answered", () => {
-    expect(playAnswered(p, "competitor")).toBe(true);
-    expect(playAnswered(p, "proof")).toBe(true);
-    expect(playAnswered(p, "too_expensive")).toBe(false);
-    expect(playAnswered({ ...p, maxDiscountBp: 500 }, "too_expensive")).toBe(true);
-  });
-  it("counts the rest per play (older entries per wording), most deals first, with the most common words", () => {
-    const gaps = objectionGaps([
-      { play: "too_expensive", words: "too pricey", deals: 2 },
-      { play: "too_expensive", words: "Too expensive for us", deals: 3 },
-      { play: "competitor", words: "X is cheaper", deals: 5 },
-      { play: "existing_solution", words: "We already pay for an alarm company", deals: 4 },
-      { play: "not_now", words: "", deals: 1 },
-      { play: null, words: "Bad timing", deals: 1 },
-      { play: null, words: "bad timing!", deals: 1 },
-      { play: null, words: "", deals: 9 },
-    ], p);
-    expect(gaps).toEqual([
-      { play: "too_expensive", deals: 5, words: "Too expensive for us" },
-      { play: null, deals: 2, words: "Bad timing" },
-      { play: "not_now", deals: 1, words: "" },
-    ]);
-  });
-  it("the view: one line per gap, the add link prefilled with the words (or the play's name)", () => {
-    const v = gapView([{ play: "too_expensive", deals: 3, words: "too pricey" }, { play: "not_now", deals: 1, words: "" }], "/pb/objections");
-    expect(v.total).toBe(4);
-    expect(v.items.map((i) => [i.text, i.play, i.href])).toEqual([
-      ["3 buyers raised “too pricey”", "Too expensive", gapAddHref("/pb/objections", "too pricey")],
-      ["1 buyer raised “Not now”", "Not now", "/pb/objections?edit=objection.add&words=Not+now"],
-    ]);
   });
 });
 

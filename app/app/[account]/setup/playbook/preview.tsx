@@ -5,7 +5,7 @@ import type { Playbook } from "@/db/schema";
 import { Icon } from "@/components/sas/icon";
 import { t, type Locale } from "@/lib/i18n";
 import type { AgentGender } from "@/lib/agent/core/names";
-import { openerPreview, type PreviewSeg } from "./previews";
+import { openerPreview, topicFallback, type PreviewSeg } from "./previews";
 import { PlatformFixed } from "./parts";
 import type { AfterPreview } from "./after-preview";
 import "./playbook.css";
@@ -162,6 +162,9 @@ export function OpeningPreview({ p, account, langs, topics, defaultTopic }: { p:
   const i = topic !== null && topic < topics.length ? topic : defaultTopic;
   const m = openerPreview(p, account, lang, { part: "opening", ...(topics.length ? { topic: i } : {}) });
   const hasHe = (() => { const o = p.opener; const tp = o?.topics?.[i]; return !!(tp?.he?.trim() || o?.question?.he?.trim()); })();
+  // The picked topic has no text in this language: say what such a lead really gets, and link to its row to add it.
+  const fallback = topics.length ? topicFallback(p.opener, lang, i) : null;
+  const language = t(lang === "he" ? "playbook.opening.hebrew" : "playbook.opening.english");
   return (
     <PartPreview title={t("playbook.preview.title")}>
       <div className="pb-pv__bar">
@@ -173,7 +176,12 @@ export function OpeningPreview({ p, account, langs, topics, defaultTopic }: { p:
       <Bubble segs={m.segs} lang={lang} testId={`opening-preview-${lang}`} />
       <span className="sas-small">{t("playbook.preview.opening_legend")}</span>
       <PlatformFixed>{t("playbook.preview.fixed")}</PlatformFixed>
-      {lang === "he" && !hasHe ? <span className="sas-small">{t("playbook.opening.preview_he_fallback")}</span> : null}
+      {fallback ? (
+        <span className="sas-small" data-topic-fallback={fallback}>
+          {t(fallback === "default" ? "playbook.opening.preview_topic_default" : "playbook.opening.preview_topic_general", { language })}{" "}
+          <a className="pb-link" href={`?${new URLSearchParams({ edit: `topic.${i}` }).toString()}`} data-topic-add-lang={lang}>{t("playbook.opening.preview_topic_add", { language })}</a>
+        </span>
+      ) : lang === "he" && !hasHe ? <span className="sas-small">{t("playbook.opening.preview_he_fallback")}</span> : null}
       <span className="sas-small">{t("playbook.opening.preview_once")}</span>
     </PartPreview>
   );

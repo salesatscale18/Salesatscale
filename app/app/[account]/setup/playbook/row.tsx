@@ -8,6 +8,7 @@ import type { PlaybookChange } from "@/lib/agent/playbook-save";
 import { partOfKey, type PlaybookPart } from "@/lib/agent/playbook-parts";
 import { savePlaybookRowAction } from "./actions";
 import { PART_LABEL } from "./summaries";
+import { shouldTakeFocus, type FocusRequest } from "./focus";
 import "./playbook.css";
 
 /**
@@ -17,14 +18,14 @@ import "./playbook.css";
  */
 type RowsCtx = {
   slug: string; part: PlaybookPart; hrefs: Record<PlaybookPart, string>; open: string | null; setOpen: (id: string | null) => void;
-  focusWant: { id: string; at: number } | null; focusTo: (id: string | null) => void;
+  focusWant: FocusRequest | null; focusTo: (id: string | null) => void;
 };
 const Ctx = createContext<RowsCtx | null>(null);
 
 /** `edit`: the row to open first (a link such as `limits?edit=handOffWhen`). */
 export function PartRows({ slug, part, hrefs, edit, children }: { slug: string; part: PlaybookPart; hrefs: Record<PlaybookPart, string>; edit?: string | null; children: ReactNode }) {
   const [open, setOpenState] = useState<string | null>(edit ?? null);
-  const [focusWant, setFocusWant] = useState<{ id: string; at: number } | null>(null);
+  const [focusWant, setFocusWant] = useState<FocusRequest | null>(null);
   const setOpen = (id: string | null) => { if (id !== null) setFocusWant(null); setOpenState(id); };
   const focusTo = (id: string | null) => setFocusWant(id ? { id, at: Date.now() } : null);
   return <Ctx.Provider value={{ slug, part, hrefs, open, setOpen, focusWant, focusTo }}><div className="pb-rows">{children}</div></Ctx.Provider>;
@@ -41,14 +42,17 @@ export type ErrorOf = (key: string) => string | undefined;
 /** A row's save refused before it is sent (an empty Add): the message per input key, shown at the row. */
 export type RowRefusal = { refuse: Record<string, string> };
 
-/** Moves focus to this element when the rows asked for it (`focusTo(id)`), once; a request older than 5 s is ignored. */
+/**
+ * Moves focus to this element when the rows asked for it (`focusTo(id)`), and again when the refreshed rows
+ * replace the element while focus is lost (focus.ts shouldTakeFocus); a request older than 5 s is ignored.
+ */
 export function useFocusTarget(id: string, ref: { current: HTMLElement | null }, active = true) {
   const c = useRows();
   const want = c.focusWant;
   useEffect(() => {
-    if (!active || !want || want.id !== id || Date.now() - want.at > 5000 || !ref.current) return;
+    if (!active || !ref.current || !shouldTakeFocus(want, id, Date.now(), document.activeElement, document.body)) return;
     ref.current.focus();
-    c.focusTo(null);
+    if (want) want.done = true;
   });
 }
 

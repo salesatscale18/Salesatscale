@@ -94,7 +94,13 @@ describe("O35 pages on the demo account", () => {
     expect(html).toContain('data-testid="attempts-stepper"');
     expect(text(html)).toContain("Tries per objection");
     expect(html).toContain('data-value="2"');
-    expect(html).toContain('aria-label="Fewer attempts"');
+    expect(html).toContain('aria-label="Fewer tries per objection"');
+    // Screen readers hear the visible label, not "attempts": the group and the number are named by it.
+    const stepper = html.slice(html.indexOf('data-testid="objection-attempts"'), html.indexOf('data-testid="objection-attempts"') + 2000);
+    expect(stepper).toMatch(/<span class="pb-stepper__label" id="pb-objectionAttempts-label">Tries per objection<\/span>/);
+    expect(stepper).toMatch(/role="group" aria-labelledby="pb-objectionAttempts-label"/);
+    expect(stepper).toMatch(/<output id="pb-objectionAttempts" aria-live="polite" aria-labelledby="pb-objectionAttempts-label"/);
+    expect(stepper).not.toMatch(/aria-label="[^"]*attempt/i);
     // It moved to Objections (UX, 25 Nov): first in the part, before the objections; What it asks no longer has it.
     expect(html.indexOf('data-testid="objection-attempts"')).toBeLessThan(html.indexOf('data-testid="objection-row"'));
     expect(await render(PartPage, { account: slug, part: "asks" })).not.toContain('data-testid="objection-attempts"');
@@ -102,14 +108,14 @@ describe("O35 pages on the demo account", () => {
     expect((await ensureDraftVersion(db, account.id)).playbook.objectionAttempts).toBe(3);
     expect(await render(PartPage, objections)).toContain('data-value="3"');
     // At the maximum the + is off.
-    expect(await render(PartPage, objections)).toMatch(/aria-label="More attempts"|disabled="" aria-label="More attempts"/);
+    expect(await render(PartPage, objections)).toMatch(/aria-label="More tries per objection"|disabled="" aria-label="More tries per objection"/);
     expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "4"]]))).toMatchObject({ ok: false, errors: { objectionAttempts: "Choose a number from 1 to 3." } });
     expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "0"]]))).toMatchObject({ ok: false, errors: { objectionAttempts: "Choose a number from 1 to 3." } });
     // A form without it keeps the stored value.
     expect(await savePlaybookForm(db, account.id, form())).toEqual({ ok: true });
     expect((await ensureDraftVersion(db, account.id)).playbook.objectionAttempts).toBe(3);
     const at3 = await render(PartPage, objections);
-    expect(at3).toMatch(/<button type="button" disabled="" aria-label="More attempts">/);
+    expect(at3).toMatch(/<button type="button" disabled="" aria-label="More tries per objection">/);
   });
 
   it("Sales plays: the five new plays show as default cards with their fact prompts", async () => {

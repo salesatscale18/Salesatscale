@@ -13,6 +13,7 @@ import { dismissHandoffNoticeAction } from "./actions";
 import { PlatformFixed, enterSaves, growProps } from "./parts";
 import { restatesDiscountLimit, shortDate } from "./checks";
 import { AddRow, EditRow, PartRows, RowCommand, type ErrorOf } from "./row";
+import { focusAfterDelete } from "./focus";
 import { useAgentDraft } from "./preview";
 import "./playbook.css";
 
@@ -307,7 +308,7 @@ export function NeverRows({ slug, hrefs, edit, p }: Base & { p: Pick<Playbook, "
             )}
             editor={(e) => <><label className="sas-sr" htmlFor={`pb-never.${i}`}>{label}</label><RuleEditor id={`pb-never.${i}`} name="rule" value={rule} e={e} errKey={`never.${i}`} /></>}
             toChange={(form) => ({ kind: "edit", list: "neverDo", index: i, item: val(form, "rule") })}
-            extra={<RowCommand change={{ kind: "delete", list: "neverDo", index: i }} label={t("playbook.row.remove_short")} ariaLabel={t("playbook.row.remove", { what: rule })} focusAfter={i < p.neverDo.length - 1 ? `never.${i}` : "never.add"} />}
+            extra={<RowCommand change={{ kind: "delete", list: "neverDo", index: i }} label={t("playbook.row.remove_short")} ariaLabel={t("playbook.row.remove", { what: rule })} focusAfter={focusAfterDelete(p.neverDo.map((_, j) => j), i, (j) => `never.${j}`, "never.add")} />}
           />
         );
       })}
