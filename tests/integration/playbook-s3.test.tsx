@@ -166,7 +166,7 @@ describe("Playbook S3: previews and the objections gap", () => {
       save("objections", html);
       const s = text(html);
       expect(html).toContain('data-testid="objection-gaps"');
-      expect(s).toContain("Raised by buyers, no approved answer yet");
+      expect(s).toContain("Raised by buyers, no matching approved answer");
       expect(s).toContain("3 buyers raised “too pricey” · Too expensive");
       expect(s).toContain("1 buyer raised “We have no budget”");
       expect(s).toContain("1 buyer raised “Maybe next quarter” · Not now");
@@ -191,8 +191,8 @@ describe("Playbook S3: previews and the objections gap", () => {
     it("home: the Objections row's note and the Worth a look entry (several: the list)", async () => {
       const html = await render(HomePage, {});
       save("home", html);
-      expect(html).toMatch(/data-part="objections"[^]*?<span class="pb-home__gap" data-gap="objections">3 objections buyers raised have no answer yet\.<\/span>/);
-      expect(html).toMatch(/<li data-gap="objections">3 objections buyers raised have no answer yet\. <a href="\/app\/[^"]+\/setup\/playbook\/objections">Add one<\/a><\/li>/);
+      expect(html).toMatch(/data-part="objections"[^]*?<span class="pb-home__gap" data-gap="objections">3 objections buyers raised match none of your answers\.<\/span>/);
+      expect(html).toMatch(/<li data-gap="objections">3 objections buyers raised match none of your answers\. <a href="\/app\/[^"]+\/setup\/playbook\/objections">Add one<\/a><\/li>/);
       // Plays: one has facts, so no plays note (UX after S2).
       expect(html).not.toContain('data-gap="plays"');
     });
