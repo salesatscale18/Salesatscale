@@ -42,7 +42,7 @@ const { HANDOFF_NOTICE_COOKIE, mentionsUnknownQuestions, showHandoffNotice, with
 const { dismissHandoffNoticeAction } = await import("@/app/app/[account]/setup/playbook/actions");
 const { ObjectionList } = await import("@/app/app/[account]/leads/[leadId]/deal-pane");
 const { paneObjections } = await import("@/lib/leads/deal-pane");
-const { default: PlaybookPage } = await import("@/app/app/[account]/setup/playbook/page");
+const { default: PartPage } = await import("@/app/app/[account]/setup/playbook/[part]/page");
 
 const css = ["components/sas/sas.css", "app/app/[account]/setup/playbook/playbook.css"].map((f) => fs.readFileSync(path.join(process.cwd(), f), "utf8")).join("\n");
 const save = (name: string, html: string) => {
@@ -86,7 +86,8 @@ describe("the Limits notice on unknown questions", () => {
   let db: TestDb;
   let me: User, other: User;
   let acc: SellerAccount;
-  const render = async () => renderToStaticMarkup(await (PlaybookPage as Page)({ params: Promise.resolve({ account: acc.slug }), searchParams: Promise.resolve({}) }));
+  /** Playbook › Limits, where the notice lives. */
+  const render = async () => renderToStaticMarkup(await (PartPage as Page)({ params: Promise.resolve({ account: acc.slug, part: "limits" }), searchParams: Promise.resolve({}) }));
   const setHandOff = async (handOffWhen: string) => {
     const d = await ensureDraftVersion(db, acc.id);
     await saveDraftPlaybook(db, acc.id, { ...d.playbook, handOffWhen });
@@ -115,15 +116,16 @@ describe("the Limits notice on unknown questions", () => {
     expect(withDismissed(withDismissed("junk", id), id)).toBe(id);
   });
 
-  it("shows on the Playbook page with the old rule, links to the play, and not with the new rule", async () => {
+  it("shows in Playbook › Limits with the old rule, links to the play, and not with the new rule", async () => {
     await setHandOff(OLD_DEFAULT);
     const html = await render();
     save("playbook-notice", html);
     expect(html).toContain('data-testid="handoff-notice"');
     expect(html).toContain("Questions the agent can&#x27;t answer no longer hand off the chat. The agent asks the team and keeps going. See the play");
     expect(html).toContain(`<a href="/app/${acc.slug}/setup/playbook/plays/no_answer">&#x27;A question with no approved answer&#x27;.</a>`);
-    // In the Limits panel, after the hand-off rule.
-    expect(html.indexOf('data-testid="handoff-notice"')).toBeGreaterThan(html.indexOf('id="pb-handOffWhen"'));
+    // In Limits, after the hand-off rule.
+    expect(html.indexOf('data-row="handOffWhen"')).toBeGreaterThan(0);
+    expect(html.indexOf('data-testid="handoff-notice"')).toBeGreaterThan(html.indexOf('data-row="handOffWhen"'));
     await setHandOff(NEW_DEFAULT);
     expect(await render()).not.toContain('data-testid="handoff-notice"');
   });
@@ -134,7 +136,7 @@ describe("the Limits notice on unknown questions", () => {
     const form = new FormData();
     form.set("slug", acc.slug);
     form.set("handOffWhen", "changed in the form but not saved");
-    await expect(dismissHandoffNoticeAction(form)).rejects.toMatchObject({ url: `/app/${acc.slug}/setup/playbook#pb-lim-h-s` });
+    await expect(dismissHandoffNoticeAction(form)).rejects.toMatchObject({ url: `/app/${acc.slug}/setup/playbook/limits` });
     expect(holder.set).toEqual([{ name: HANDOFF_NOTICE_COOKIE, value: me.id, opts: expect.objectContaining({ path: "/", httpOnly: true, sameSite: "lax" }) }]);
     expect((await ensureDraftVersion(db, acc.id)).playbook.handOffWhen).toBe(before.handOffWhen);
     expect(await render()).not.toContain('data-testid="handoff-notice"');

@@ -103,7 +103,8 @@ describe("Compare versions", () => {
       ["questions", "Deal details", "added"],
       ["limits", "Discount without approval", "changed"],
       ["limits", "Offer a call when", "changed"],
-      ["limits", "Never do · Rule 2", "moved"],
+      // Never do is its own area since the Playbook parts (S1).
+      ["never", "Never do · Rule 2", "moved"],
       ["voice", "Speaking pace", "changed"],
     ]);
     // The play step: words removed and added in the middle of one sentence.
@@ -147,7 +148,7 @@ describe("Compare versions", () => {
     expect(html).toContain("Compare versions");
     expect(html).toContain(`href="/app/${account.slug}/setup/test-lab"`);
     expect(html).toMatch(/data-count="changes">6</);
-    expect(html).toMatch(/data-area-chip="plays"[^>]*>Plays<span class="sas-fchip__count sas-num">1</);
+    expect(html).toMatch(/data-area-chip="plays"[^>]*>Sales plays<span class="sas-fchip__count sas-num">1</);
     expect(html).toContain('data-change-tag="">now your own card<');
     expect(html).toContain('<span class="vc-moved__pos">Position 1</span>');
     expect(html).toContain("Too expensive · step 2");

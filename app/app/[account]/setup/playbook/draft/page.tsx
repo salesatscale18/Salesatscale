@@ -4,7 +4,8 @@ import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { llmConfigured } from "@/lib/agent/llm";
 import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
-import { DraftBanner } from "../parts";
+import { DraftBar } from "../draft-bar";
+import { draftBarOf } from "../data";
 import { spendStateForRequest } from "@/lib/ai/usage";
 import { t, type MessageKey } from "@/lib/i18n";
 import { setupProgress } from "@/lib/overview/setup";
@@ -85,8 +86,8 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
 
   return (
     <>
-    <DraftBanner draft={draft.version} live={liveV?.version ?? null} />
     <main className="sas-shell__content">
+      <DraftBar bar={draftBarOf(access, draft, liveV)} />
       <div className="sas-banner" role="status" style={{ background: "var(--agent-soft)", borderRadius: 8, color: "var(--ink)" }}>
         <span style={{ color: "var(--agent)", display: "inline-flex" }}><Icon name="sparkles" /></span>
         <span className="sas-banner__text" style={{ flex: "1 1 300px" }}>

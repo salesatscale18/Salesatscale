@@ -167,7 +167,7 @@ export function alignList<T>(before: readonly T[], after: readonly T[], key: (x:
 // ---------------------------------------------------------------------------
 
 /** The areas of a version, in the order the page shows them. */
-export const DIFF_AREAS = ["plays", "questions", "limits", "agent", "opening", "objections", "other", "model", "voice"] as const;
+export const DIFF_AREAS = ["plays", "questions", "limits", "never", "agent", "opening", "objections", "close", "other", "model", "voice"] as const;
 export type DiffArea = (typeof DIFF_AREAS)[number];
 
 /**
@@ -306,24 +306,8 @@ function diffQuestions(r: Rows, a: Playbook, b: Playbook) {
 function diffLimits(r: Rows, a: Playbook, b: Playbook) {
   r.in("limits");
   r.text(L("playbook.max_discount"), pct(a.maxDiscountBp), pct(b.maxDiscountBp));
-  r.text(L("playbook.objections.attempts"), String(objectionAttemptsOf(a)), String(objectionAttemptsOf(b)));
-  const outcomes: [keyof Playbook["outcomes"], MessageKey][] = [
-    ["orderForm", "playbook.outcome.order_form"], ["bankTransfer", "playbook.outcome.bank_transfer"], ["meeting", "playbook.outcome.meeting"],
-  ];
-  for (const [k, label] of outcomes) {
-    if (!!a.outcomes?.[k] !== !!b.outcomes?.[k]) r.text(`${L("playbook.outcomes")} · ${L(label)}`, yesNo(a.outcomes?.[k]), yesNo(b.outcomes?.[k]));
-  }
   r.text(L("playbook.meeting_when"), a.offerMeetingWhen, b.offerMeetingWhen);
   r.text(L("playbook.handoff_when"), a.handOffWhen, b.handOffWhen);
-  r.text(L("playbook.call_role"), a.callRole, b.callRole);
-  const never = L("playbook.never");
-  for (const s of alignList(a.neverDo ?? [], b.neverDo ?? [], norm, true)) {
-    const at = (n: number) => `${never} · ${L("playbook.never.rule", { n: n + 1 })}`;
-    if (s.kind === "paired") r.text(at(s.bi), s.a, s.b);
-    else if (s.kind === "added") r.whole(at(s.bi), "added", s.b);
-    else if (s.kind === "removed") r.whole(at(s.ai), "removed", s.a);
-    else if (s.kind === "moved") r.moved(at(s.bi), s.ai, s.bi, s.b);
-  }
   const exc = L("playbook.exceptions");
   for (const s of alignList(a.exceptions ?? [], b.exceptions ?? [], (x) => x.id, false)) {
     if (s.kind === "added") r.whole(exc, "added", s.b.text);
@@ -332,6 +316,27 @@ function diffLimits(r: Rows, a: Playbook, b: Playbook) {
       if (s.kind === "moved") r.moved(exc, s.ai, s.bi, s.b.text);
       r.text(exc, s.a.text, s.b.text);
     }
+  }
+  r.in("never");
+  const never = L("playbook.never");
+  for (const s of alignList(a.neverDo ?? [], b.neverDo ?? [], norm, true)) {
+    const at = (n: number) => `${never} · ${L("playbook.never.rule", { n: n + 1 })}`;
+    if (s.kind === "paired") r.text(at(s.bi), s.a, s.b);
+    else if (s.kind === "added") r.whole(at(s.bi), "added", s.b);
+    else if (s.kind === "removed") r.whole(at(s.ai), "removed", s.a);
+    else if (s.kind === "moved") r.moved(at(s.bi), s.ai, s.bi, s.b);
+  }
+}
+
+/** How a deal closes: the sales goal and the ways a sale can end. */
+function diffClose(r: Rows, a: Playbook, b: Playbook) {
+  r.in("close");
+  r.text(L("playbook.goal"), a.goal, b.goal);
+  const outcomes: [keyof Playbook["outcomes"], MessageKey][] = [
+    ["orderForm", "playbook.outcome.order_form"], ["bankTransfer", "playbook.outcome.bank_transfer"], ["meeting", "playbook.outcome.meeting"],
+  ];
+  for (const [k, label] of outcomes) {
+    if (!!a.outcomes?.[k] !== !!b.outcomes?.[k]) r.text(`${L("playbook.outcomes")} · ${L(label)}`, yesNo(a.outcomes?.[k]), yesNo(b.outcomes?.[k]));
   }
 }
 
@@ -344,8 +349,8 @@ function diffAgent(r: Rows, a: Playbook, b: Playbook) {
   for (const l of langs) r.text(`${L("playbook.agent_name")} · ${LANG_NAME[l] ?? l}`, a.agentNameLocal?.[l], b.agentNameLocal?.[l]);
   const gender = (g: Playbook["agentGender"]) => L(`playbook.agent_gender.${g ?? "neutral"}` as MessageKey);
   r.text(L("compare.item.gender"), gender(a.agentGender), gender(b.agentGender));
-  r.text(L("playbook.goal"), a.goal, b.goal);
   r.text(L("playbook.tone"), a.tone, b.tone);
+  r.text(L("playbook.call_role"), a.callRole, b.callRole);
 }
 
 function diffOpening(r: Rows, a: Playbook, b: Playbook) {
@@ -372,6 +377,7 @@ function diffOpening(r: Rows, a: Playbook, b: Playbook) {
 
 function diffObjections(r: Rows, a: Playbook, b: Playbook) {
   r.in("objections");
+  r.text(L("playbook.objections.attempts"), String(objectionAttemptsOf(a)), String(objectionAttemptsOf(b)));
   const obj = L("playbook.objection.text");
   for (const s of alignList(a.objections ?? [], b.objections ?? [], (x) => norm(x.objection), true)) {
     if (s.kind === "added") r.whole(obj, "added", s.b.objection, [s.b.answer]);
@@ -439,6 +445,7 @@ export function diffVersions(a: VersionContent, b: VersionContent, opts: DiffOpt
   diffAgent(r, a.playbook, b.playbook);
   diffOpening(r, a.playbook, b.playbook);
   diffObjections(r, a.playbook, b.playbook);
+  diffClose(r, a.playbook, b.playbook);
   diffOther(r, a.playbook, b.playbook);
   if (opts.platformDetails) {
     r.in("model");

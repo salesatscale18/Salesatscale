@@ -14,7 +14,7 @@ describe("approved limits say where they now live (UX)", () => {
     const html = renderToStaticMarkup(<SuggestionItem {...props(base("accepted", {}), { kind: "exception" })} />);
     expect(html).toContain('data-limit-lives="playbook"');
     expect(html).toContain("Change in Playbook › Limits");
-    expect(html).toContain("/app/polar/setup/playbook#pb-lim-h");
+    expect(html).toContain('href="/app/polar/setup/playbook/limits"');
     expect(html).not.toContain(">Edit<");
   });
 

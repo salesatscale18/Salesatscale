@@ -3,23 +3,6 @@ import { Icon } from "@/components/sas/icon";
 import { t } from "@/lib/i18n";
 import "./playbook.css";
 
-/**
- * The draft banner on every Playbook page (editor, Sales plays, one play, the
- * draft from sources). Test-banner colours with a file icon: the flask is
- * reserved for the test lab.
- */
-export function DraftBanner({ draft, live }: { draft: number; live: number | null }) {
-  return (
-    <div className="sas-banner sas-banner--test" role="status" data-testid="draft-banner">
-      <Icon name="file-pen" />
-      <span className="sas-banner__text">
-        <strong>{t("playbook.banner.draft", { version: draft })}</strong>{" "}
-        {live ? t("playbook.banner.live", { version: live }) : t("playbook.banner.none_live")}
-      </span>
-    </div>
-  );
-}
-
 /** Fits a textarea to its text (browsers without `field-sizing: content`). */
 function fit(el: HTMLTextAreaElement) {
   if (typeof CSS !== "undefined" && CSS.supports?.("field-sizing", "content")) return;

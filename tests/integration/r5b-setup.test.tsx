@@ -277,14 +277,14 @@ describe("pages (demo account)", () => {
     expect(new Date(started!).getTime()).toBeLessThan(he.createdAt.getTime());
   });
 
-  it("R5-18: the plays chips add up (Ready + Needs your facts = All); S6 draft banner icon", async () => {
+  it("R5-18: the plays chips add up (Ready + Needs your facts = All); S6 draft bar icon", async () => {
     const html = await render(PlaysPage, { account: slug });
     save("r5b-plays", html);
     const tx = text(html);
     const n = (label: string) => Number(tx.match(new RegExp(`${label} ?(\\d+)`))?.[1]);
     expect(n("Ready") + n("Needs your facts")).toBe(n("All"));
     expect(n("All")).toBe(19);
-    expect(html).toMatch(/data-testid="draft-banner"><svg[^>]*lucide-file-pen/);
+    expect(html).toMatch(/data-testid="draft-bar"[^>]*><span class="pb-draftbar__mark"><svg[^>]*lucide-file-pen/);
     expect(tx).toContain("no full price list before the need is clear");
     const plays = playsOverview({ plays: {} } as never, new Map());
     const c = playCounts(plays);

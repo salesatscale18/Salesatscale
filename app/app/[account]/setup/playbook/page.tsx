@@ -1,80 +1,79 @@
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
-import { SetupSteps } from "@/components/sas/nav";
-import { setupProgress } from "@/lib/overview/setup";
-import { DraftBanner } from "./parts";
-import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
-import { agentNameLanguages, autoNameModel, refreshAgentNameAuto } from "@/lib/agent/names-auto";
-import { agentNameRows } from "@/lib/agent/core/names";
-import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
-import { pendingPlaySuggestions } from "@/lib/pipeline/service";
-import { t } from "@/lib/i18n";
-import { PlaybookForm } from "./form";
-import { playsOverview, playsSummary } from "./plays/overview";
-import { PlaybookToc } from "./toc";
-import { unpaidRemindersOf } from "@/lib/orders/unpaid-reminders";
-import { cookies } from "next/headers";
-import { HANDOFF_NOTICE_COOKIE, showHandoffNotice } from "@/lib/agent/handoff-notice";
+import { appDb, requireAccount } from "@/lib/auth/account";
+import { unansweredQuestions } from "@/lib/agent/service";
+import { sampleOpenerText } from "@/lib/agent/core/opener";
+import { PART_GROUPS } from "@/lib/agent/playbook-parts";
+import { t, type Locale } from "@/lib/i18n";
+import { loadPlaybook } from "./data";
+import { gapNotes, PART_LABEL } from "./summaries";
+import { GROUP_LABEL, PART_ICON, PlaybookHeader } from "./shell";
+import { AnchorRedirect, HowItSounds } from "./home-client";
 
-/** The notice cookie, or nothing outside a request (render tests). */
-async function noticeCookie(): Promise<string | undefined> {
-  try { return (await cookies()).get(HANDOFF_NOTICE_COOKIE)?.value; } catch { return undefined; }
-}
+/** Parts added in P11, tagged "New" as the one-page section list did. */
+const NEW_PARTS: ReadonlySet<string> = new Set(["opening", "plays", "after"]);
 
-/** Setup · Playbook (canvas: Playbook, PlaybookOpening). Always edits the draft version (created from the live one when missing). */
-export default async function PlaybookPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+/**
+ * Setup · Playbook (board PlaybookHome): the whole agent on one page of plain
+ * lines, one row per part, grouped; each opens the part. Lines come from the
+ * saved draft (created from the live version when missing). Old one-page
+ * anchors land on their part (AnchorRedirect).
+ */
+export default async function PlaybookPage({ params }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
-  const sp = await searchParams;
   const access = await requireAccount(slug);
   const { account } = access;
-  const [first, live, progress, pending] = await Promise.all([
-    ensureDraftVersion(appDb, account.id), liveVersion(appDb, account.id), setupProgress(appDb, account), pendingPlaySuggestions(appDb, account.id),
-  ]);
-  // Automatic name versions (C2): made once when the name or the market languages changed; this view only
-  // fills languages never tried for this name (a failed try is retried on save, not on every view).
-  const refreshed = await refreshAgentNameAuto(appDb, account.id, autoNameModel(), { actor: actorOf(access) });
-  const draft = { ...first, playbook: refreshed.playbook };
-  const languages = await agentNameLanguages(appDb, account.id, draft.playbook.agentName);
-  const rows = agentNameRows(draft.playbook, languages);
-  const asWritten = rows.filter((r) => r.tag === "as_written" && !r.own).map((r) => r.label);
-  const base = `/app/${account.slug}`;
-  const here = `${base}/setup/playbook`;
-  const lab = `${base}/setup/test-lab`;
-  const plays = playsOverview(draft.playbook, pending);
-  // O1: unknown questions no longer hand off; tell sellers whose hand-off rule still says so, until they dismiss it.
-  const handOffNotice = showHandoffNotice(draft.playbook.handOffWhen, await noticeCookie(), access.user.id) ? { playHref: `${here}/plays/no_answer` } : null;
+  const [data, unanswered] = await Promise.all([loadPlaybook(access), unansweredQuestions(appDb, account.id, 10)]);
+  const p = data.draft.playbook;
+  const gaps = gapNotes(p, {
+    plays: data.playsSummary, unanswered: unanswered.length,
+    href: { part: (x) => data.hrefs[x], playsNeeds: `${data.hrefs.plays}?filter=needs`, questions: `${data.base}/setup/knowledge?view=questions` },
+  });
+  const sells = (["en", "he"] as const).filter((l) => account.languages.includes(l));
+  const texts: Partial<Record<Locale, string>> = Object.fromEntries((sells.length ? sells : (["en"] as const)).map((l) => [l, sampleOpenerText(p, account, l)]));
   return (
-    <>
-      <DraftBanner draft={draft.version} live={live?.version ?? null} />
-      <main className="sas-shell__content">
-        <header className="sas-stack-2">
-          <div className="sas-page-head">
-            <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 260px" }}>
-              <h1 className="sas-title">{t("playbook.title")}</h1>
-              <span className="sas-small">{live ? t("playbook.sub", { version: draft.version, live: live.version }) : t("playbook.sub_none", { version: draft.version })}</span>
+    <main className="sas-shell__content">
+      <AnchorRedirect home={data.home} />
+      <PlaybookHeader data={data} />
+      <div className="pb-home">
+        <section className="sas-panel pb-home__parts" aria-label={t("playbook.home.parts")} data-testid="playbook-home">
+          {PART_GROUPS.map((g) => (
+            <div key={g.group} className="pb-home__group" role="group" aria-labelledby={`pb-g-${g.group}`}>
+              <h2 className="pb-home__label" id={`pb-g-${g.group}`}>{t(GROUP_LABEL[g.group])}</h2>
+              <ul className="pb-home__rows">
+                {g.parts.map((part) => {
+                  const gap = gaps.find((x) => x.part === part);
+                  return (
+                    <li key={part}>
+                      <a className="pb-home__row" href={data.hrefs[part]} data-part={part}>
+                        <span className="pb-home__icon" aria-hidden="true"><Icon name={PART_ICON[part]} /></span>
+                        <span className="pb-home__name">{t(PART_LABEL[part])}{NEW_PARTS.has(part) ? <span className="pb-new">{t("playbook.new")}</span> : null}</span>
+                        <span className="pb-home__summary" dir="auto">{data.lines[part].summary}</span>
+                        {gap ? <span className="pb-home__gap" data-gap={gap.id}>{gap.text}</span> : null}
+                        <Icon name="chevron-right" />
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
-            <div className="sas-page-head__actions pb-head-actions">
-              <a className={buttonClass("secondary")} href={`${here}/draft`}><Icon name="sparkles" />{t("playbook.from_sources")}</a>
-              <a className={buttonClass("secondary")} href={lab}><Icon name="flask-conical" />{t("playbook.test_in_lab")}</a>
-              <button type="submit" form="pb-form" className={buttonClass("primary")}>{t("playbook.save")}</button>
-            </div>
-          </div>
-          <span className="sas-small">{t("playbook.intro")}</span>
-          <SetupSteps basePath={base} current="playbook" completed={progress} />
-        </header>
-        {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.saved")}</span></div> : null}
-        <div className="pb-layout">
-          <PlaybookToc playbookHref={here} playsHref={`${here}/plays`} />
-          <div className="pb-main pb-main--spy">
-            <PlaybookForm
-              slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName} companyLocal={account.tradeNameLocal}
-              plays={playsSummary(plays)} handOffNotice={handOffNotice} liveUnpaid={unpaidRemindersOf(live?.playbook ?? null)}
-              playsHref={`${here}/plays`} orderFormHref={`${base}/setup/order-form`} key={JSON.stringify(draft.playbook)}
-              names={{ rows, source: draft.playbook.agentName, notice: asWritten.length ? t("names.as_written_notice", { languages: asWritten.join(", ") }) : null, marketsHref: `${base}/markets` }}
-            />
-          </div>
-        </div>
-      </main>
-    </>
+          ))}
+        </section>
+        <aside className="pb-home__aside sas-stack-4">
+          <section className="sas-panel pb-aside" aria-labelledby="pb-sounds-h">
+            <HowItSounds texts={texts} />
+            <a className={buttonClass("secondary", "sm")} href={data.lab}><Icon name="flask-conical" />{t("playbook.test_in_lab")}</a>
+          </section>
+          {gaps.length ? (
+            <section className="sas-panel pb-aside" aria-labelledby="pb-gaps-h" data-testid="worth-a-look">
+              <h2 className="sas-heading" id="pb-gaps-h">{t("playbook.gaps.title", { n: gaps.length })}</h2>
+              <ul className="pb-gaps">
+                {gaps.map((g) => <li key={g.id} data-gap={g.id}>{g.text} <a href={g.href}>{g.link}</a></li>)}
+              </ul>
+            </section>
+          ) : null}
+        </aside>
+      </div>
+    </main>
   );
 }

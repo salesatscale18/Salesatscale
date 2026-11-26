@@ -147,9 +147,10 @@ describe("R4-4: Sales plays, Company, Settings, Go live, Test lab", () => {
       expect(some).toMatchObject({ withFacts: 3, sharper: 14, noneNeeded: 2, own: 1 });
       const html = await render(PlaybookPage);
       save("playbook", html);
-      const summary = html.match(/data-testid="plays-summary">[\s\S]*?<\/ul>/)?.[0] ?? "";
-      expect(summary).not.toMatch(/need your facts|of 19/);
-      expect(summary).toContain("3 need none");
+      // Home: one line for the plays, counted out of 19, and the ones that would be sharper as a gap note.
+      const row = html.match(/data-part="plays">[\s\S]*?<\/a>/)?.[0] ?? "";
+      expect(row).not.toMatch(/need your facts|of 19/);
+      expect(row).toMatch(/>19 plays · \d+ with your facts</);
     });
   });
 

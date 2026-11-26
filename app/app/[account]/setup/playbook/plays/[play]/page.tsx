@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
-import { DraftBanner } from "../../parts";
+import { loadPlaybook } from "../../data";
+import { DraftBar } from "../../draft-bar";
 import { DEFAULT_PLAYS, defaultPlayFor, playFacts } from "@/lib/agent/core/plays";
 import { questionBudgetOf } from "@/lib/agent/core/stage";
 import { isPlayKey } from "@/lib/agent/playbook";
@@ -15,9 +15,11 @@ import { PlayForm, type ElsewhereFact } from "./play-form";
 export default async function PlayPage({ params, searchParams }: { params: Promise<{ account: string; play: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug, play } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
+  const access = await requireAccount(slug);
+  const { account } = access;
   if (!isPlayKey(play)) notFound();
-  const [draft, live, suggestions] = await Promise.all([ensureDraftVersion(appDb, account.id), liveVersion(appDb, account.id), playSuggestions(appDb, account.id, play)]);
+  const [data, suggestions] = await Promise.all([loadPlaybook(access), playSuggestions(appDb, account.id, play)]);
+  const draft = data.draft;
   const base = `/app/${account.slug}`;
   const playbookHref = `${base}/setup/playbook`;
   const playsHref = `${playbookHref}/plays`;
@@ -29,10 +31,10 @@ export default async function PlayPage({ params, searchParams }: { params: Promi
   // Facts that live in another setting are shown here read-only, with a link there.
   const elsewhere: ElsewhereFact[] = [];
   if (play === "too_expensive") {
-    elsewhere.push({ label: t("playbook.play.discount_limit"), text: t("playbook.play.discount_limit_text", { pct: pb.maxDiscountBp / 100 }), href: `${playbookHref}#pb-lim-h-s`, linkLabel: t("playbook.play.edit_in_limits") });
+    elsewhere.push({ label: t("playbook.play.discount_limit"), text: t("playbook.play.discount_limit_text", { pct: pb.maxDiscountBp / 100 }), href: data.hrefs.limits, linkLabel: t("playbook.play.edit_in_limits") });
   }
   if (play === "handoff" && pb.handOffWhen.trim()) {
-    elsewhere.push({ label: t("playbook.handoff_when"), text: pb.handOffWhen, href: `${playbookHref}#pb-lim-h-s`, linkLabel: t("playbook.play.edit_in_limits") });
+    elsewhere.push({ label: t("playbook.handoff_when"), text: pb.handOffWhen, href: data.hrefs.limits, linkLabel: t("playbook.play.edit_in_limits") });
   }
 
   const card = suggestions.find((s) => s.payload.kind === "play_card");
@@ -50,8 +52,8 @@ export default async function PlayPage({ params, searchParams }: { params: Promi
 
   return (
     <>
-    <DraftBanner draft={draft.version} live={live?.version ?? null} />
     <main className="sas-shell__content">
+      <DraftBar bar={data.bar} />
       <nav aria-label={t("playbook.play.breadcrumb")} className="sas-small pb-crumbs">
         <a href={playbookHref}>{t("playbook.title")}</a>
         <span aria-hidden="true">›</span>

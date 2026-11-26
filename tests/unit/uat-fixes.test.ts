@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { SELLER_NAV } from "@/components/sas/nav";
 import { activeNavId } from "@/components/sas/side-nav-client";
 import { copyMetaFrom } from "@/app/app/[account]/setup/price-lists/rules";
-import { playbookFormValues } from "@/app/app/[account]/setup/playbook/form";
+import { playbookFormValues } from "@/app/app/[account]/setup/playbook/values";
 import { legalTitle } from "@/app/f/[token]/lines";
 import { defaultPlaybook, playbookRowsFromForm } from "@/lib/agent/playbook";
 import { CSV_TEMPLATE_HEADER, csvTemplate, csvToRawLeads, normalizePhone, parseCsv, parseLead, CONSENT_WORDING_DEFAULT } from "@/lib/leads/rules";

@@ -25,7 +25,7 @@ const { default: CompanyPage } = await import("@/app/app/[account]/setup/company
 const { default: PriceListsPage } = await import("@/app/app/[account]/setup/price-lists/page");
 const { default: MarketsPage } = await import("@/app/app/[account]/markets/page");
 const { default: BuyerFormPage } = await import("@/app/f/[token]/page");
-const { savePlaybookAction } = await import("@/app/app/[account]/setup/playbook/actions");
+const { savePlaybookPartAction, savePlaybookRowAction } = await import("@/app/app/[account]/setup/playbook/actions");
 const { addLeadAction, takeOverAction, handBackAction } = await import("@/app/app/[account]/leads/actions");
 const { sendTestMessageAction, startChatAction } = await import("@/app/app/[account]/setup/test-lab/actions");
 const { GET: templateGet } = await import("@/app/leads-template.csv/route");
@@ -36,7 +36,7 @@ const { acceptNewPrice, createOrderForm } = await import("@/lib/orders/service")
 const { createQuote } = await import("@/lib/quotes/service");
 const { parseLead } = await import("@/lib/leads/rules");
 const { upsertLead } = await import("@/lib/leads/service");
-const { startTestConversation } = await import("@/lib/agent/service");
+const { ensureDraftVersion, startTestConversation } = await import("@/lib/agent/service");
 
 const form = (v: Record<string, string>) => {
   const f = new FormData();
@@ -97,12 +97,17 @@ describe("UAT round 2 fixes", () => {
     expect(html2).toMatch(/id="pl-copy-tax"[^>]*value="19"/);
   });
 
-  it("3. A refused playbook save returns what was typed, so the form keeps it", async () => {
-    const r = await savePlaybookAction({ status: "idle" }, form({ slug: acc.slug, agentName: "", goal: "Sell sensors fast", tone: "Warm", maxDiscount: "12", offerMeetingWhen: "", handOffWhen: "" }));
+  it("3. A refused playbook save returns what was typed, so the part's editor keeps it", async () => {
+    const r = await savePlaybookPartAction({ status: "idle" }, form({ slug: acc.slug, part: "asks", questionBudget: "3", "field.0.label": "", "field.0.stage": "before_quote", "field.0.example": "How many sites?" }));
     expect(r.status).toBe("error");
     if (r.status !== "error") return;
-    expect(r.errors.agentName).toBeTruthy();
-    expect(r.values).toMatchObject({ agentName: "", goal: "Sell sensors fast", tone: "Warm", maxDiscount: "12" });
+    expect(r.errors["field.0.label"]).toBeTruthy();
+    expect(r.values.fields[0]).toMatchObject({ label: "", example: "How many sites?" });
+    // A refused row save says so at the row (its own key), nothing is stored.
+    const before = (await ensureDraftVersion(db, acc.id)).playbook;
+    const row = await savePlaybookRowAction(acc.slug, { kind: "set", values: { agentName: "" } });
+    expect(row).toEqual({ ok: false, errors: { agentName: expect.any(String) } });
+    expect((await ensureDraftVersion(db, acc.id)).playbook).toEqual(before);
   });
 
   describe("4–5. Add lead", () => {

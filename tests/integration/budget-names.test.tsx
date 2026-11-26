@@ -43,6 +43,7 @@ const { refreshAgentNameAuto, agentNameLanguages } = await import("@/lib/agent/n
 const { runBuyerTurn } = await import("@/lib/agent/turn");
 const { chatNames } = await import("@/lib/simulator/service");
 const { default: PlaybookPage } = await import("@/app/app/[account]/setup/playbook/page");
+const { default: PartPage } = await import("@/app/app/[account]/setup/playbook/[part]/page");
 const { default: CompanyPage } = await import("@/app/app/[account]/setup/company/page");
 
 type Llm = InstanceType<typeof ScriptedLlm>;
@@ -65,6 +66,11 @@ describe("B2 and C2 against the database", () => {
   const page = (Page: typeof PlaybookPage, a: SellerAccount) => {
     holder.access = { account: a, user: me, actingAs: false, role: "seller_admin" };
     return render(Page({ params: Promise.resolve({ account: a.slug }), searchParams: Promise.resolve({}) }));
+  };
+  /** A part of the Playbook (Agent, What it asks, …); `edit` opens one row first. */
+  const partPage = (a: SellerAccount, part: string, sp: Record<string, string> = {}) => {
+    holder.access = { account: a, user: me, actingAs: false, role: "seller_admin" };
+    return render(PartPage({ params: Promise.resolve({ account: a.slug, part }), searchParams: Promise.resolve(sp) }));
   };
   const draftOf = async (id: string) => (await ensureDraftVersion(db, id)).playbook;
   const form = (agentName: string, extra: [string, string][] = []): [string, string][] => [
@@ -149,8 +155,8 @@ describe("B2 and C2 against the database", () => {
     const r = await refreshAgentNameAuto(db, acc.id, bad);
     expect(r).toMatchObject({ generated: [], asWritten: ["he"], reason: "invalid" });
     expect((await draftOf(acc.id)).agentNameAuto).toEqual({ source: "Lior", values: {}, asWritten: ["he"] });
-    // The page (no model configured in tests) shows the name as written, with the notice, and calls nothing.
-    const html = await page(PlaybookPage, acc);
+    // The Agent part (no model configured in tests) shows the name as written, with the notice, and calls nothing.
+    const html = await partPage(acc, "agent");
     expect(html).toContain("No automatic version could be made for Hebrew right now, so buyers see the name as written.");
     expect(html).toMatch(/data-tag="as_written"[^>]*>As written</);
     expect(bad.requests).toHaveLength(1);
@@ -188,7 +194,9 @@ describe("B2 and C2 against the database", () => {
     expect(p.agentNameLocal).toEqual({ he: "טל" });
     // An own version needs no automatic one: no call.
     expect(llm.requests).toHaveLength(0);
-    const html = await page(PlaybookPage, acc);
+    // Read first: the Hebrew version is marked as the seller's own; the name row opened shows it with Reset.
+    expect(await partPage(acc, "agent")).toMatch(/data-tag="own">Your version</);
+    const html = await partPage(acc, "agent", { edit: "name" });
     expect(html).toMatch(/data-lang="he" data-own=""/);
     expect(html).toContain(">Your version<");
     expect(html).toContain(">Reset<");
@@ -216,14 +224,14 @@ describe("B2 and C2 against the database", () => {
     expect((await draftOf(other.id)).questionBudget).toBeUndefined();
   });
 
-  it("Playbook page: the questions card with the stepper and the advice when the quote needs more than the budget", async () => {
+  it("Playbook › What it asks: the stepper and the advice when the quote needs more than the budget; Agent: speaks as, names", async () => {
     const p = await draftOf(acc.id);
     await saveDraftPlaybook(db, acc.id, {
       ...p, questionBudget: 3,
       fields: ["Users", "Offices", "Start date", "Plan"].map((label, i): PlaybookField => ({ key: `f${i}`, label, stage: "before_quote" }))
         .concat([{ key: "today", label: "How they plan today", stage: "optional" }]),
     });
-    const html = await page(PlaybookPage, acc);
+    const html = await partPage(acc, "asks");
     save("playbook", html);
     expect(html).toContain("Questions before recommending");
     expect(html).toContain('name="questionBudget" value="3"');
@@ -231,15 +239,20 @@ describe("B2 and C2 against the database", () => {
     expect(html).toContain("4 questions are needed for the quote, but the agent asks at most 3 before recommending. It will quote the last one on a stated assumption.");
     expect(html).toContain("What counts toward the 3");
     expect(html).toContain("Safety limit in the app: after 6 questions the agent always recommends, whatever the setting.");
-    expect(html).toContain("How the agent speaks about itself");
-    expect(html).toContain("Names in other languages");
-    expect(html).toContain("1 language · from your markets");
+    const agent = await partPage(acc, "agent", { edit: "gender" });
+    expect(agent).toContain("Speaks as");
+    expect(agent).toContain('aria-label="How the agent speaks about itself"');
+    const names = await partPage(acc, "agent", { edit: "name" });
+    expect(names).toContain("Names in other languages");
+    expect(names).toContain("1 language · from your markets");
     // The 17 Nov field is gone.
-    expect(html).not.toContain("Agent name (Hebrew)");
-    expect(html).not.toContain('id="pb-agentNameHe"');
+    expect(names).not.toContain("Agent name (Hebrew)");
+    expect(names).not.toContain('id="pb-agentNameHe"');
     // Within the budget: no advice.
     await saveDraftPlaybook(db, acc.id, { ...(await draftOf(acc.id)), questionBudget: 4 });
-    expect(await page(PlaybookPage, acc)).not.toContain('data-testid="budget-warning"');
+    expect(await partPage(acc, "asks")).not.toContain('data-testid="budget-warning"');
+    // Home says it in one line.
+    expect(await page(PlaybookPage, acc)).toContain("5 questions · recommends after 4");
   });
 
   it("the 17 Nov Hebrew values: shown as the Hebrew rows' own versions and used for buyers, nothing lost", async () => {
@@ -248,7 +261,7 @@ describe("B2 and C2 against the database", () => {
     await saveDraftPlaybook(db, other.id, { ...d.playbook, agentName: "Maya", agentNameLocal: { he: "מאיה" }, agentGender: "female" });
     await db.update(sellerAccounts).set({ tradeNameLocal: { he: "אחר" } }).where(eq(sellerAccounts.id, other.id));
     other = (await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, other.id)))[0];
-    const pb = await page(PlaybookPage, other);
+    const pb = await partPage(other, "agent", { edit: "name" });
     expect(pb).toMatch(/name="agentNameLocal\.he"[^>]*value="מאיה"/);
     const co = await page(CompanyPage, other);
     save("company", co);

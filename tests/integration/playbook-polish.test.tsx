@@ -1,6 +1,6 @@
 /**
  * Polish-6 (Playbook navigation and polish) against the database, rendered:
- * the section list, the questions list and stepper, the sales goal labels,
+ * the Playbook home and part menu, the questions list and stepper, the sales goal labels,
  * approved exceptions, the never-do "Covered by Limits" note, the
  * platform-fixed boxes, the draft banner on every Playbook page, the play
  * card footers and named empty slots, the breadcrumb and Company's agent
@@ -34,6 +34,7 @@ const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, saveDraftPlaybook } = await import("@/lib/agent/service");
 const { default: PlaybookPage } = await import("@/app/app/[account]/setup/playbook/page");
+const { default: PartPage } = await import("@/app/app/[account]/setup/playbook/[part]/page");
 const { default: PlaysPage } = await import("@/app/app/[account]/setup/playbook/plays/page");
 const { default: PlayPage } = await import("@/app/app/[account]/setup/playbook/plays/[play]/page");
 const { default: DraftPage } = await import("@/app/app/[account]/setup/playbook/draft/page");
@@ -86,52 +87,79 @@ describe("Playbook navigation and polish (rendered)", () => {
   });
   afterAll(async () => { await t.close(); });
 
-  it("Playbook page: section list, questions, stepper, goal, exceptions, never do, platform text, banner", async () => {
-    const html = await render(PlaybookPage as Page, acc);
-    save("playbook", html);
-    // 1. Section list: sticky (playbook.css), links work without JS, one name for the objections section.
-    expect(html).toContain('data-testid="playbook-toc"');
-    expect(html).toContain('href="#pb-never-h-s"');
-    expect(html).toContain('href="/app/acme/setup/playbook/plays"');
-    expect(html.match(/Objections and answers/g)?.length).toBe(2);
-    expect(html).not.toContain("Objections and approved answers");
-    expect(html).toContain("pb-main--spy");
-    // 2. Questions: column "Question", "Add question" after the list, the example in full on a second line.
-    expect(html).toContain(">Question</th>");
-    expect(html).not.toContain(">Field</th>");
-    expect(html).not.toContain(">Example question</th>");
-    expect(html.indexOf("Add question")).toBeGreaterThan(html.indexOf('id="pb-field.1.label"'));
-    expect(html).toMatch(/<textarea[^>]*id="pb-field\.0\.example"[^>]*>Is it one kitchen, or more\? And how many fridges and freezers are there in each of them, roughly\?<\/textarea>/);
-    expect(html.indexOf("What each role means")).toBeGreaterThan(html.indexOf("Add question"));
-    expect(html).toMatch(/<details class="pb-disclosure"[^>]*><summary>How the count works<\/summary>/);
+  const partHtml = async (a: SellerAccount, name: string, sp: Record<string, string> = {}) => {
+    holder.access = { account: a, user: me, actingAs: false, role: "seller_admin" };
+    return renderToStaticMarkup(await (PartPage as Page)({ params: Promise.resolve({ account: a.slug, part: name }), searchParams: Promise.resolve(sp) }));
+  };
+
+  it("Playbook home and parts: part menu, questions, stepper, goal, exceptions, never do, platform text, draft bar", async () => {
+    const home = await render(PlaybookPage as Page, acc);
+    save("playbook", home);
+    // 1. Home: one row per part, in order, each a plain link to its part (works without JS).
+    const order = ["agent", "opening", "asks", "plays", "objections", "close", "limits", "never", "after"];
+    const at = order.map((p) => home.indexOf(`href="/app/acme/setup/playbook/${p}" data-part="${p}"`));
+    expect(at.every((i) => i > 0)).toBe(true);
+    expect([...at].sort((x, y) => x - y)).toEqual(at);
+    expect(home).not.toContain("Objections and approved answers");
+    expect(home).not.toContain("pb-main--spy");
+    expect(home).not.toContain('data-testid="playbook-toc"');
+    // In a part: the same parts in a menu (and a picker for phones), "All of the playbook" back home, the current one marked.
+    const asks = await partHtml(acc, "asks");
+    save("playbook-asks", asks);
+    expect(asks).toContain('data-testid="part-menu"');
+    expect(asks).toContain('data-testid="part-picker"');
+    expect(asks).toMatch(/<a class="pb-menu__home" href="\/app\/acme\/setup\/playbook">.*All of the playbook<\/a>/);
+    expect(asks).toMatch(/aria-current="page" data-part="asks"><span class="pb-menu__name">What it asks</);
+    expect(asks).toContain('href="/app/acme/setup/playbook/plays"');
+    // 2. What it asks: column "Question", "Where the answer is used", "Add question" after the list, the example in full on a second line.
+    expect(asks).toContain(">Question</th>");
+    expect(asks).toContain(">Where the answer is used</th>");
+    expect(asks).not.toContain(">Field</th>");
+    expect(asks).not.toContain(">Example question</th>");
+    expect(asks.indexOf("Add question")).toBeGreaterThan(asks.indexOf('id="pb-field.1.label"'));
+    expect(asks).toMatch(/<textarea[^>]*id="pb-field\.0\.example"[^>]*>Is it one kitchen, or more\? And how many fridges and freezers are there in each of them, roughly\?<\/textarea>/);
+    // The role names stay; what each means is behind one link.
+    expect(asks).toMatch(/<details class="pb-disclosure" data-testid="roles-disclosure"><summary>What each role means<\/summary>/);
+    expect(asks.indexOf("What each role means")).toBeGreaterThan(asks.indexOf("Add question"));
+    expect(asks).toMatch(/<details class="pb-disclosure"[^>]*><summary>How the count works<\/summary>/);
     // Stepper 2–6: at 3 both buttons work; icons, not text.
-    expect(html).toMatch(/data-testid="budget-stepper"><button type="button" aria-label="Fewer"><svg/);
-    expect(html).not.toMatch(/disabled="" aria-label="(Fewer|More)"/);
-    // 3. Sales goal label and helper, outcome group label, growing tone.
-    expect(html).toMatch(/<label class="sas-input-label" for="pb-goal">Sales goal<\/label><span class="sas-hint" id="pb-goal-hint">In your words\. The agent reads this first\.<\/span>/);
-    expect(html).toContain("How a deal can close</legend>");
-    expect(html).toMatch(/<textarea class="sas-textarea pb-grow" id="pb-tone"/);
-    // 4. Approved exception: neutral row, readable date.
-    expect(html).toContain("Approved 18 Nov 2026");
-    expect(html).toMatch(/data-exception="" style="[^"]*background:var\(--surface-raised\)/);
-    // 7. The discount rule that restates Limits is marked, the other is not.
-    expect(html.match(/Covered by Limits/g)?.length).toBe(1);
-    expect(html).toContain('id="pb-never.0-covered"');
-    // 6. Always-on rules and the opener's fixed words: set by the platform.
-    expect(html.match(/data-platform-fixed=""/g)?.length).toBe(2);
-    expect(html).toContain("Set by the platform");
-    // 5/7. The draft banner: file icon, not the flask (the flask stays on "Test in lab").
-    expect(html).toMatch(/data-testid="draft-banner"><svg[^>]*lucide-file-pen/);
-    // Phone header class (one full-width primary button).
-    expect(html).toContain("sas-page-head__actions pb-head-actions");
+    expect(asks).toMatch(/data-testid="budget-stepper"><button type="button" aria-label="Fewer"><svg/);
+    expect(asks).not.toMatch(/disabled="" aria-label="(Fewer|More)"/);
+    // 3. How a deal closes: the Sales goal row with its helper; open, the goal grows; the ways a sale can end.
+    const close = await partHtml(acc, "close");
+    expect(close).toMatch(/<span class="pb-row__label" id="[^"]+">Sales goal<\/span>/);
+    expect(close).toContain("In your words. The agent reads this first.");
+    expect(close).toContain(">A sale can end with<");
+    expect(await partHtml(acc, "close", { edit: "goal" })).toMatch(/<textarea class="sas-textarea pb-grow pb-grow--3 pb-fit-long" id="pb-goal"/);
+    expect(await partHtml(acc, "close", { edit: "outcomes" })).toContain("A sale can end with</legend>");
+    // Tone: one growing line, sized to its content.
+    expect(await partHtml(acc, "agent", { edit: "tone" })).toMatch(/<textarea class="sas-textarea pb-grow pb-fit-line" id="pb-tone"/);
+    // 4. Approved exception (Limits): neutral row, readable date.
+    const limits = await partHtml(acc, "limits");
+    expect(limits).toContain("Approved 18 Nov 2026");
+    expect(limits).toContain('data-exception=""');
+    expect(css).toMatch(/\.pb-exceptions li \{[^}]*background: var\(--surface-raised\)/);
+    // 7. Never do: the discount rule that restates Limits is marked, the other is not.
+    const never = await partHtml(acc, "never");
+    save("playbook-never", never);
+    expect(never.match(/Covered by Limits/g)?.length).toBe(1);
+    expect(never).toContain("data-never-covered");
+    // 6. Always-on rules (Never do) and the opener's fixed words (Opening): set by the platform.
+    expect(never.match(/data-platform-fixed=""/g)?.length).toBe(1);
+    expect((await partHtml(acc, "opening")).match(/data-platform-fixed=""/g)?.length).toBeGreaterThanOrEqual(1);
+    expect(never).toContain("Set by the platform");
+    // 5. The draft bar: file icon, not the flask (the flask stays on "Test in lab"); on home and every part.
+    for (const html of [home, asks, close, limits, never]) expect(html).toMatch(/data-testid="draft-bar"[^>]*><span class="pb-draftbar__mark"><svg[^>]*lucide-file-pen/);
+    // Phone header class.
+    expect(home).toContain("sas-page-head__actions pb-head-actions");
   });
 
   it("budget at the minimum disables −, at the maximum disables +", async () => {
     const p = (await ensureDraftVersion(db, acc.id)).playbook;
     await saveDraftPlaybook(db, acc.id, { ...p, questionBudget: 2 });
-    expect(await render(PlaybookPage as Page, acc)).toMatch(/disabled="" aria-label="Fewer"/);
+    expect(await partHtml(acc, "asks")).toMatch(/disabled="" aria-label="Fewer"/);
     await saveDraftPlaybook(db, acc.id, { ...p, questionBudget: 6 });
-    const html = await render(PlaybookPage as Page, acc);
+    const html = await partHtml(acc, "asks");
     expect(html).toMatch(/disabled="" aria-label="More"/);
     expect(html).not.toMatch(/disabled="" aria-label="Fewer"/);
     await saveDraftPlaybook(db, acc.id, { ...p, questionBudget: 3 });
@@ -140,22 +168,22 @@ describe("Playbook navigation and polish (rendered)", () => {
   it("Sales plays: footers name the facts used or missing, the hand-off card points to Limits, the banner and filters", async () => {
     const html = await render(PlaysPage as Page, acc);
     save("plays", html);
-    expect(html).toContain('data-testid="draft-banner"');
+    expect(html).toContain('data-testid="draft-bar"');
     // Too expensive: the seller's fact plus the filled discount limit (5%, kept in Limits) count (R3-6, A9).
     expect(html).toMatch(/2 facts<span[^>]*data-missing="">[^<]*add what the problem costs a typical customer, smaller starting set, what a discount can be traded for, what the price includes/);
     expect(html).toContain("Uses your hand-off rule in Limits");
     expect(html).toContain("Add approved comparison facts");
     expect(html).toContain("sas-views pb-filters");
     expect(html).toMatch(/All <span class="pb-count">19<\/span>/);
-    expect(html).toMatch(/aria-current="page"[^>]*>Sales plays/);
+    expect(html).toMatch(/aria-current="page" data-part="plays"><span class="pb-menu__name">Sales plays</);
     // The other account's page is its own: no facts there.
     expect(await render(PlaysPage as Page, other)).not.toContain("1 fact<");
   });
 
-  it("one play: breadcrumb links each underlined on their own, the banner, named empty slots above Add fact", async () => {
+  it("one play: breadcrumb links each underlined on their own, the draft bar, named empty slots above Add fact", async () => {
     const html = await render(PlayPage as Page, acc, { play: "too_expensive" });
     save("play", html);
-    expect(html).toContain('data-testid="draft-banner"');
+    expect(html).toContain('data-testid="draft-bar"');
     expect(html).toMatch(/class="sas-small pb-crumbs"><a href="\/app\/acme\/setup\/playbook">Playbook<\/a><span aria-hidden="true">›<\/span><a href="\/app\/acme\/setup\/playbook\/plays">Sales plays<\/a>/);
     expect(html).toContain('data-slot="what the problem costs a typical customer"');
     expect(html).toContain('data-slot="smaller starting set"');
@@ -165,10 +193,10 @@ describe("Playbook navigation and polish (rendered)", () => {
     expect(await render(PlayPage as Page, acc, { play: "not_now" })).not.toContain("data-slot=");
   });
 
-  it("draft from sources: the same draft banner", async () => {
+  it("draft from sources: the same draft bar", async () => {
     const html = await render(DraftPage as Page, acc);
     save("draft", html);
-    expect(html).toContain('data-testid="draft-banner"');
+    expect(html).toContain('data-testid="draft-bar"');
   });
 
   it("Company: the real opening message (R4 A5), and the fixed disclosure says \"automated assistant\"", async () => {

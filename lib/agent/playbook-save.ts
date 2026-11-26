@@ -8,7 +8,10 @@ import type { Playbook } from "@/db/schema";
 import { isPlayKey, parsePlaybookRows, parsePlayRow, playbookRowsFromForm, type PlaybookErrors, type PlaybookRowsInput, type PlayRowInput } from "./playbook";
 import { ensureDraftVersion, saveDraftPlaybook } from "./service";
 import { refreshAgentNameAuto } from "./names-auto";
-import type { PlaybookWithUnpaid } from "@/lib/orders/unpaid-reminders";
+import { UNPAID_STEPS, unpaidRemindersOf, type PlaybookWithUnpaid, type UnpaidRowsInput } from "@/lib/orders/unpaid-reminders";
+import { readOpener } from "./core/opener";
+import { questionBudgetOf } from "./core/stage";
+import { objectionAttemptsOf } from "./core/objections";
 import type { LlmClient } from "./llm";
 import type { Actor } from "@/lib/accounts/audit";
 
@@ -41,6 +44,8 @@ export async function savePlayForm(db: Db, accountId: string, key: string, entri
   return { ok: true };
 }
 
+type SaveOpts = { names?: LlmClient | null; actor?: Actor | null };
+
 /**
  * Parses the editor's form entries and saves them into the account's draft.
  * Approved exceptions are never typed in the editor: when the form showed them
@@ -48,15 +53,24 @@ export async function savePlayForm(db: Db, accountId: string, key: string, entri
  * plays sent by the form replace the stored ones; a form without them keeps
  * what is stored.
  */
-export async function savePlaybookForm(db: Db, accountId: string, entries: [string, string][], opts: { names?: LlmClient | null; actor?: Actor | null } = {}): Promise<PlaybookFormSave> {
+export async function savePlaybookForm(db: Db, accountId: string, entries: [string, string][], opts: SaveOpts = {}): Promise<PlaybookFormSave> {
   const input = playbookRowsFromForm(entries.filter(([k]) => k !== "exceptionId" && k !== "exceptionsShown"));
+  const shown = entries.some(([k, v]) => k === "exceptionsShown" && v === "1");
+  const kept = shown ? new Set(entries.filter(([k]) => k === "exceptionId").map(([, v]) => v)) : null;
+  return saveRowsInput(db, accountId, input, kept, opts);
+}
+
+/**
+ * Validates the whole playbook as typed (`input`) with today's validator and
+ * writes it into the draft, as the editor's save always has. `keptExceptions`:
+ * the approved exceptions still shown (null: keep every stored one).
+ */
+async function saveRowsInput(db: Db, accountId: string, input: PlaybookRowsInput, keptExceptions: ReadonlySet<string> | null, opts: SaveOpts, draft?: PlaybookWithUnpaid): Promise<PlaybookFormSave> {
   const parsed = parsePlaybookRows(input);
   if (!parsed.ok) return { ok: false, errors: parsed.errors, values: input };
-  const current: PlaybookWithUnpaid = (await ensureDraftVersion(db, accountId)).playbook;
+  const current: PlaybookWithUnpaid = draft ?? (await ensureDraftVersion(db, accountId)).playbook;
   const stored = current.exceptions ?? [];
-  const shown = entries.some(([k, v]) => k === "exceptionsShown" && v === "1");
-  const kept = new Set(entries.filter(([k]) => k === "exceptionId").map(([, v]) => v));
-  const exceptions = shown ? stored.filter((x) => kept.has(x.id)) : stored;
+  const exceptions = keptExceptions ? stored.filter((x) => keptExceptions.has(x.id)) : stored;
   const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, objectionAttempts, callRole, unpaidReminders, ...rest } = parsed.value;
   void _x;
   const keepOpener = input.opener === undefined ? current.opener : opener;
@@ -93,4 +107,246 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
   // Automatic versions for a new name or new market languages, once, on save (retrying earlier failures).
   if (opts.names !== undefined) await refreshAgentNameAuto(db, accountId, opts.names, { actor: opts.actor ?? null, retry: true });
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// One change at a time (Playbook parts: read first, edit one row)
+// ---------------------------------------------------------------------------
+
+/** Single values a row can set, named as the editor's inputs. */
+export const SCALAR_KEYS = ["agentName", "agentGender", "tone", "goal", "maxDiscount", "offerMeetingWhen", "handOffWhen", "callRole", "questionBudget", "objectionAttempts"] as const;
+export type ScalarKey = (typeof SCALAR_KEYS)[number];
+
+/** Lists a row can change one item of. */
+export const LIST_KEYS = ["neverDo", "objections", "fields", "openerTopics"] as const;
+export type ListKey = (typeof LIST_KEYS)[number];
+export type ListItem = {
+  neverDo: string;
+  objections: { objection: string; answer: string; source?: string };
+  fields: { key?: string; label: string; stage: string; example?: string; hint?: string };
+  openerTopics: { en: string; he: string };
+};
+
+/** Parts that save with their whole editor (their own inputs, named as in the one-page form). */
+export const ENTRY_PARTS = ["name", "opening", "asks", "objections", "after"] as const;
+export type EntryPart = (typeof ENTRY_PARTS)[number];
+
+/**
+ * One typed change to the draft playbook. `set`: single values (and the
+ * outcome checkboxes); `add` / `edit` / `delete` / `move`: one item of a list;
+ * `setDefault`: the opener's default topic; `removeException`: one approved
+ * exception (they are never typed); `part`: a part's whole editor as form
+ * entries (the one-page form's inputs, read by playbookRowsFromForm).
+ */
+export type PlaybookChange =
+  | { kind: "set"; values: Partial<Record<ScalarKey, string>>; outcomes?: Playbook["outcomes"] }
+  | { [L in ListKey]: { kind: "add"; list: L; item: ListItem[L] } }[ListKey]
+  | { [L in ListKey]: { kind: "edit"; list: L; index: number; item: ListItem[L] } }[ListKey]
+  | { kind: "delete"; list: ListKey; index: number }
+  | { kind: "move"; list: ListKey; index: number; to: number }
+  | { kind: "setDefault"; index: number }
+  | { kind: "removeException"; id: string }
+  | { kind: "part"; part: EntryPart; entries: [string, string][] };
+
+/**
+ * What the one-page editor sent for a stored playbook, unchanged: every value
+ * it showed, as its inputs held them (question budget, attempts and gender as
+ * shown, the opener rows, the "Signed, not paid yet" card). Sales plays, the
+ * own name versions and the approved exceptions were kept as stored, so they
+ * are left out here too.
+ */
+export function storedRowsInput(p: Playbook): PlaybookRowsInput {
+  const o = readOpener(p.opener);
+  const unpaid = unpaidRemindersOf(p);
+  return {
+    agentName: p.agentName,
+    questionBudget: String(questionBudgetOf(p)),
+    objectionAttempts: String(objectionAttemptsOf(p)),
+    agentGender: p.agentGender ?? "neutral",
+    goal: p.goal,
+    tone: p.tone,
+    outcomes: { orderForm: !!p.outcomes?.orderForm, bankTransfer: !!p.outcomes?.bankTransfer, meeting: !!p.outcomes?.meeting },
+    fields: p.fields.map((f) => ({ key: f.key || undefined, label: f.label, stage: f.stage, example: f.example ?? "", hint: f.hint || undefined })),
+    objections: p.objections.map((x) => ({ objection: x.objection, answer: x.answer, source: x.source ?? "" })),
+    maxDiscount: String(p.maxDiscountBp / 100),
+    offerMeetingWhen: p.offerMeetingWhen,
+    handOffWhen: p.handOffWhen,
+    callRole: p.callRole ?? "",
+    neverDo: [...p.neverDo],
+    opener: {
+      topics: o.topics.map((x) => ({ en: x.en, he: x.he ?? "" })),
+      defaultTopic: String(o.defaultTopic),
+      question: { en: o.question?.en ?? "", he: o.question?.he ?? "" },
+    },
+    unpaidReminders: Object.fromEntries(UNPAID_STEPS.map((s) => [s, { days: String(unpaid[s].days), on: unpaid[s].on }])) as UnpaidRowsInput,
+  };
+}
+
+type ListAccess = { get: (input: PlaybookRowsInput) => unknown[]; put: (input: PlaybookRowsInput, rows: unknown[]) => PlaybookRowsInput };
+const LISTS: Record<ListKey, ListAccess> = {
+  neverDo: { get: (i) => i.neverDo, put: (i, rows) => ({ ...i, neverDo: rows as string[] }) },
+  objections: { get: (i) => i.objections, put: (i, rows) => ({ ...i, objections: rows as PlaybookRowsInput["objections"] }) },
+  fields: { get: (i) => i.fields, put: (i, rows) => ({ ...i, fields: rows as PlaybookRowsInput["fields"] }) },
+  openerTopics: {
+    get: (i) => i.opener?.topics ?? [],
+    put: (i, rows) => ({ ...i, opener: { ...(i.opener ?? { defaultTopic: "0", question: { en: "", he: "" } }), topics: rows as { en: string; he: string }[] } }),
+  },
+};
+
+/** The input name of a list item, as parsePlaybookRows reports its errors (`never.2`, `objection.0`, `field.1`, `opener.topic.3`). */
+export const listItemKey = (list: ListKey, index: number): string =>
+  list === "neverDo" ? `never.${index}` : list === "objections" ? `objection.${index}` : list === "fields" ? `field.${index}` : `opener.topic.${index}`;
+
+const NOT_FOUND = "This row changed in the meantime. Reload the page and try again.";
+
+/**
+ * Applies one change to the editor's input. Pure. The opener's default topic
+ * follows its row when topics move or are removed (as the editor's radio did).
+ * An index outside the list is refused (the page was out of date).
+ */
+export function applyPlaybookChange(input: PlaybookRowsInput, change: PlaybookChange): { ok: true; input: PlaybookRowsInput } | { ok: false; errors: PlaybookErrors } {
+  switch (change.kind) {
+    case "set": {
+      const next: PlaybookRowsInput = { ...input };
+      for (const k of SCALAR_KEYS) if (typeof change.values[k] === "string") (next as Record<ScalarKey, string | undefined>)[k] = change.values[k];
+      if (change.outcomes) next.outcomes = { orderForm: !!change.outcomes.orderForm, bankTransfer: !!change.outcomes.bankTransfer, meeting: !!change.outcomes.meeting };
+      return { ok: true, input: next };
+    }
+    case "add":
+      return { ok: true, input: LISTS[change.list].put(input, [...LISTS[change.list].get(input), change.item]) };
+    case "edit": case "delete": case "move": {
+      const rows = [...LISTS[change.list].get(input)];
+      const bad = { ok: false as const, errors: { [listItemKey(change.list, change.index)]: NOT_FOUND } };
+      if (!Number.isInteger(change.index) || change.index < 0 || change.index >= rows.length) return bad;
+      // Positions before → after, so the opener's default stays on its topic.
+      const order = [...rows.keys()];
+      if (change.kind === "edit") rows[change.index] = change.item;
+      else if (change.kind === "delete") { rows.splice(change.index, 1); order.splice(change.index, 1); }
+      else {
+        if (!Number.isInteger(change.to) || change.to < 0 || change.to >= rows.length) return bad;
+        const [row] = rows.splice(change.index, 1);
+        rows.splice(change.to, 0, row);
+        const [at] = order.splice(change.index, 1);
+        order.splice(change.to, 0, at);
+      }
+      let next = LISTS[change.list].put(input, rows);
+      if (change.list === "openerTopics" && next.opener) {
+        const now = order.indexOf(Number(input.opener?.defaultTopic ?? 0));
+        next = { ...next, opener: { ...next.opener, defaultTopic: String(Math.max(0, now)) } };
+      }
+      return { ok: true, input: next };
+    }
+    case "setDefault": {
+      const n = input.opener?.topics.length ?? 0;
+      if (!input.opener || !Number.isInteger(change.index) || change.index < 0 || change.index >= n) return { ok: false, errors: { [listItemKey("openerTopics", change.index)]: NOT_FOUND } };
+      return { ok: true, input: { ...input, opener: { ...input.opener, defaultTopic: String(change.index) } } };
+    }
+    case "removeException":
+      return { ok: true, input };
+    case "part": {
+      const sent = playbookRowsFromForm(change.entries);
+      const has = (k: string) => change.entries.some(([name]) => name === k);
+      switch (change.part) {
+        case "name":
+          return { ok: true, input: { ...input, agentName: sent.agentName, ...(sent.agentNameLocal ? { agentNameLocal: sent.agentNameLocal } : {}) } };
+        case "opening":
+          return { ok: true, input: { ...input, opener: sent.opener ?? { topics: [], defaultTopic: "0", question: { en: "", he: "" } } } };
+        case "asks":
+          return { ok: true, input: { ...input, fields: sent.fields, ...(has("questionBudget") ? { questionBudget: sent.questionBudget } : {}) } };
+        case "objections":
+          return { ok: true, input: { ...input, objections: sent.objections, ...(has("objectionAttempts") ? { objectionAttempts: sent.objectionAttempts } : {}) } };
+        case "after":
+          return { ok: true, input: sent.unpaidReminders ? { ...input, unpaidReminders: sent.unpaidReminders } : input };
+      }
+    }
+  }
+}
+
+export type PlaybookChangeSave = { ok: true } | { ok: false; errors: PlaybookErrors; values?: PlaybookRowsInput };
+
+/**
+ * Applies ONE change to the latest draft playbook and saves it (Playbook
+ * parts). The whole playbook is checked again with the editor's validator
+ * (parsePlaybookRows) and written exactly as the one-page save wrote it
+ * (savePlaybookForm with every other value as stored): the same draft
+ * creation, the same stored shape, the same automatic name versions. An error
+ * anywhere (also in another part) refuses the change; its keys are input names,
+ * so the caller can say which part needs the fix (partOfKey).
+ */
+export async function savePlaybookChange(db: Db, accountId: string, change: PlaybookChange, opts: SaveOpts = {}): Promise<PlaybookChangeSave> {
+  const current: PlaybookWithUnpaid = (await ensureDraftVersion(db, accountId)).playbook;
+  const applied = applyPlaybookChange(storedRowsInput(current), change);
+  if (!applied.ok) return applied;
+  let kept: ReadonlySet<string> | null = null;
+  if (change.kind === "removeException") {
+    // Every stored exception but that one (the editor's "remove" before Save).
+    const stored = current.exceptions ?? [];
+    if (!stored.some((x) => x.id === change.id)) return { ok: false, errors: { exceptions: NOT_FOUND } };
+    kept = new Set(stored.map((x) => x.id).filter((id) => id !== change.id));
+  }
+  return saveRowsInput(db, accountId, applied.input, kept, opts, current);
+}
+
+const str = (v: unknown, max = 5000): string | null => (typeof v === "string" ? v.slice(0, max) : null);
+
+/**
+ * Reads a change sent by the browser (untrusted JSON) into a PlaybookChange,
+ * or null when it is not one. Only the shapes above pass; strings only.
+ */
+export function readPlaybookChange(raw: unknown): PlaybookChange | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const list = typeof r.list === "string" && (LIST_KEYS as readonly string[]).includes(r.list) ? (r.list as ListKey) : null;
+  const index = typeof r.index === "number" && Number.isInteger(r.index) ? r.index : null;
+  const item = (l: ListKey, v: unknown): ListItem[ListKey] | null => {
+    if (l === "neverDo") return str(v);
+    if (!v || typeof v !== "object") return null;
+    const o = v as Record<string, unknown>;
+    if (l === "objections") {
+      const objection = str(o.objection);
+      const answer = str(o.answer);
+      return objection === null || answer === null ? null : { objection, answer, source: str(o.source) ?? "" };
+    }
+    if (l === "fields") {
+      const label = str(o.label);
+      const stage = str(o.stage);
+      return label === null || stage === null ? null : { key: str(o.key) || undefined, label, stage, example: str(o.example) ?? "", hint: str(o.hint) || undefined };
+    }
+    const en = str(o.en);
+    return en === null ? null : { en, he: str(o.he) ?? "" };
+  };
+  switch (r.kind) {
+    case "set": {
+      const values: Partial<Record<ScalarKey, string>> = {};
+      const v = (r.values && typeof r.values === "object" ? r.values : {}) as Record<string, unknown>;
+      for (const k of SCALAR_KEYS) {
+        const s = str(v[k]);
+        if (s !== null) values[k] = s;
+      }
+      const o = r.outcomes && typeof r.outcomes === "object" ? (r.outcomes as Record<string, unknown>) : null;
+      return { kind: "set", values, ...(o ? { outcomes: { orderForm: o.orderForm === true, bankTransfer: o.bankTransfer === true, meeting: o.meeting === true } } : {}) };
+    }
+    case "add": case "edit": {
+      if (!list) return null;
+      const it = item(list, r.item);
+      if (it === null) return null;
+      if (r.kind === "add") return { kind: "add", list, item: it } as PlaybookChange;
+      return index === null ? null : ({ kind: "edit", list, index, item: it } as PlaybookChange);
+    }
+    case "delete":
+      return list && index !== null ? { kind: "delete", list, index } : null;
+    case "move":
+      return list && index !== null && typeof r.to === "number" && Number.isInteger(r.to) ? { kind: "move", list, index, to: r.to } : null;
+    case "setDefault":
+      return index !== null ? { kind: "setDefault", index } : null;
+    case "removeException":
+      return typeof r.id === "string" && r.id ? { kind: "removeException", id: r.id.slice(0, 100) } : null;
+    case "part": {
+      if (typeof r.part !== "string" || !(ENTRY_PARTS as readonly string[]).includes(r.part) || !Array.isArray(r.entries)) return null;
+      const entries = r.entries.filter((e): e is [string, string] => Array.isArray(e) && e.length === 2 && typeof e[0] === "string" && typeof e[1] === "string").slice(0, 2000);
+      return { kind: "part", part: r.part as EntryPart, entries };
+    }
+    default:
+      return null;
+  }
 }

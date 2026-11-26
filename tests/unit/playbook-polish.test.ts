@@ -1,39 +1,40 @@
 /**
- * Polish-6 (Playbook navigation and polish), pure parts: the section in view
- * for the scroll-spy, the named facts a play asks for and the card footers,
+ * Polish-6 (Playbook navigation and polish), pure parts: where the old
+ * one-page anchors land now, the named facts a play asks for and the card footers,
  * the "Covered by Limits" match, the exception date, and the demo seed's
  * never-do list (no rule that restates the discount limit).
  */
 import { describe, expect, it } from "vitest";
-import { SPY_LINE, sectionInView, tailSpace } from "@/app/app/[account]/setup/playbook/toc";
+import { partForAnchor } from "@/lib/agent/playbook-parts";
 import { missingSlots, playSlots, playsOverview, slotTitle } from "@/app/app/[account]/setup/playbook/plays/overview";
 import { restatesDiscountLimit, shortDate } from "@/app/app/[account]/setup/playbook/checks";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { demoPlaybook } from "@/lib/demo/seed";
 
-describe("scroll-spy: the section in view", () => {
-  const tops = (...t: number[]) => t.map((top, i) => ({ id: `s${i}`, top }));
-  it("is the last section whose heading passed the switch line under the sticky offset; the first before any has", () => {
-    expect(SPY_LINE).toBeGreaterThanOrEqual(150);
-    expect(SPY_LINE).toBeLessThanOrEqual(180);
-    expect(sectionInView(tops(100, 900, 1800))).toBe("s0");
-    expect(sectionInView(tops(-500, 150, 900))).toBe("s1");
-    expect(sectionInView(tops(-2000, -900, 100))).toBe("s2");
-    expect(sectionInView(tops(400, 900))).toBe("s0");
-    expect(sectionInView([])).toBeNull();
+describe("old one-page anchors land on their part (the scroll-spy is gone)", () => {
+  it("every section anchor of the one-page playbook maps to the part that holds it now", () => {
+    expect(partForAnchor("#pb-agent-h-s")).toBe("agent");
+    expect(partForAnchor("#pb-goal-h-s")).toBe("close");
+    expect(partForAnchor("#pb-opener-h-s")).toBe("opening");
+    expect(partForAnchor("#pb-fields-h-s")).toBe("asks");
+    expect(partForAnchor("#plays")).toBe("plays");
+    expect(partForAnchor("#pb-plays-h-s")).toBe("plays");
+    expect(partForAnchor("#pb-obj-h-s")).toBe("objections");
+    expect(partForAnchor("#pb-lim-h-s")).toBe("limits");
+    expect(partForAnchor("#pb-lim-h")).toBe("limits");
+    expect(partForAnchor("#pb-never-h-s")).toBe("never");
+    expect(partForAnchor("#pb-after-h-s")).toBe("after");
   });
-  it("keeps the previous section while the next heading is still below the line (Limits, not Never do)", () => {
-    // Desktop 900px tall: "Never do" at 248px is still in the lower part; Limits stays current.
-    expect(sectionInView([{ id: "pb-lim-h-s", top: -700 }, { id: "pb-never-h-s", top: 248 }])).toBe("pb-lim-h-s");
-    expect(sectionInView([{ id: "pb-lim-h-s", top: -900 }, { id: "pb-never-h-s", top: 16 }])).toBe("pb-never-h-s");
-    expect(sectionInView(tops(0, 200), 250)).toBe("s1");
-  });
-  it("tail space: exactly what the last section needs to scroll up to its margin", () => {
-    // Last section at 3000, page 3500 tall, 900px viewport, 16px margin: needs 3000-16+900 = 3884 → 384 more.
-    expect(tailSpace({ lastTop: 3000, scrollMargin: 16, viewport: 900, pageHeight: 3500 })).toBe(384);
-    // A taller last section needs less; one taller than the viewport needs none.
-    expect(tailSpace({ lastTop: 3000, scrollMargin: 16, viewport: 900, pageHeight: 3800 })).toBe(84);
-    expect(tailSpace({ lastTop: 3000, scrollMargin: 16, viewport: 900, pageHeight: 4200 })).toBe(0);
+  it("an input anchor goes to its part (moves included); no anchor or an unknown one stays on home", () => {
+    expect(partForAnchor("#pb-callRole")).toBe("agent");
+    expect(partForAnchor("#pb-objectionAttempts")).toBe("objections");
+    expect(partForAnchor("#pb-maxDiscount")).toBe("limits");
+    expect(partForAnchor("#pb-never.2")).toBe("never");
+    expect(partForAnchor("#pb-opener.topic.0.en")).toBe("opening");
+    expect(partForAnchor("")).toBeNull();
+    expect(partForAnchor("#")).toBeNull();
+    expect(partForAnchor("#pb-pub-h-s")).toBeNull();
+    expect(partForAnchor("#somewhere")).toBeNull();
   });
 });
 

@@ -31,7 +31,7 @@ const pipeline = await import("@/app/app/[account]/setup/sources/pipeline-action
 const draft = await import("@/app/app/[account]/setup/playbook/draft/actions");
 const knowledge = await import("@/app/app/[account]/setup/knowledge/actions");
 const playbookActions = await import("@/app/app/[account]/setup/playbook/actions");
-const PlaybookPage = (await import("@/app/app/[account]/setup/playbook/page")).default;
+const PartPage = (await import("@/app/app/[account]/setup/playbook/[part]/page")).default;
 const SourcesPage = (await import("@/app/app/[account]/setup/sources/page")).default;
 const DraftPage = (await import("@/app/app/[account]/setup/playbook/draft/page")).default;
 const KnowledgePage = (await import("@/app/app/[account]/setup/knowledge/page")).default;
@@ -212,19 +212,17 @@ describe("pipeline screens and actions", () => {
     const statuses = await db.select({ s: playbookSuggestions.status }).from(playbookSuggestions).where(eq(playbookSuggestions.accountId, acc));
     expect(statuses.map((x) => x.s).sort()).toEqual(["accepted", "accepted", "accepted", "edited", "rejected"]);
 
-    // The Playbook editor shows the exception in Limits; saving keeps it, removing it there deletes it.
-    const pbPage = await html(PlaybookPage(params));
-    expect(pbPage).toContain("Approved exceptions");
-    expect(pbPage).toContain("Installation is free from 3 sites");
+    // The Playbook's Limits part shows the exception; saving another row keeps it, removing it there deletes it.
+    const limitsPage = await html(PartPage({ ...params, params: Promise.resolve({ account: slug, part: "limits" }) }));
+    expect(limitsPage).toContain("Approved exceptions");
+    expect(limitsPage).toContain("Installation is free from 3 sites");
     const exId = p.exceptions![0].id;
-    const editorForm = (keep: boolean) => form({
-      slug, agentName: p.agentName, goal: p.goal, tone: p.tone, orderForm: "on", meeting: "on", maxDiscount: "5", offerMeetingWhen: "x", handOffWhen: "y",
-      exceptionsShown: "1", ...(keep ? { exceptionId: exId } : {}),
-    });
-    expect(await go(playbookActions.savePlaybookAction({ status: "idle" }, editorForm(true)))).toContain("saved=1");
+    expect(await playbookActions.savePlaybookRowAction(slug, { kind: "set", values: { maxDiscount: "5", offerMeetingWhen: "x", handOffWhen: "y" } })).toEqual({ ok: true });
     expect((await ensureDraftVersion(db, acc)).playbook.exceptions?.map((x) => x.id)).toEqual([exId]);
-    expect(await go(playbookActions.savePlaybookAction({ status: "idle" }, editorForm(false)))).toContain("saved=1");
+    expect(await playbookActions.savePlaybookRowAction(slug, { kind: "removeException", id: exId })).toEqual({ ok: true });
     expect((await ensureDraftVersion(db, acc)).playbook.exceptions ?? []).toEqual([]);
+    // An exception that is gone is refused at the row.
+    expect(await playbookActions.savePlaybookRowAction(slug, { kind: "removeException", id: exId })).toMatchObject({ ok: false });
   });
 
   it("run status pills and the Approved source status on the Sources page", async () => {

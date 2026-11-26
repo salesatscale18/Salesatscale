@@ -47,6 +47,7 @@ const { playsOverview } = await import("@/app/app/[account]/setup/playbook/plays
 const { checkTitle, goLiveSummary } = await import("@/app/app/[account]/setup/go-live/summary");
 const { DEFAULT_PLAYS } = await import("@/lib/agent/core/plays");
 const { default: PlaybookPage } = await import("@/app/app/[account]/setup/playbook/page");
+const { default: PartPage } = await import("@/app/app/[account]/setup/playbook/[part]/page");
 const { default: PlaysPage } = await import("@/app/app/[account]/setup/playbook/plays/page");
 const { default: PlayPage } = await import("@/app/app/[account]/setup/playbook/plays/[play]/page");
 const { default: CompanyPage } = await import("@/app/app/[account]/setup/company/page");
@@ -108,25 +109,27 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       expect(playsOverview({ plays: {}, questionBudget: 3, maxDiscountBp: 500 }, new Map()).find((x) => x.key === "proof")!.factCount).toBe(0);
     });
 
-    it("the Sales plays card and the Playbook summary show it", async () => {
+    it("the Sales plays card and the Playbook home line show it", async () => {
       const plays = await render(PlaysPage);
       const card = plays.match(/data-play="too_expensive"[\s\S]*?<\/a>/)?.[0] ?? "";
       expect(card).toContain('data-facts="facts"');
       expect(card).toContain("1 fact");
       expect(card).toContain("add what the problem costs a typical customer, smaller starting set, what a discount can be traded for, what the price includes");
       const pb = await render(PlaybookPage);
-      const summary = pb.match(/data-testid="plays-summary">[\s\S]*?<\/ul>/)?.[0] ?? "";
-      // R4 A4: the parts sum to 19 since O1 (1 with facts, 15 would be sharper, 3 need none); own cards counted apart.
-      expect(summary).toContain('data-summary="facts">1 have your facts</li>');
-      expect(summary).toContain('data-summary="sharper">15 would be sharper with your facts</li>');
-      expect(summary).toContain('data-summary="none">3 need none</li>');
-      expect(summary).toContain('data-summary="own">No cards of your own yet</li>');
+      const row = pb.match(/data-part="plays">[\s\S]*?<\/a>/)?.[0] ?? "";
+      // R4 A4 / O1: 19 plays, 1 with facts (the discount limit), 15 would be sharper (an amber note on the row and in Worth a look).
+      expect(row).toContain(">19 plays · 1 with your facts<");
+      expect(row).toContain('data-gap="plays">15 sales plays would be sharper with your facts.<');
+      expect(pb).toMatch(/<li data-gap="plays">15 sales plays would be sharper with your facts\. <a href="\/app\/[a-z0-9-]+\/setup\/playbook\/plays\?filter=needs">Add facts<\/a><\/li>/);
+      // The own-card and ready counts are on the Sales plays filter chips.
+      expect(plays).toMatch(/Your own cards <span class="pb-count">0<\/span>/);
+      expect(plays).toMatch(/Ready <span class="pb-count">4<\/span>/);
     });
   });
 
   describe("A9. Objections and questions; the stepper", () => {
     it("the approved answer grows; × sits in its own block (top of the card on a phone); the example is plain text", async () => {
-      const html = await render(PlaybookPage);
+      const html = await render(PartPage, { part: "objections" });
       save("playbook", html);
       const row = html.match(/<li class="pb-obj-row"[\s\S]*?<\/li>/)?.[0] ?? "";
       expect(row).toMatch(/<textarea class="sas-textarea pb-grow pb-grow--3" id="pb-objection\.0\.answer"/);
@@ -138,13 +141,13 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       expect(pbCss).toMatch(/\.sas-textarea\.pb-q-example:hover \{ border-color: var\(--line\); \}/);
       // ↑ keeps its distance from the role select.
       expect(pbCss).toMatch(/\.pb-row-actions \{[^}]*padding-inline-start: 8px;/);
-      expect(html).toContain('<col style="width:124px"/>');
+      expect(await render(PartPage, { part: "asks" })).toContain('<col style="width:124px"/>');
     });
 
     it("− is off at 2 and + at 6; both work in between", async () => {
       const stepper = async (n: number) => {
         await setPlaybook({ questionBudget: n });
-        const html = await render(PlaybookPage);
+        const html = await render(PartPage, { part: "asks" });
         return html.match(/data-testid="budget-stepper">[\s\S]*?<\/span>/)?.[0] ?? "";
       };
       const two = await stepper(2);
