@@ -37,12 +37,11 @@ const DIFFS: Diff[] = [
     classic: "- Call with a person. Framed as a help, with a booking link in the chat where the buyer picks the time. Never read the link aloud.",
   },
   {
-    // OPEN (offers release, 26 Nov 2026): the chat example changed again (": pick a time that suits you below."), so
-    // Classic's reconciliation (lib/voice-classic/reconcile.ts core-call-with-person-example) no longer matches and
-    // Classic says the chat line. Classic's source is frozen: reported for the owner, not edited here.
-    id: "core-call-with-person-example (chat example changed: the booking card below; Classic's reconciliation no longer matches)",
+    // Offers release (26 Nov 2026, owner option A): the chat example now ends "…below."; Classic's reconciliation
+    // was re-keyed to it, so the spoken line is the same as before the offers release.
+    id: "core-call-with-person-example (chat example changed: a link, then the booking card below; reconciled to the spoken link line)",
     af: `I can set a short call with ${CALL_ROLE}. Does tomorrow at 10:00 work, or would you like to pick another time?"`,
-    classic: `I can set a short call with ${CALL_ROLE}: pick a time that suits you below."`,
+    classic: `I can set a short call with ${CALL_ROLE}: I've put a link in the chat where you can pick a time that suits you."`,
   },
   {
     id: "core-call-with-person-how (chat line rewritten for request_callback { brief, time }; its last sentence keeps the 20 Nov spoken form)",
@@ -140,7 +139,6 @@ const DIFFS: Diff[] = [
 ];
 
 /** The required reconciliation the offers release left without its chat line (Classic frozen: reported, not edited). */
-const CLASSIC_UNMATCHED_EXAMPLE = { where: "core design", from: ': here is a link to pick a time that suits you."', optional: false };
 
 /** The 20 Nov text with the documented differences applied; each must match exactly once. */
 function expectedClassic(afText: string, id: string): string {
@@ -162,9 +160,8 @@ describe("Classic (20 Nov) engine: golden against af85493", () => {
       const unmatched: UnmatchedReplacement[] = [];
       const got = buildVoiceInstructions(classicInput(c), unmatched);
       expect(got).toBe(expectedClassic(afCase(c.id).instructions, c.id));
-      // Every required 20 Nov replacement found its chat line (directly or through a reconciliation), except the one
-      // reconciliation the offers release broke (see "core-call-with-person-example" above; reported, Classic frozen).
-      expect(unmatched.filter((u) => !u.optional)).toEqual([CLASSIC_UNMATCHED_EXAMPLE]);
+      // Every required 20 Nov replacement found its chat line (directly or through a reconciliation).
+      expect(unmatched.filter((u) => !u.optional)).toEqual([]);
     });
 
     it(`${c.id}: the opener prompt and the session config are the 20 Nov ones`, () => {
@@ -201,8 +198,8 @@ describe("Classic (20 Nov) engine: golden against af85493", () => {
   it("the tools: the 20 Nov set (today's tools and end_call), today's schemas only where a tool changed", () => {
     const now = realtimeTools("gemini");
     const before = af.tools as { name: string; description: string; parameters: unknown }[];
-    // OPEN (offers release, 26 Nov 2026): Classic offers today's TOOL_DEFS by construction (its tool-schema.ts), so
-    // it now also offers check_offer, at its place in today's list. Classic's source is frozen: reported, not edited.
+    // Offers release (26 Nov 2026, owner option A): Classic offers today's TOOL_DEFS by construction (its
+    // tool-schema.ts), so it also offers check_offer (without it Classic could not give any discount).
     expect(now.map((t) => t.name)).toEqual([...TOOL_DEFS.map((d) => d.name), "end_call"]);
     expect(now.map((t) => t.name).filter((n) => n !== "check_offer")).toEqual(before.map((t) => t.name));
     expect([...VOICE_TOOL_NAMES].sort()).toEqual([...TOOL_DEFS.map((d) => d.name), "end_call"].sort());
@@ -239,8 +236,8 @@ describe("Classic (20 Nov) engine: golden against af85493", () => {
     // reached, a tool result). They are listed so a change in this set is a decision, not an accident.
     const where = [...new Set(unmatched.map((u) => `${u.where}: ${u.from.slice(0, 60)}`))].sort();
     expect(where).toMatchSnapshot();
-    // All optional, except the reconciliation the offers release broke (reported; Classic frozen).
-    expect(unmatched.filter((u) => !u.optional)).toEqual([CLASSIC_UNMATCHED_EXAMPLE]);
+    // All optional.
+    expect(unmatched.filter((u) => !u.optional)).toEqual([]);
     // The stage table is the 20 Nov one (plus reconciliations), not today's voice table.
     expect(STAGE_VOICE.some((e) => String(e.from).includes("recommendation_confirmed"))).toBe(false);
   });

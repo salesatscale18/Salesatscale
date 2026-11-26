@@ -26,7 +26,7 @@ import {
   type VoiceSettings,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
-import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
+import { resultForModel, runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceToolResultMessage } from "./voice-block";
 import { latestBookingOffer } from "@/lib/team-calls/service";
@@ -1050,7 +1050,8 @@ export class ClassicVoiceEngine {
     this.setState("checking");
     this.send({ t: "tool", id: callId, name, label, status: "running" });
     const r = await this.runRecorded(turn, callId, name, args);
-    let forModel: Record<string, unknown> = r.result;
+    // Offers release (26 Nov, owner option A): the model never sees a result's binding record (resultForModel).
+    let forModel: Record<string, unknown> = resultForModel(r.result);
     if (name === "request_callback" && this.loaded) {
       // Classic: today's request_callback posts a booking card in the chat (no such card on 20 Nov). The browser is
       // told about it like the quote message, so the card the model points to is on screen. Nothing reaches the model.
@@ -1066,24 +1067,30 @@ export class ClassicVoiceEngine {
         // The buyer can fill it in now while the agent stays on the line: standby covers the quiet, with no idle end.
         this.noteOrderFormOpen();
         forModel = {
-          ...r.result, link: "shown in the chat",
+          ...forModel, link: "shown in the chat",
           message: "The order form link is in the chat. Say so in one short sentence, with what the buyer does there (fill in their company details, sign and pay), and say they can fill it in now while you stay on the line. Never read the link aloud. Do not end the call, say goodbye or wind down: stay quiet while they fill it in, and answer only when they speak.",
         };
       }
-      if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...r.result, stage: classicStageText(r.result.stage) };
+      if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...forModel, stage: classicStageText(r.result.stage) };
+      if (name === "request_callback" && typeof forModel.message === "string" && forModel.message.startsWith("The booking card is now in the chat")) {
+        // Offers release (26 Nov, owner option A): a caller cannot see "below" or "under your reply".
+        forModel = { ...forModel, message: forModel.message
+          .replace("The booking card is now in the chat, right under your reply.", "The booking card is now in the chat.")
+          .replace(/ on the card below\./, " on the booking card in the chat.") };
+      }
       // A call request does not end this call (only a hand-off or an opt-out does).
       if (name === "record_opt_out") this.afterOptOut();
       if (name === "hand_off_to_human") {
         // The conversation is now held by the team and this call ends after the agent's last sentence.
         forModel = {
-          ...r.result,
+          ...forModel,
           message: "Done: the team takes over and this call ends now. Say in one short sentence that someone from the team will get back to them (to confirm the time, if a call was requested), then say goodbye. Do not say the call continues or that someone will join it, and do not continue selling.",
         };
         this.endSoon("handoff");
       }
       if (name === "end_call") {
         // The buyer asked to end the call: the goodbye is spoken (or finished), then the call ends.
-        forModel = { ...r.result, message: "The call ends now. If you have not said goodbye yet, say one short goodbye; say nothing else." };
+        forModel = { ...forModel, message: "The call ends now. If you have not said goodbye yet, say one short goodbye; say nothing else." };
         // Goodbye already said before the tool: a short wait for anything the model adds; else the usual grace for the goodbye.
         // The browser plays out the audio it has before it closes (voice-client onEnded).
         this.endSoon("agent_closed", turn.text.trim() ? Math.min(END_AFTER_GOODBYE_MS, this.limits.endGraceMs) : this.limits.endGraceMs);

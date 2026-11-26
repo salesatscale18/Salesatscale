@@ -36,7 +36,8 @@ export const RECONCILIATIONS: readonly Reconciliation[] = [
     where: "core design",
     replaces: null,
     entry: {
-      from: ': here is a link to pick a time that suits you."',
+      // Offers release (26 Nov, owner option A): the chat example now ends "…below."; same spoken line as before.
+      from: ': pick a time that suits you below."',
       // Borrowed from today's voice table.
       to: ': I\'ve put a link in the chat where you can pick a time that suits you."',
     },
