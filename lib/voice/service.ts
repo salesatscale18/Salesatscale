@@ -21,7 +21,8 @@ import { pipelineCallInfo, type PipelineCallInfo } from "@/lib/voice-pipeline/su
 import { rtElevenCallInfo, rtElevenVoiceUsed, type RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
 import { speechFor } from "@/lib/voice-rt-eleven/rule";
 import { callModelFor, callToolsOff, sessionCostMicros } from "./eleven-realtime";
-import { consoleVoiceLog, voiceLine } from "./log";
+import { consoleVoiceLog, voiceLine, type VoiceLog } from "./log";
+import { writtenOpenerAfterCall, type WrittenOpenerFn } from "./written-opener";
 import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, resolveVoiceSettings, storedEleven, storedSpeech, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
@@ -85,7 +86,8 @@ export async function createVoiceSession(
     const rl = await rateLimit(db, `voice:${a.accountId}`, { limit: TEST_CALLS_PER_HOUR, windowSeconds: 3600 }, now);
     if (!rl.ok) return { ok: false, reason: "rate_limited", retryAt: new Date(now.getTime() + rl.retryAfterSeconds * 1000) };
   }
-  await closeStaleVoiceSessions(db, a.accountId, now);
+  // A stale call on THIS conversation gets no written opener here: the call being started speaks it.
+  await closeStaleVoiceSessions(db, a.accountId, now, { keepEmpty: conv.id });
   // A call not yet connected on this conversation is replaced; a live one blocks a second call.
   const open = await db.select({ id: voiceSessions.id, status: voiceSessions.status }).from(voiceSessions)
     .where(and(eq(voiceSessions.accountId, a.accountId), eq(voiceSessions.conversationId, conv.id), inArray(voiceSessions.status, ["pending", "live"])));
@@ -172,10 +174,18 @@ const RELAY_GONE: VoiceEndDetail = { by: "relay_gone" };
  * - A live row with no heartbeat (a call from an older deployment) keeps the old rule: stale after the platform
  *   maximum plus 2 minutes, duration capped at the platform maximum and priced from it (estimated).
  */
-export async function closeStaleVoiceSessions(db: Db, accountId: string | null, now = new Date()): Promise<number> {
+export async function closeStaleVoiceSessions(
+  db: Db, accountId: string | null, now = new Date(),
+  /**
+   * After closing, the written opener on each closed buyer call's conversation that still has no agent message
+   * (lib/voice/written-opener.ts). `keepEmpty`: a conversation a new call is starting on (createVoiceSession): left
+   * empty, that call speaks the opener. `writtenOpener`/`log`: tests.
+   */
+  o: { keepEmpty?: string; writtenOpener?: WrittenOpenerFn; log?: VoiceLog } = {},
+): Promise<number> {
   const scope = accountId ? eq(voiceSessions.accountId, accountId) : undefined;
   // One small read of the open sessions (the cron runs this every minute: a quiet minute is this query only).
-  const open = await db.select({ id: voiceSessions.id, status: voiceSessions.status, createdAt: voiceSessions.createdAt, connectedAt: voiceSessions.connectedAt, durationSec: voiceSessions.durationSec })
+  const open = await db.select({ id: voiceSessions.id, status: voiceSessions.status, createdAt: voiceSessions.createdAt, connectedAt: voiceSessions.connectedAt, durationSec: voiceSessions.durationSec, accountId: voiceSessions.accountId, conversationId: voiceSessions.conversationId, isTest: voiceSessions.isTest })
     .from(voiceSessions).where(and(scope, inArray(voiceSessions.status, ["pending", "live"])));
   const t = now.getTime();
   const liveCutoff = t - (PLATFORM_MAX_CALL_SEC + STALE_LIVE_GRACE_SEC) * 1000;
@@ -184,10 +194,13 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string | null, 
   const staleBeating = open.filter((s) => s.status === "live" && s.durationSec !== null && s.connectedAt && s.connectedAt.getTime() + s.durationSec * 1000 < t - STALE_HEARTBEAT_SEC * 1000);
   const staleOld = open.filter((s) => s.status === "live" && s.durationSec === null && (s.connectedAt ?? s.createdAt).getTime() < liveCutoff);
   let closed = 0;
+  /** The sessions this close ended (for the written opener after it). */
+  const ended: string[] = [];
   if (stalePending.length) {
     const pending = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec: 0 })
       .where(and(inArray(voiceSessions.id, stalePending), eq(voiceSessions.status, "pending"))).returning({ id: voiceSessions.id });
     closed += pending.length;
+    ended.push(...pending.map((r) => r.id));
   }
   for (const { id } of staleBeating) {
     const [s] = await db.select().from(voiceSessions).where(and(eq(voiceSessions.id, id), eq(voiceSessions.status, "live")));
@@ -198,6 +211,7 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string | null, 
       .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live"))).returning({ id: voiceSessions.id });
     if (!done.length) continue;
     closed++;
+    ended.push(s.id);
     // The line a normal end stores, after the call's last stored line.
     const [last] = await db.select({ at: messages.createdAt }).from(messages)
       .where(and(eq(messages.accountId, s.accountId), eq(messages.conversationId, s.conversationId), eq(messages.voiceSessionId, s.id)))
@@ -219,6 +233,19 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string | null, 
     const done = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec, usage, costMicros, ...staleRecording(s) })
       .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live"))).returning({ id: voiceSessions.id });
     closed += done.length;
+    if (done.length) ended.push(s.id);
+  }
+  // The written opener after each ended buyer call whose conversation has no agent message (a call that died before
+  // its first word): the chat is never left empty. One per conversation; never the one a new call is starting on.
+  const seen = new Set<string>();
+  for (const s of open) {
+    if (!ended.includes(s.id) || s.isTest || s.conversationId === o.keepEmpty || seen.has(s.conversationId)) continue;
+    seen.add(s.conversationId);
+    // Another call already running on it: that call speaks the opener or leaves it to its own end.
+    const [running] = await db.select({ id: voiceSessions.id }).from(voiceSessions)
+      .where(and(eq(voiceSessions.accountId, s.accountId), eq(voiceSessions.conversationId, s.conversationId), inArray(voiceSessions.status, ["pending", "live"]))).limit(1);
+    if (running) continue;
+    await writtenOpenerAfterCall(db, { sessionId: s.id, accountId: s.accountId, conversationId: s.conversationId }, { fn: o.writtenOpener, log: o.log ?? consoleVoiceLog });
   }
   return closed;
 }
@@ -332,9 +359,16 @@ export async function endUserTestVoiceSessions(db: Db, accountId: string, userId
  * Ends a session whose ticket was redeemed but whose call never started (the
  * relay could not build the model), so it does not wait to be closed as stale.
  */
-export async function endUnstartedVoiceSession(db: Db, sessionId: string, errorCode: string, now = new Date()): Promise<void> {
-  await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "error", errorCode, durationSec: 0 })
-    .where(and(eq(voiceSessions.id, sessionId), eq(voiceSessions.status, "pending")));
+export async function endUnstartedVoiceSession(
+  db: Db, sessionId: string, errorCode: string, now = new Date(),
+  /** `writtenOpener`/`log`: the written opener after it (lib/voice/written-opener.ts); injectable for tests. */
+  o: { writtenOpener?: WrittenOpenerFn; log?: VoiceLog } = {},
+): Promise<void> {
+  const [s] = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "error", errorCode, durationSec: 0 })
+    .where(and(eq(voiceSessions.id, sessionId), eq(voiceSessions.status, "pending")))
+    .returning({ accountId: voiceSessions.accountId, conversationId: voiceSessions.conversationId, isTest: voiceSessions.isTest });
+  // The call never started, so nothing was said: the chat gets its written opener if it has no agent message.
+  if (s) await writtenOpenerAfterCall(db, { sessionId, accountId: s.accountId, conversationId: s.conversationId, skip: s.isTest }, { fn: o.writtenOpener, log: o.log ?? consoleVoiceLog });
 }
 
 export type VoiceSessionSummary = {

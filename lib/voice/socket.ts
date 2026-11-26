@@ -24,6 +24,7 @@ import {
 } from "./protocol";
 import { systemClock, type Clock, type RealtimeModel, type TimerHandle } from "./realtime";
 import { endUnstartedVoiceSession, realtimeModelFor, redeemVoiceTicket } from "./service";
+import type { WrittenOpenerFn } from "./written-opener";
 import { maxCallSeconds, resolveVoiceSettings, voiceMode, type VoiceMode } from "./settings";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
@@ -107,6 +108,8 @@ export type VoiceSocketOptions = {
    * platform would otherwise stop or freeze the function once the browser's socket is gone.
    */
   keepAlive?: (work: Promise<unknown>) => void;
+  /** Tests: the written opener after a call that said nothing (default lib/chat/start.ts ensureWrittenOpener; lib/voice/written-opener.ts). */
+  writtenOpener?: WrittenOpenerFn;
 };
 
 /** Raw `ws` message data as bytes (Buffer is a Uint8Array; a fragmented frame is a Buffer[]). */
@@ -291,11 +294,11 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       log.warn(voiceLine(session.id, `pipeline parts unavailable (engine=${pipelineEngine}): ${errorSummary(e)}`));
     }
     if (!parts || !callMode) {
-      await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
+      await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()), { log, writtenOpener: opts.writtenOpener });
       return refuse("model_unavailable");
     }
     if (isClosed()) {
-      await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()));
+      await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()), { log, writtenOpener: opts.writtenOpener });
       return;
     }
     const maxSec = maxCallSeconds({ settings: version?.voiceSettings ?? null, deadlineSec: opts.deadlineSec, env });
@@ -345,7 +348,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     if (auth.holdGreeting) hold = { since: clock.now(), releasedAt: null, accepted: false, logged: false };
     const session = await redeemVoiceTicket(opts.db, auth.sessionId, auth.ticket, new Date(clock.now()));
     if (isClosed()) {
-      if (session) await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()));
+      if (session) await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()), { log, writtenOpener: opts.writtenOpener });
       return;
     }
     if (!session) return refuse("ticket_invalid");
@@ -360,7 +363,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     if (isPipelineEngine(stored)) {
       if (auth.holdGreeting) {
         log.warn(voiceLine(session.id, `holdGreeting refused: engine=${stored} cannot hold the greeting`));
-        await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
+        await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()), { log, writtenOpener: opts.writtenOpener });
         return refuse("model_unavailable");
       }
       return startPipeline(session, mode, auth.waitAudio === true, stored);
@@ -375,7 +378,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     // `clean`); the mapper's rawTranscripts option is no longer asked for.
     const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model }) : null);
     if (!model) {
-      await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
+      await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()), { log, writtenOpener: opts.writtenOpener });
       return refuse("model_unavailable");
     }
     const [version] = session.agentVersionId
@@ -383,7 +386,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
         .where(and(eq(agentVersions.id, session.agentVersionId), eq(agentVersions.accountId, session.accountId)))
       : [];
     if (isClosed()) {
-      await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()));
+      await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()), { log, writtenOpener: opts.writtenOpener });
       return;
     }
     const maxSec = maxCallSeconds({ settings: version?.voiceSettings ?? null, deadlineSec: opts.deadlineSec, env });
@@ -413,7 +416,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
         storeSpeech = () => storeElevenApplied(opts.db, session.id, elevenAppliedOf(sp, choice));
       } catch (e) {
         log.warn(voiceLine(session.id, `rt speaker unavailable (engine=${stored} speech=elevenlabs): ${errorSummary(e)}`));
-        await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
+        await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()), { log, writtenOpener: opts.writtenOpener });
         return refuse("model_unavailable");
       }
     }
@@ -429,7 +432,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     }
     sendJson({ t: "call", maxSec, mode: model.mode });
     const deps = {
-      db: opts.db, model, sessionId: session.id, clock, log, onEnding: keepAlive,
+      db: opts.db, model, sessionId: session.id, clock, log, onEnding: keepAlive, writtenOpener: opts.writtenOpener,
       // holdGreeting (the lead page hand-over): the page's `ready` comes once it shows the chat (it implies waitAudio).
       limits: {
         ...opts.limits, deadlineSec: opts.deadlineSec, env, ...(auth.waitAudio || auth.holdGreeting ? { waitForClientAudio: true } : {}),
