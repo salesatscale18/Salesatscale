@@ -52,6 +52,7 @@ export const CLASSIC_CHANGES: readonly string[] = [
   "All files: import paths point at today's shared modules (lib/voice/protocol, lib/voice/realtime, lib/voice/log) and at the Classic copies; a header names the 20 Nov source.",
   "engine.ts: class renamed ClassicVoiceEngine; accepts today's socket deps (log, onEnding) and limits (heartbeatMs; waitForClientAudio accepted and ignored).",
   "engine.ts: onClientMessage ignores today's {t:'ready'} (the opener is asked for at once, as on 20 Nov).",
+  "engine.ts: hold only (today's auth holdGreeting, the lead page hand-over): limits.holdGreeting keeps the opener until the page's {t:'ready'} (no buyer audio to the model meanwhile); not released within holdGreetingMs (15 s), the call ends as not_started with no duration or cost. Without it nothing changes.",
   "engine.ts: onClientGone(close) takes today's close code/reason and returns the end's promise; stop(reason, code, by) takes today's third argument.",
   "engine.ts: logs `engine=classic` at call start and in the end line; warns when a required 20 Nov replacement found no chat line.",
   "engine.ts: go-live row: settings keep engine:'classic' and the model used; recordingState 'off' (never recorded); a scripted call keeps the row's model (today's rule).",

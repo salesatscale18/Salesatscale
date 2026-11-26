@@ -140,10 +140,11 @@
 }
 /* The voice bubble's dock (components/sas/voice/voice-bubble.tsx): zero height between the messages and the
    composer, so the bubble sits at the bottom-end of the messages, just above the composer, and never covers Send. */
-/* Voice mode: the voice bar on the composer's white strip (board VoiceBubbleBack 1); the composer is hidden. The top padding
-   leaves room for the short labels above the bubble and its outer ring, so they never cover the last message. */
+/* Voice mode: the voice bar on the composer's white strip (board VoiceBubbleBack 1); the composer is hidden. The bar
+   has its own row for the short labels and room for the bubble's outer ring (voice-bubble.css .vb-bar), so neither
+   covers the last message; 16 px gutters. */
 .c-voicebar { flex: none; position: relative; z-index: 3; background: var(--raised); border-block-start: 1px solid var(--line);
-  padding: 22px 12px calc(12px + env(safe-area-inset-bottom)); }
+  padding: 8px 16px calc(12px + env(safe-area-inset-bottom)); }
 
 /* RA (reach: web chat for real leads, board ReachChat / ReachSms). The chat menu in the header
    (stop text messages, or turn them back on), the "Stop text messages" link at the top of a chat

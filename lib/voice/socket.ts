@@ -328,8 +328,17 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     // guards" (today's engine with the Classic model side, lib/voice-guarded), its silent probe or Current. Buyer calls
     // always run on Current.
     const stored = session.isTest ? sessionEngine(session.settings) : "current";
-    // The pipeline engines (lib/voice-pipeline): no realtime model; a listener, the chat turn and a speaker.
-    if (isPipelineEngine(stored)) return startPipeline(session, mode, auth.waitAudio === true, stored);
+    // The pipeline engines (lib/voice-pipeline): no realtime model; a listener, the chat turn and a speaker. Retired
+    // from the selector and test calls only: they have no held greeting, so a page that asks for one is refused
+    // (never a greeting the page did not release).
+    if (isPipelineEngine(stored)) {
+      if (auth.holdGreeting) {
+        log.warn(voiceLine(session.id, `holdGreeting refused: engine=${stored} cannot hold the greeting`));
+        await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
+        return refuse("model_unavailable");
+      }
+      return startPipeline(session, mode, auth.waitAudio === true, stored);
+    }
     const classic = stored === "classic";
     // The realtime + ElevenLabs engines (lib/voice-rt-eleven): the guarded profile, text output, our speaker.
     const rtEngine = isRtElevenEngine(stored) ? stored : null;
@@ -386,7 +395,11 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     sendJson({ t: "call", maxSec, mode: model.mode });
     const deps = {
       db: opts.db, model, sessionId: session.id, clock, log, onEnding: keepAlive,
-      limits: { ...opts.limits, deadlineSec: opts.deadlineSec, env, ...(auth.waitAudio ? { waitForClientAudio: true } : {}) },
+      // holdGreeting (the lead page hand-over): the page's `ready` comes once it shows the chat (it implies waitAudio).
+      limits: {
+        ...opts.limits, deadlineSec: opts.deadlineSec, env, ...(auth.waitAudio || auth.holdGreeting ? { waitForClientAudio: true } : {}),
+        ...(auth.holdGreeting ? { holdGreeting: true } : {}),
+      },
       send: (msg: ServerMessage | Uint8Array) => {
         if (msg instanceof Uint8Array) {
           // Backpressure: drop agent audio, never protocol messages. A drop is a splice in what the buyer hears

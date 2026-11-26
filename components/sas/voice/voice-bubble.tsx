@@ -100,7 +100,58 @@ export function BubbleTray({ id, state, view, tr, act }: {
   );
 }
 
-export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, caption = false, placement, note = null, onNoteDone }: {
+/** A short label above the bubble: its words, its kind (data-bubble-note) and what a tap on it does. */
+export type BubbleFlashNote = { text: string; kind: "muted" | "first" | "standby" | "last_minute"; dismiss: () => void };
+
+/**
+ * The short labels above the bubble: "You are muted" just after muting, the first switch's note, standby's words for
+ * a few seconds, "1 min left" in the last minute; one at a time, in that order. `hidden`: none now (the form's tray
+ * is open, or the parent shows them).
+ */
+export function useBubbleFlash({ state, view, tr, note = null, onNoteDone, hidden = false }: {
+  state: MirrorState; view: ReturnType<typeof bubbleView>; tr: Tr; note?: string | null; onNoteDone?: () => void; hidden?: boolean;
+}): BubbleFlashNote | null {
+  const [standbyNote, setStandbyNote] = useState(false);
+  useEffect(() => {
+    if (!view.standby || state.muted) {
+      setStandbyNote(false);
+      return;
+    }
+    setStandbyNote(true);
+    const t = window.setTimeout(() => setStandbyNote(false), STANDBY_NOTE_MS);
+    return () => window.clearTimeout(t);
+  }, [view.standby, state.muted]);
+  const [mutedNote, setMutedNote] = useState(false);
+  useEffect(() => {
+    if (!state.muted || view.ended) {
+      setMutedNote(false);
+      return;
+    }
+    setMutedNote(true);
+    const t = window.setTimeout(() => setMutedNote(false), MUTED_NOTE_MS);
+    return () => window.clearTimeout(t);
+  }, [state.muted, view.ended]);
+  // The last minute: "1 min left" (the time left shows nowhere else).
+  const lastMinute = state.phase === "live" && state.secondsLeft !== null && state.secondsLeft <= 60 && state.secondsLeft > 0;
+  if (hidden || view.ended) return null;
+  // "You are muted" answers the buyer's own tap, so it comes first.
+  if (mutedNote) return { text: tr("buyer.voice.muted.title"), kind: "muted", dismiss: () => setMutedNote(false) };
+  if (note) return { text: note, kind: "first", dismiss: () => onNoteDone?.() };
+  if (standbyNote) return { text: view.word, kind: "standby", dismiss: () => setStandbyNote(false) };
+  if (lastMinute) return { text: tr("buyer.voice.bubble.min_left"), kind: "last_minute", dismiss: () => undefined };
+  return null;
+}
+
+/** The short label itself (a tap dismisses it). */
+export function BubbleFlash({ flash }: { flash: BubbleFlashNote }) {
+  return (
+    <button type="button" className="vb-flash" dir="auto" onClick={flash.dismiss} data-bubble-note={flash.kind}>
+      {flash.text}
+    </button>
+  );
+}
+
+export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, caption = false, placement, note = null, onNoteDone, ownFlash = true }: {
   state: MirrorState;
   agentName: string;
   tr: Tr;
@@ -114,6 +165,8 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
   /** A short note above the bubble (the buyer's first switch: what they say appears as text); a tap or onNoteDone ends it. */
   note?: string | null;
   onNoteDone?: () => void;
+  /** False: the short labels are shown by the parent (the chat's voice bar, in its own row above the controls). */
+  ownFlash?: boolean;
 }) {
   const view = bubbleView(state, tr, agentName);
   // The picture (board VoiceBubbleBack): a dashed ring turns while connecting; one thin ring while listening; two
@@ -164,35 +217,8 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
     const t = window.setTimeout(() => setShownId(null), CAPTION_HOLD_MS);
     return () => window.clearTimeout(t);
   }, [caption, shownId, view.speaking, expanded, capText]);
-  // Short labels above the bubble: standby's words for a few seconds, "You are muted" just after muting.
-  const [standbyNote, setStandbyNote] = useState(false);
-  useEffect(() => {
-    if (!view.standby || state.muted) {
-      setStandbyNote(false);
-      return;
-    }
-    setStandbyNote(true);
-    const t = window.setTimeout(() => setStandbyNote(false), STANDBY_NOTE_MS);
-    return () => window.clearTimeout(t);
-  }, [view.standby, state.muted]);
-  const [mutedNote, setMutedNote] = useState(false);
-  useEffect(() => {
-    if (!state.muted || view.ended) {
-      setMutedNote(false);
-      return;
-    }
-    setMutedNote(true);
-    const t = window.setTimeout(() => setMutedNote(false), MUTED_NOTE_MS);
-    return () => window.clearTimeout(t);
-  }, [state.muted, view.ended]);
-  // The last minute: "1 min left" (the time left shows nowhere else).
-  const lastMinute = state.phase === "live" && state.secondsLeft !== null && state.secondsLeft <= 60 && state.secondsLeft > 0;
-  // "You are muted" answers the buyer's own tap, so it comes first.
-  const flash: { text: string; kind: string } | null = open || view.ended ? null
-    : mutedNote ? { text: tr("buyer.voice.muted.title"), kind: "muted" }
-      : note ? { text: note, kind: "first" }
-        : standbyNote ? { text: view.word, kind: "standby" }
-          : lastMinute ? { text: tr("buyer.voice.bubble.min_left"), kind: "last_minute" } : null;
+  // Short labels above the bubble (the chat's voice bar shows them in its own row instead: `ownFlash` false).
+  const flash = useBubbleFlash({ state, view, tr, note, onNoteDone, hidden: open || !ownFlash });
   const showCaption = !flash && caption && !!state.caption && shownId === state.caption.id && !view.ended && !open;
 
   const act = (c: TabCommand) => {
@@ -215,14 +241,7 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
       data-voice-bubble="" data-bubble-look={look} data-bubble-phase={state.phase} data-bubble-live={state.live ?? ""} data-bubble-muted={state.muted ? "" : undefined}
     >
       {open ? <BubbleTray id={trayId} state={state} view={view} tr={tr} act={act} /> : null}
-      {flash ? (
-        <button
-          type="button" className="vb-flash" dir="auto" onClick={() => (flash.kind === "muted" ? setMutedNote(false) : flash.kind === "first" ? onNoteDone?.() : setStandbyNote(false))}
-          data-bubble-note={flash.kind}
-        >
-          {flash.text}
-        </button>
-      ) : null}
+      {flash ? <BubbleFlash flash={flash} /> : null}
       {showCaption && state.caption ? (
         <button
           // The call's language may differ from the page's (an English call on a Hebrew page, or a Hebrew call): the line sets its own direction.

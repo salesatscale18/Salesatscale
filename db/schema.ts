@@ -1029,9 +1029,12 @@ export const conversations = pgTable(
 
 export const VOICE_SESSION_STATUSES = ["pending", "live", "ended"] as const;
 export type VoiceSessionStatus = (typeof VOICE_SESSION_STATUSES)[number];
-/** Why a voice call ended. */
+/**
+ * Why a voice call ended. `not_started`: the greeting was held for the page (the lead page hand-over) and never
+ * released, so the agent never spoke (stored with no duration and no cost). A text column: no migration.
+ */
 export const VOICE_END_REASONS = [
-  "user_hangup", "agent_closed", "limit", "silence", "idle", "opt_out", "handoff", "take_over", "connection_lost", "budget", "error",
+  "user_hangup", "agent_closed", "limit", "silence", "idle", "opt_out", "handoff", "take_over", "connection_lost", "budget", "error", "not_started",
 ] as const;
 export type VoiceEndReason = (typeof VOICE_END_REASONS)[number];
 /** scripted: the free fake model (VOICE_REALTIME=scripted), never counted in AI spend; live: a paid realtime model. */
@@ -1041,6 +1044,8 @@ export type VoiceSessionMode = "scripted" | "live";
 export type VoiceEndBy =
   | "client_end" | "client_closed" | "client_idle" | "model_closed" | "model_closed_early" | "model_rejected_session" | "limit" | "idle" | "tool"
   | "take_over" | "ended_elsewhere" | "gate" | "error" | "deadline"
+  /** The held greeting was never released (VOICE_END_REASONS not_started). */
+  | "not_started"
   /** Closed as stale: the function running the call went away without storing its end (lib/voice/service.ts). */
   | "relay_gone";
 

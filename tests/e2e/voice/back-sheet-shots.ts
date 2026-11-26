@@ -98,8 +98,8 @@ async function main() {
       // The speakers are listed once the call is live (a moment later).
       check(await page.waitForSelector("[data-voice-bar] [data-bar-speaker]", { timeout: 5000 }).then(() => true, () => false), `${lang}: Speaker shows (two outputs)`);
       const sym = await barSymmetry(page);
-      const inside = await page.evaluate(`(() => { const r = [...document.querySelectorAll("[data-voice-bar] .vb-ctl__circle")].map((e) => e.getBoundingClientRect()); return Math.min(...r.map((x) => x.left)) >= 12 && Math.max(...r.map((x) => x.right)) <= innerWidth - 12; })()`);
-      check(inside, `${lang}: all four controls fit inside the 12 px gutters at 390 px`);
+      const inside = await page.evaluate(`(() => { const r = [...document.querySelectorAll("[data-voice-bar] .vb-ctl__circle")].map((e) => e.getBoundingClientRect()); return Math.min(...r.map((x) => x.left)) >= 16 && Math.max(...r.map((x) => x.right)) <= innerWidth - 16; })()`);
+      check(inside, `${lang}: all four controls fit inside the 16 px gutters at 390 px`);
       check(sym.off <= 1 && Math.abs(sym.leftGap - sym.rightGap) <= 1, `${lang}: bubble at the bar's centre (${sym.off.toFixed(1)} px off), equal gaps to Speaker and Text (${sym.leftGap.toFixed(1)} / ${sym.rightGap.toFixed(1)} px)`);
       check(JSON.stringify(sym.sizes) === JSON.stringify(["44x44"]), `${lang}: Mute, Speaker and Text are the same 44 px circle (${sym.sizes.join(", ")})`);
       await shot(page, `voice-bar-${lang}`);

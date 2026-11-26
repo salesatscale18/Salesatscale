@@ -6,8 +6,9 @@
  *
  * Outcomes are inferred, never stored: accepted = a create_quote that carried
  * the offer id; expired = past the quote's valid-until; needs your approval = a
- * held quote (no offer) made after the latest offer; not taken = a later offer
- * was asked for; else offered.
+ * held quote (no offer) made after the latest offer; not taken = a later
+ * check_offer returned another offer (a check that found nothing leaves it
+ * standing); else offered.
  */
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -100,7 +101,8 @@ export function offerHistory(calls: readonly OfferCall[], now: Date): MadeOfferE
     if (accepted.has(x.record.id)) outcome = "accepted";
     else if (Date.parse(x.record.expiresAt) < now.getTime()) outcome = "expired";
     else if (x === lastOffer && later.some((c) => c.name === "create_quote" && c.result.status === "awaiting_seller_approval" && !quoteOfferId(c.result))) outcome = "needs_approval";
-    else if (later.some((c) => c.name === "check_offer")) outcome = "not_taken";
+    // Only a later offer replaces it: a later check that found nothing more (or a trade that is off) leaves it standing.
+    else if (later.some((c) => c.name === "check_offer" && offerRecordOf(c.result) !== null)) outcome = "not_taken";
     else outcome = "offered";
     return { record: x.record, outcome, acceptedQuoteId: accepted.get(x.record.id) ?? null };
   });
@@ -109,6 +111,46 @@ export function offerHistory(calls: readonly OfferCall[], now: Date): MadeOfferE
 /** The highest percent offered so far (0 when none was a percent): above it, a discount without an offer is an approval request. */
 export function highestOfferedBp(history: readonly MadeOfferEntry[]): number {
   return Math.max(0, ...history.map((h) => h.record.percentBp));
+}
+
+/** Trades whose offer lines are the lines of the quote it was made on (a percent off that quote, nothing added). */
+const SAME_LINES_TRADES: readonly OfferType[] = ["general", "decide_now", "pay_yearly"];
+
+type ReqLine = { sku: string; qty: number };
+export type StandingMatch = { record: OfferRecord; lines: ReqLine[]; restored: ReqLine[] };
+
+/**
+ * The standing offer a create_quote without an offer id stands for (pure). `history`: offerHistory of the lead.
+ * A candidate is offered (or needs approval: a bigger request was made after it), is a percent offer of exactly
+ * this percent and was made on this quote version (the lead's current quote); `valid` drops candidates the live
+ * prices or the seller's limits no longer allow. Exactly one candidate, else null (the caller refuses as before).
+ * Lines: every line the model passed must be on the offer at the same quantity (no new item, no other quantity).
+ * Lines of the offer the model left out are restored (the offer's lines are used): only for percent offers whose
+ * lines are the lines of the quote they were made on (general, decide now, pay yearly), so a restored line was
+ * on that quote and nothing is added that the buyer did not have. A more-units offer needs its exact lines.
+ */
+export function standingOfferMatch(
+  history: readonly MadeOfferEntry[],
+  want: { discountBp: number; quoteId: string; quoteVersion: number; lines: readonly ReqLine[] },
+  valid: (r: OfferRecord) => boolean = () => true,
+): StandingMatch | null {
+  if (want.discountBp <= 0) return null;
+  const found = history.filter((h) => (h.outcome === "offered" || h.outcome === "needs_approval")
+    && h.record.kind === "discount" && h.record.percentBp === want.discountBp
+    && h.record.quoteId === want.quoteId && h.record.quoteVersion === want.quoteVersion && valid(h.record));
+  if (found.length !== 1) return null;
+  const record = found[0].record;
+  const qty = (l: readonly ReqLine[]) => {
+    const m = new Map<string, number>();
+    for (const x of l) m.set(x.sku.trim().toUpperCase(), (m.get(x.sku.trim().toUpperCase()) ?? 0) + x.qty);
+    return m;
+  };
+  const have = qty(record.lines);
+  const asked = qty(want.lines);
+  if (![...asked].every(([sku, n]) => have.get(sku) === n)) return null;
+  const restored = record.lines.filter((l) => !asked.has(l.sku.trim().toUpperCase()));
+  if (restored.length && !SAME_LINES_TRADES.includes(record.type)) return null;
+  return { record, lines: record.lines.map((l) => ({ sku: l.sku, qty: l.qty })), restored: restored.map((l) => ({ sku: l.sku, qty: l.qty })) };
 }
 
 /** The stored offer with this id among the calls, newest first (null when it is not this lead's). */

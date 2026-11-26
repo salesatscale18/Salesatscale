@@ -108,7 +108,7 @@ const DEFAULTS: Required<Omit<PipelineLimits, "deadlineSec" | "env">> = {
 
 const BY_REASON: Record<VoiceEndReason, VoiceEndBy> = {
   user_hangup: "client_end", agent_closed: "tool", limit: "limit", silence: "idle", idle: "idle", opt_out: "tool", handoff: "tool",
-  take_over: "take_over", connection_lost: "client_closed", budget: "gate", error: "error",
+  take_over: "take_over", connection_lost: "client_closed", budget: "gate", error: "error", not_started: "not_started",
 };
 
 /** A chat turn still running when the call ends gets this long to store its reply before the end line. */

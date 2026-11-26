@@ -4,7 +4,7 @@
  * ({ ok: false, refused: true, rule, missing }) the agent reads and acts on.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, max } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, max, notInArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { catalogItems, conversations, leadEvents, leads, messages, orderForms, orders, quoteLines, quotes, quoteVersions, sellerAccounts, type Market, type Playbook, type QuoteVersion, type SellerAccount } from "@/db/schema";
@@ -42,7 +42,7 @@ import { bookNamedTime, offerBooking } from "@/lib/team-calls/service";
 import { callRoleOf } from "./core/call-role";
 import { askTeam } from "@/lib/team-questions/service";
 import { nextOffer, offerSkipText, offersOf, type OfferOption, type OfferPricing, type OfferType } from "./offers";
-import { findOffer, highestOfferedBp, leadOfferCalls, offerHistory, type NoOfferRecord, type OfferCall, type OfferRecord } from "./offer-records";
+import { findOffer, highestOfferedBp, leadOfferCalls, offerHistory, standingOfferMatch, type NoOfferRecord, type OfferCall, type OfferRecord, type StandingMatch } from "./offer-records";
 
 const lineSchema = {
   type: "array",
@@ -452,6 +452,8 @@ const refuse = (rule: string, extra: Record<string, unknown> = {}): ToolResult =
   rule,
   result: { ok: false, refused: true, rule, ...extra },
 });
+/** `refuse`, for a tool that shadows it to add its own data to every refusal. */
+const refuseWith = refuse;
 
 type Line = { sku: string; qty: number };
 
@@ -553,6 +555,29 @@ async function leadQuoteByRef(ctx: ToolContext, refIn: unknown) {
 /** Ok check_offer and create_quote calls of this lead: stored ones and this turn's. */
 async function offerCallsOf(ctx: ToolContext): Promise<OfferCall[]> {
   return [...await leadOfferCalls(ctx.db, ctx.accountId, ctx.leadId), ...(ctx.memo?.offerCalls ?? [])];
+}
+
+/**
+ * create_quote with a discount and no offer id: the lead's one standing offer of exactly that percent, made on
+ * the lead's current quote (its newest draft or sent quote, at its current version) and still allowed by the live
+ * prices and the seller's offers list (offer-records.ts standingOfferMatch has the line rule). Null when none or
+ * several match: the caller then refuses as before.
+ */
+async function standingOfferOf(ctx: ToolContext, calls: readonly OfferCall[], lines: readonly Line[], discountBp: number): Promise<StandingMatch | null> {
+  if (discountBp <= 0) return null;
+  const [current] = await ctx.db.select().from(quotes).where(and(
+    eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId), inArray(quotes.status, ["draft", "sent"]),
+  )).orderBy(desc(quotes.number)).limit(1);
+  if (!current) return null;
+  const live = await pricingOf(ctx);
+  const rows = offersOf(ctx.playbook);
+  const now = Date.now();
+  return standingOfferMatch(offerHistory(calls, new Date(now)), { discountBp, quoteId: current.id, quoteVersion: current.currentVersion, lines }, (r) => {
+    const row = rows.find((o) => o.type === r.type);
+    return Date.parse(r.expiresAt) >= now && !!live.priceList && !!live.catalog
+      && live.priceList.list.id === r.priceListId && live.catalog.version.id === r.catalogVersionId
+      && !!row?.on && (row.percentBp ?? 0) >= r.percentBp;
+  });
 }
 
 function rememberOfferCall(ctx: ToolContext, name: string, input: Record<string, unknown>, result: Record<string, unknown>) {
@@ -695,7 +720,20 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   }
 
   if (name === "check_offer") {
-    const q = await leadQuoteByRef(ctx, args.quote);
+    // A reference that is not this buyer's (the model copied an example, or misread it): when the lead has exactly
+    // one current quote, that one is used, and the result says so in `quote_ref_fallback` (data only).
+    let q = await leadQuoteByRef(ctx, args.quote);
+    let fallback: Record<string, unknown> = {};
+    if (!q) {
+      const current = await ctx.db.select().from(quotes).where(and(
+        eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId), notInArray(quotes.status, ["cancelled", "replaced"]),
+      )).limit(2);
+      if (current.length === 1) {
+        q = current[0];
+        fallback = { quote_ref_fallback: { asked: String(args.quote ?? ""), used: `Q-${q.number}` } };
+      }
+    }
+    const refuse = (rule: string, extra: Record<string, unknown> = {}) => refuseWith(rule, { ...extra, ...fallback });
     if (!q) return refuse("Quote not found for this buyer", { message: "Make the quote first with create_quote, without a discount. An offer is made against a quote the buyer has." });
     if (q.status === "awaiting_approval") return refuse("Quote waits for the seller's approval", { message: "Tell the buyer the team is checking that price. Do not offer anything else on it now." });
     if (q.status === "cancelled" || q.status === "replaced") return refuse("Quote is no longer current", { message: "Use the buyer's current quote." });
@@ -717,8 +755,11 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const calls = await offerCallsOf(ctx);
     // The quote's request as the agent made it (its create_quote call), else its lines (a person's quote).
     const made = [...calls].reverse().find((c) => c.name === "create_quote" && c.result.quote_id === q.id);
-    const requested = (made && asLines(made.input.lines)) || requestLinesOf(await ctx.db.select({ sku: quoteLines.sku, qty: quoteLines.qty }).from(quoteLines).where(and(eq(quoteLines.accountId, ctx.accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(quoteLines.sortOrder));
-    const quoteSites = made && typeof made.input.sites === "number" ? made.input.sites : undefined;
+    // A quote bound to a standing offer was made with the offer's lines, not the model's (create_quote `offer_bound`).
+    const boundLines = made ? asLines((made.result.offer_bound as { lines?: unknown } | undefined)?.lines) : null;
+    const requested = boundLines || (made && asLines(made.input.lines)) || requestLinesOf(await ctx.db.select({ sku: quoteLines.sku, qty: quoteLines.qty }).from(quoteLines).where(and(eq(quoteLines.accountId, ctx.accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(quoteLines.sortOrder));
+    const boundSites = made ? (made.result.offer_bound as { sites?: unknown } | undefined)?.sites : undefined;
+    const quoteSites = typeof boundSites === "number" ? boundSites : made && typeof made.input.sites === "number" ? made.input.sites : undefined;
     const pricing: OfferPricing = {
       items: engineItems(p.catalog), entries: p.priceList.entries, priceList: enginePriceList(p.priceList.list),
       autoAdd: catalogAutoAdd(p.catalog), fitRules: p.catalog.rules,
@@ -749,7 +790,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const now = { total_today_including_vat: money(v.oneTimeTotalMinor), recurring_total_including_vat: v.recurringTotalMinor > 0 ? money(v.recurringTotalMinor, v.recurringPeriod === "year" ? "year" : "month") : null };
     if (!r.next) {
       const record: NoOfferRecord = { exhausted: true, quoteId: q.id, quoteNumber: q.number, tried };
-      const result = { ok: true, quote: `Q-${q.number} v${v.version}`, now, offer: null, ...namedNote, message: OFFER_NONE_MESSAGE, record };
+      const result = { ok: true, quote: `Q-${q.number} v${v.version}`, ...fallback, now, offer: null, ...namedNote, message: OFFER_NONE_MESSAGE, record };
       rememberOfferCall(ctx, name, args, result);
       return { outcome: "ok", result };
     }
@@ -769,7 +810,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     };
     const change = o.after.todayMinor - o.before.todayMinor;
     const result = {
-      ok: true, quote: `Q-${q.number} v${v.version}`, price_basis: priceBasis(p.priceList.list.pricesIncludeTax, p.priceList.list.taxRateBp), now,
+      ok: true, quote: `Q-${q.number} v${v.version}`, ...fallback, price_basis:priceBasis(p.priceList.list.pricesIncludeTax, p.priceList.list.taxRateBp), now,
       offer: {
         offer_id: id, trade: o.type, place: `offer ${r.next.place.n} of ${r.next.place.of} in the seller's order`, ...(r.next.again ? { offered_before: true } : {}),
         terms, lines: o.terms.lines, sites: o.terms.sites ?? null, discount_percent: o.terms.percentBp / 100,
@@ -885,7 +926,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   }
 
   if (name === "create_quote") {
-    const lines = asLines(args.lines);
+    let lines = asLines(args.lines);
     if (!lines) return { outcome: "failed", result: { ok: false, error: "lines must be [{sku, qty}]" } };
     const deal = await readDealState(ctx.db, ctx.accountId, ctx.leadId);
     const known = deal?.fields ?? {};
@@ -933,12 +974,21 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       ? [...new Set(args.remove_auto_added.filter((s): s is string => typeof s === "string").map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 50)
       : [];
     // Offers (part 2): an in-limit discount exists only through an offer id; a discount without one is an approval request.
-    const offerId = typeof args.offer === "string" && args.offer.trim() ? args.offer.trim() : null;
+    let offerId = typeof args.offer === "string" && args.offer.trim() ? args.offer.trim() : null;
     let offer: OfferRecord | null = null;
     let discountLimitBp: number | undefined;
+    /** Set when a discount without an offer id was bound to the lead's one standing offer of that percent. */
+    let bound: StandingMatch | null = null;
     const discountBp = Math.round(pct * 100);
     if (offerId || discountBp > 0) {
       const calls = await offerCallsOf(ctx);
+      if (!offerId) {
+        bound = await standingOfferOf(ctx, calls, lines, discountBp);
+        if (bound) {
+          offerId = bound.record.id;
+          lines = bound.lines;
+        }
+      }
       if (offerId) {
         offer = findOffer(calls, offerId);
         if (!offer) return refuse("Unknown offer", { message: "Use an offer id check_offer returned for this buyer." });
@@ -1022,6 +1072,16 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const heldMessageId = awaiting && !r.reused ? await sendHeldQuoteMessage(ctx, account ? localTradeName(account, ctx.language ?? "en") : "") : null;
     // The card's headline (the agent's, when valid); stored with the message link, read by lib/agent/quote-card.ts.
     const headline = validHeadline(args.headline);
+    // A held quote gives no totals; its lines (code, name, quantity, line price) are data, so the agent can see what
+    // the quote contains. The figure check withholds these prices while the quote waits (turn.ts).
+    const heldLines = awaiting
+      ? (await ctx.db.select().from(quoteLines).where(and(eq(quoteLines.accountId, ctx.accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(quoteLines.sortOrder))
+        .map((l) => {
+          const charge = l.chargeType === "one_time" ? "one-time" : l.period === "year" ? "yearly" : "monthly";
+          const total = l.lineTotalMinor === null ? "priced by the seller" : money(l.lineTotalMinor, l.chargeType === "one_time" ? undefined : l.period === "year" ? "year" : "month");
+          return { sku: l.sku, name: l.name, qty: l.qty, charge, [lineKey(v.pricesIncludeTax, v.taxRateBp)]: total };
+        })
+      : null;
     const quoteResult: Record<string, unknown> = {
         ok: true,
         quote: `Q-${r.quote.number} v${v.version}`,
@@ -1031,6 +1091,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
           : {}),
         status: awaiting ? "awaiting_seller_approval" : "ready",
         price_basis: priceBasis(v.pricesIncludeTax, v.taxRateBp),
+        ...(heldLines ? { lines: heldLines } : {}),
         totals: awaiting
           ? "not final: the seller must approve this quote first"
           : totalsBreakdown({
@@ -1049,6 +1110,8 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         quote_id: r.quote.id,
         quote_version: v.version,
         ...(offer ? { offer: { id: offer.id, trade: offer.type } } : {}),
+        // Bound to the standing offer (no offer id was passed): the offer's lines and sites were used.
+        ...(bound && offer ? { offer_bound: { offer_id: offer.id, lines: bound.lines, sites: offer.sites ?? null, restored_lines: bound.restored } } : {}),
         ...(headline ? { headline } : {}),
         ...(assumedNow.length ? { quoted_on_assumption: assumedNow } : {}),
         message: (awaiting

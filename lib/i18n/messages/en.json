@@ -3037,6 +3037,7 @@
   "voice.end_reason.connection_lost": "The connection was lost. The transcript so far is saved.",
   "voice.end_reason.budget": "The AI spend limit was reached.",
   "voice.end_reason.error": "Something went wrong on our side.",
+  "voice.end_reason.not_started": "The call did not start: the chat was not shown in time.",
   "voice.error.not_found": "The call could not be found.",
   "voice.error.ticket_invalid": "The call could not connect in time. Start a new call.",
   "voice.error.not_pending": "This call already started or ended. Start a new call.",

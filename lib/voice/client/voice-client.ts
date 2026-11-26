@@ -18,7 +18,7 @@ import { PlaybackSchedule } from "./playback";
 import { outputChoices, playbackRoute, type OutputDevice, type PlaybackRoute } from "./output";
 import { INITIAL_SNAPSHOT, isIdlePhase, voiceReducer, type VoiceEvent, type VoiceSnapshot, type VoiceUnavailableReason } from "./state";
 import { CAPTURE_PROCESSOR, CAPTURE_WORKLET_SOURCE } from "./worklet";
-import { READY_PRIMER_MS, latencyMs, runReadiness, type ReadinessProbe } from "./readiness";
+import { READY_PRIMER_MS, latencyMs, runReadiness, type ReadinessProbe, type ReadyReport } from "./readiness";
 
 /** Where the output clocks were at a moment (the readiness and `heard` checks compare against it). */
 type OutputMark = { ctxTime: number; outTime: number | null; elTime: number | null };
@@ -31,6 +31,41 @@ export type VoiceStartParams = {
   maxSec?: number | null;
   mode?: "scripted" | "live" | null;
 };
+
+/** Why a call attempt did not get ready (the lead page hand-over's onFailed). */
+export type CallFailReason = "mic_denied" | "mic_unavailable" | "connect_failed" | "busy" | "gate_refused" | "other";
+
+/**
+ * What a page may hear about one call attempt (the lead page hand-over keeps its "thinking" ring until onReady):
+ * - onMicGranted: the microphone was granted (prepare succeeded).
+ * - onReady: the microphone is granted, the relay accepted the ticket (`call`), the agent's model is connected (the
+ *   relay's first `listening`) and the page's readiness check passed (lib/voice/client/readiness.ts: mic capture
+ *   live, audio context running, output moving, the 150 ms silent primer). With `holdGreeting` the greeting is still
+ *   held then: `{t:"ready"}` has not gone to the relay; releaseGreeting() sends it (or the 8 s safety net).
+ * - onFailed(reason): at most once per attempt, never after onReady except "connect_failed" when the call drops
+ *   before the greeting was released (the socket closes, the relay ends or refuses the call). Nothing fires for an
+ *   attempt the page itself cancelled or ended, or one a newer attempt replaced.
+ */
+export type VoiceCallEvents = { onMicGranted?(): void; onReady?(): void; onFailed?(reason: CallFailReason): void };
+
+/** With `holdGreeting`: the greeting goes this long after onReady when the page has not released it. */
+export const HOLD_RELEASE_MS = 8_000;
+/** With `holdGreeting`: not ready this long after the socket opened (the relay may wait up to 20 s for a chat turn): connect_failed. */
+export const HOLD_CONNECT_MS = 30_000;
+
+/** The relay's refusal codes as a hand-over failure reason. */
+export function failReasonOfError(code: string): CallFailReason {
+  if (code === "connection_lost" || code === "model_unavailable" || code === "model_closed_early" || code === "ticket_invalid") return "connect_failed";
+  if (code === "spend_cap" || code === "platform_budget" || code === "account_paused" || code === "conversation_closed" || code === "human_handling") return "gate_refused";
+  return "other";
+}
+
+/** A call the relay ended before it was ready, as a hand-over failure reason. */
+function failReasonOfEnd(reason: string): CallFailReason {
+  if (reason === "connection_lost" || reason === "not_started") return "connect_failed";
+  if (reason === "budget") return "gate_refused";
+  return "other";
+}
 
 export type VoiceClientOptions = {
   /** Mic constraints (echo cancellation, noise suppression and gain control by default). */
@@ -82,6 +117,15 @@ export class VoiceClient {
   private firstChunk: { recvMs: number; startAt: number; queuedMs: number; mark: OutputMark; sent: boolean } | null = null;
   /** Bumped by every new call and by cancel: async steps of an older attempt stop. */
   private attempt = 0;
+  /**
+   * This attempt's events and greeting hold (begin): whether the relay accepted the ticket (`authed`), the readiness
+   * report once the check passed, and where the hold is (ready fired, released, failed). Null: no events, no hold.
+   */
+  private call: {
+    events: VoiceCallEvents; hold: boolean; authed: boolean; report: ReadyReport | null;
+    ready: boolean; released: boolean; releaseWanted: boolean; failed: boolean;
+    timers: { release?: ReturnType<typeof setTimeout>; connect?: ReturnType<typeof setTimeout> };
+  } | null = null;
   private levelBuf: Float32Array<ArrayBuffer> | null = null;
   private readonly opts: Required<Omit<VoiceClientOptions, "getUserMedia">> & Pick<VoiceClientOptions, "getUserMedia">;
 
@@ -121,10 +165,16 @@ export class VoiceClient {
    * Call this synchronously inside the click that starts a call: it creates
    * and resumes the AudioContext there (browsers only allow audio to start
    * from a user gesture) and resets the screen.
+   *
+   * `holdGreeting` (the lead page hand-over): the relay asks the model for the opening line only when the page calls
+   * releaseGreeting() (or HOLD_RELEASE_MS after onReady). `events`: this attempt's VoiceCallEvents.
    */
-  begin(o: { maxSec?: number | null; mode?: "scripted" | "live" | null } = {}): void {
+  begin(o: { maxSec?: number | null; mode?: "scripted" | "live" | null; holdGreeting?: boolean; events?: VoiceCallEvents } = {}): void {
     this.attempt++;
     this.teardown();
+    this.call = o.events || o.holdGreeting
+      ? { events: o.events ?? {}, hold: !!o.holdGreeting, authed: false, report: null, ready: false, released: false, releaseWanted: false, failed: false, timers: {} }
+      : null;
     this.dispatch({ type: "reset", maxSec: o.maxSec ?? null, mode: o.mode ?? null });
     this.dispatch({ type: "phase", phase: "starting" });
     try {
@@ -252,6 +302,7 @@ export class VoiceClient {
       if (my !== this.attempt) return false;
       if (status?.state === "denied") {
         this.dispatch({ type: "phase", phase: "mic_blocked" });
+        this.failCall("mic_denied");
         return false;
       }
       if (status?.state !== "granted") this.dispatch({ type: "phase", phase: "mic_prompt" });
@@ -267,20 +318,109 @@ export class VoiceClient {
       await this.wireMic();
       if (my !== this.attempt) return false;
       this.dispatch({ type: "phase", phase: "starting" });
+      this.emit("onMicGranted");
       return true;
     } catch (e) {
       if (my !== this.attempt) return false;
       const name = (e as { name?: string })?.name;
       this.releaseMic();
-      this.dispatch({ type: "phase", phase: name === "NotFoundError" || name === "OverconstrainedError" || name === "NotReadableError" ? "no_mic" : "mic_blocked" });
+      const noMic = name === "NotFoundError" || name === "OverconstrainedError" || name === "NotReadableError";
+      this.dispatch({ type: "phase", phase: noMic ? "no_mic" : "mic_blocked" });
+      this.failCall(noMic ? "mic_unavailable" : "mic_denied");
       return false;
     }
   }
 
+  /**
+   * The greeting may go now (`holdGreeting`): sends the held `{t:"ready"}` with the readiness report, so the relay asks
+   * the model for the opening line. Before onReady it goes as soon as the call is ready. Idempotent; a no-op without a hold.
+   */
+  releaseGreeting(): void {
+    const c = this.call;
+    if (!c || !c.hold || c.released || c.failed) return;
+    if (!c.ready) {
+      c.releaseWanted = true;
+      return;
+    }
+    this.sendHeldReady();
+  }
+
+  /**
+   * A page-level outcome of this attempt (the chat's POST that creates the call refused it, or failed): onFailed,
+   * at most once. Call it before cancel() or unavailable(), which end the attempt.
+   */
+  failAttempt(reason: CallFailReason): void {
+    this.failCall(reason);
+  }
+
+  private emit(name: "onMicGranted" | "onReady") {
+    const c = this.call;
+    if (!c || c.failed) return;
+    try {
+      c.events[name]?.();
+    } catch (e) {
+      console.error(`[voice] ${name} failed`, e);
+    }
+  }
+
+  /**
+   * onFailed once per attempt. After onReady only while the greeting is still held, and then always as
+   * "connect_failed" (the call dropped or the relay ended it before the greeting went).
+   */
+  private failCall(reason: CallFailReason) {
+    const c = this.call;
+    if (!c || c.failed) return;
+    if (c.ready) {
+      if (!c.hold || c.released) return;
+      reason = "connect_failed";
+    }
+    c.failed = true;
+    this.clearCallTimers();
+    try {
+      c.events.onFailed?.(reason);
+    } catch (e) {
+      console.error("[voice] onFailed failed", e);
+    }
+  }
+
+  /** Ready (see VoiceCallEvents.onReady): fires onReady; with a hold, the greeting goes when released or after HOLD_RELEASE_MS. */
+  private checkReady() {
+    const c = this.call;
+    if (!c || c.ready || c.failed || !c.authed || !c.report || this.snap.phase !== "live") return;
+    c.ready = true;
+    clearTimeout(c.timers.connect);
+    this.emit("onReady");
+    if (!c.hold || c.released || this.call !== c) return;
+    if (c.releaseWanted) return this.sendHeldReady();
+    const my = this.attempt;
+    c.timers.release = setTimeout(() => {
+      if (my === this.attempt && this.call === c) this.sendHeldReady();
+    }, HOLD_RELEASE_MS);
+  }
+
+  private sendHeldReady() {
+    const c = this.call;
+    if (!c || c.released || !c.report) return;
+    c.released = true;
+    clearTimeout(c.timers.release);
+    this.sendMsg({ t: "ready", ...c.report });
+  }
+
+  private clearCallTimers() {
+    const c = this.call;
+    if (!c) return;
+    clearTimeout(c.timers.release);
+    clearTimeout(c.timers.connect);
+    c.timers = {};
+  }
+
   /** The server refused to create the call. */
   unavailable(reason: VoiceUnavailableReason, detail: { retryAt?: string | null; ownCall?: boolean } = {}) {
+    // Without failAttempt first: "other" (the page said nothing more).
+    this.failCall("other");
     this.attempt++;
     this.teardown();
+    this.call = null;
     this.dispatch({ type: "unavailable", reason, ...detail });
   }
 
@@ -295,18 +435,33 @@ export class VoiceClient {
     } catch {
       this.dispatch({ type: "server", msg: { t: "error", code: "connection_lost" }, now: Date.now() });
       this.dispatch({ type: "local_end", reason: "connection_lost" });
+      this.failCall("connect_failed");
       this.teardown();
       return;
     }
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    const call = this.call;
+    const hold = !!call?.hold;
+    if (call && hold) {
+      // Not ready in time (the relay may first wait for a chat turn in flight): the attempt fails and the call ends.
+      call.timers.connect = setTimeout(() => {
+        if (my !== this.attempt || this.call !== call || call.ready) return;
+        this.failCall("connect_failed");
+        this.end();
+      }, HOLD_CONNECT_MS);
+    }
     ws.onopen = () => {
       if (my !== this.attempt) return;
-      // waitAudio: the relay asks for the opening line once this page says it can play it (`ready`).
-      ws.send(JSON.stringify({ t: "auth", sessionId: p.sessionId, ticket: p.ticket, waitAudio: true }));
+      // waitAudio: the relay asks for the opening line once this page says it can play it (`ready`). holdGreeting:
+      // and that `ready` is held until the page releases it (releaseGreeting); the relay then waits longer for it.
+      ws.send(JSON.stringify({ t: "auth", sessionId: p.sessionId, ticket: p.ticket, waitAudio: true, ...(hold ? { holdGreeting: true } : {}) }));
       this.timers.ping = setInterval(() => this.sendMsg({ t: "ping" }), PING_MS);
       void this.whenOutputRuns(my).then((report) => {
-        if (my === this.attempt) this.sendMsg({ t: "ready", ...report });
+        if (my !== this.attempt) return;
+        if (call && this.call === call) call.report = report;
+        if (!hold) this.sendMsg({ t: "ready", ...report });
+        this.checkReady();
       });
     };
     ws.onmessage = (ev) => {
@@ -315,8 +470,15 @@ export class VoiceClient {
         const msg = parseServerMessage(ev.data);
         if (!msg) return;
         if (msg.t === "flush") this.flushPlayback();
+        // The relay accepted the ticket.
+        if (msg.t === "call" && call && this.call === call) call.authed = true;
         this.dispatch({ type: "server", msg, now: Date.now() });
-        if (msg.t === "ended") this.onEnded();
+        if (msg.t === "error") this.failCall(failReasonOfError(msg.code));
+        if (msg.t === "ended") {
+          this.failCall(failReasonOfEnd(msg.reason));
+          this.onEnded();
+        }
+        this.checkReady();
         return;
       }
       if (ev.data instanceof ArrayBuffer) this.play(new Uint8Array(ev.data));
@@ -372,6 +534,9 @@ export class VoiceClient {
   end() {
     const phase = this.snap.phase;
     if (phase === "ended" || phase === "unavailable" || phase === "idle") return;
+    // The page ended it: no events for this attempt from now on.
+    this.clearCallTimers();
+    this.call = null;
     this.releaseMic();
     this.flushPlayback();
     if (phase === "mic_prompt" || phase === "starting" || phase === "mic_blocked" || phase === "no_mic") {
@@ -395,6 +560,7 @@ export class VoiceClient {
   cancel() {
     this.attempt++;
     this.teardown();
+    this.call = null;
     this.dispatch({ type: "reset", maxSec: this.snap.maxSec, mode: this.snap.mode });
   }
 
@@ -403,6 +569,7 @@ export class VoiceClient {
     if (!isIdlePhase(this.snap.phase)) this.sendMsg({ t: "end" });
     this.attempt++;
     this.teardown();
+    this.call = null;
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisibility);
   }
 
@@ -594,6 +761,7 @@ export class VoiceClient {
   /** The socket dropped before the call ended. Release 1: no resume, so the call is over (transcript kept). */
   private onSocketLost() {
     this.dispatch({ type: "socket_lost" });
+    this.failCall("connect_failed");
     this.releaseMic();
     this.flushPlayback();
     const my = this.attempt;
@@ -633,6 +801,7 @@ export class VoiceClient {
 
   /** Frees the socket, the mic and the audio context. The snapshot (transcript) stays. */
   private teardown() {
+    this.clearCallTimers();
     clearInterval(this.timers.ping);
     clearTimeout(this.timers.lost);
     clearTimeout(this.timers.end);

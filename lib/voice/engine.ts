@@ -92,7 +92,17 @@ export type VoiceLimits = {
   waitForClientAudio?: boolean;
   /** The longest the opening line waits for the browser's `ready`. */
   clientReadyMs?: number;
+  /**
+   * The page holds the greeting (auth `holdGreeting`, the lead page hand-over): the browser's `ready` comes once the
+   * chat is on screen. The opening line waits for it up to holdGreetingMs (not clientReadyMs); without it the call ends
+   * as not started (no opening line, no duration, no cost). "Protect the opening line" starts when the opener is asked for.
+   */
+  holdGreeting?: boolean;
+  holdGreetingMs?: number;
 };
+
+/** The longest a held greeting waits for the page to release it (auth `holdGreeting`). */
+export const VOICE_HOLD_GREETING_MS = 15_000;
 
 /** A call of at least this long is warned LIMIT_WARN_LONG_SEC before its time limit (owner, 23 Nov 2026). */
 export const LIMIT_WARN_LONG_FROM_SEC = 120;
@@ -122,7 +132,7 @@ export const VOICE_HEARTBEAT_MS = 20_000;
 const DEFAULTS = {
   limitWarnSec: 45, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000, heartbeatMs: VOICE_HEARTBEAT_MS,
   // The opening line waits at most 3 s for the browser's `ready` (only for a browser that announced it).
-  waitForClientAudio: false, clientReadyMs: 3_000,
+  waitForClientAudio: false, clientReadyMs: 3_000, holdGreeting: false, holdGreetingMs: VOICE_HOLD_GREETING_MS,
   standbyAfterQuietMs: CALL_RULES.standbyAfterQuietMs, standbyIdleEndMs: CALL_RULES.standbyIdleEndMs, preRollMs: CALL_RULES.preRollMs,
   wakeBufferMaxMs: CALL_RULES.wakeBufferMaxMs, wakeConnectMs: CALL_RULES.wakeConnectMs, falseWakeMs: CALL_RULES.falseWakeMs,
   falseWakesBeforeRaise: CALL_RULES.falseWakesBeforeRaise, maxThresholdBoost: CALL_RULES.maxThresholdBoost, minWakeGapMs: CALL_RULES.minWakeGapMs,
@@ -210,7 +220,7 @@ export const RECORDING_FINISH_TIMEOUT_MS = 20_000;
 
 const BY_REASON: Record<VoiceEndReason, VoiceEndBy> = {
   user_hangup: "client_end", agent_closed: "tool", limit: "limit", silence: "idle", idle: "idle", opt_out: "tool", handoff: "tool",
-  take_over: "take_over", connection_lost: "client_closed", budget: "gate", error: "error",
+  take_over: "take_over", connection_lost: "client_closed", budget: "gate", error: "error", not_started: "not_started",
 };
 
 type ToolRun = { name: string; input: unknown; r: ToolResult };
@@ -670,6 +680,10 @@ export class VoiceEngine {
   private heardLogged = false;
   /** The opening line, until it is asked for (see sendOpener). */
   private pendingOpener: { prompt: string; kind: string; since: number } | null = null;
+  /** A held greeting (limits.holdGreeting): "Protect the opening line" starts when the opener is asked for, not at go-live. */
+  private protectOnOpener = false;
+  /** The held greeting was never released: the call ends as not started (callFigures: no duration, no cost). */
+  private notStarted = false;
   /** The call continues a chat (a pick-up line instead of an opener). */
   private continuingCall = false;
   /** This call stored its first agent line (the pick-up line, on a continuing call). */
@@ -868,7 +882,13 @@ export class VoiceEngine {
     if (this.ended || this.muted) return;
     // Forward first; the recording (left channel: the mic as received) only queues its work for after.
     this.forwardClientAudio(bytes);
-    if (this.callStart !== null) this.recorder?.buyer(bytes, this.offsetMs());
+    // Not while a held greeting waits for the page (the chat is not on screen yet; the recording notice is not said).
+    if (this.callStart !== null && !this.greetingHeld()) this.recorder?.buyer(bytes, this.offsetMs());
+  }
+
+  /** The greeting is held for the page (limits.holdGreeting) and the page has not released it yet. */
+  private greetingHeld(): boolean {
+    return !!this.limits.holdGreeting && !this.clientReady && !!this.pendingOpener;
   }
 
   private forwardClientAudio(bytes: Uint8Array): void {
@@ -1092,7 +1112,8 @@ export class VoiceEngine {
    * Scripted: always 0; the fake counts are kept with basis "none".
    */
   private callFigures(): { connected: boolean; durationSec: number; activeSec: number; usage: VoiceCallUsageRecord | null; costMicros: number } {
-    const connected = this.callStart !== null;
+    // A held greeting never released: as a call that never connected (nothing was asked of the model, nothing is billed).
+    const connected = this.callStart !== null && !this.notStarted;
     const durationSec = connected ? Math.round(this.offsetMs() / 1000) : 0;
     // Paid time is the model-connected time (standby excluded); durationSec stays the whole call.
     const activeSec = Math.min(durationSec, this.activeSec());
@@ -1229,7 +1250,11 @@ export class VoiceEngine {
       : ctx.openerPrompt;
     this.modelUp(conn);
     this.callStart = this.clock.now();
-    if (openerProtectionFor(resolveVoiceSettings(this.loaded!.version.voiceSettings), this.loaded!.session.isTest)) this.protectOpener();
+    if (openerProtectionFor(resolveVoiceSettings(this.loaded!.version.voiceSettings), this.loaded!.session.isTest)) {
+      // A held greeting: protected from when it is asked for (the hold may last longer than the protection's cap).
+      if (this.limits.holdGreeting && this.limits.waitForClientAudio && !this.clientReady) this.protectOnOpener = true;
+      else this.protectOpener();
+    }
     // The agent speaks first: the chat's opener (or the pick-up line of a call that continues a chat), once per
     // call, as the model's very first input: no buyer audio reaches the model before it (the row write below used
     // to come first, and mic audio sent meanwhile got its own answer before the opener: two answers at the start).
@@ -1238,6 +1263,8 @@ export class VoiceEngine {
     // who says "hello?" in that moment does not get an answer before the opening (one opening only).
     this.pendingOpener = { prompt: openerPrompt, kind: ctx.continuing ? "pick-up line" : "opener", since: this.clock.now() };
     if (!this.limits.waitForClientAudio || this.clientReady) this.sendOpener(this.clientReady ? "ready" : "now");
+    // A held greeting (the page shows the chat first): never asked for without the page's `ready`.
+    else if (this.limits.holdGreeting) this.timer("ready", this.limits.holdGreetingMs, () => this.greetingNotReleased());
     else this.timer("ready", this.limits.clientReadyMs, () => this.sendOpener("timeout"));
     await this.db.update(voiceSessions)
       // A live call records the model it ran on; a scripted call keeps its version's model (the scripted model stands in).
@@ -1347,12 +1374,30 @@ export class VoiceEngine {
     this.log.info(voiceLine(this.sessionId, `opener protected: off after ${Math.max(0, Math.round(this.clock.now() - g.since))}ms`));
   }
 
+  /**
+   * The held greeting was not released in time (limits.holdGreeting): the page never showed the chat. The call ends as
+   * not started: no opening line was asked for, and it is stored with no duration and no cost (callFigures), as a
+   * call that never connected.
+   */
+  private greetingNotReleased() {
+    if (!this.pendingOpener || this.clientReady || this.ended) return;
+    this.log.warn(voiceLine(this.sessionId, `held greeting not released after ${Math.round(this.clock.now() - this.pendingOpener.since)}ms: the call ends as not started`));
+    this.pendingOpener = null;
+    this.notStarted = true;
+    void this.stop("not_started", undefined, "not_started");
+  }
+
   /** Asks the model for the opening (or pick-up) line, once: when the browser can play it, or at the timeout. */
   private sendOpener(why: "ready" | "timeout" | "now") {
     const o = this.pendingOpener;
     if (!o || this.ended || !this.conn) return;
     this.pendingOpener = null;
     this.clearTimer("ready");
+    // A held greeting: its protection starts now, for the whole cap.
+    if (this.protectOnOpener) {
+      this.protectOnOpener = false;
+      this.protectOpener();
+    }
     if (why !== "now") this.log.info(voiceLine(this.sessionId, `opening waited ${Math.round(this.clock.now() - o.since)}ms for the browser's audio (${why})`));
     this.noteSent(o.kind, true);
     this.conn.requestResponse(o.prompt);
@@ -3098,7 +3143,10 @@ export class VoiceEngine {
     // Also after the tools were dropped: the snapshot's toolsOff (the call card's "Tools: not available on this model").
     if (droppedVoice || droppingTools) await this.db.update(voiceSessions).set({ settings: this.settingsSnapshot() }).where(eq(voiceSessions.id, this.sessionId));
     // The opening line was never heard: the retried session says it.
-    if (fresh) {
+    if (fresh && this.greetingHeld()) {
+      // A held greeting: the retried session waits for the page's release like the first one (sendOpener uses it).
+      this.trace("model reconnected while the greeting is held: the opener still waits for the page");
+    } else if (fresh) {
       // The retried session says the opening now; a first one still waiting for the browser is not sent as well.
       this.pendingOpener = null;
       this.clearTimer("ready");
@@ -3226,6 +3274,15 @@ export class VoiceEngine {
     const rec = this.recorder;
     if (!rec) return;
     try {
+      if (this.notStarted) {
+        // A held greeting never released: nothing was said (the recording line neither), so nothing is kept and the
+        // next call of this conversation still says the line.
+        await this.withTimeout(rec.finish(0), RECORDING_FINISH_TIMEOUT_MS);
+        await this.db.update(voiceSessions).set({ recordingState: "off", recordingNoticeSaid: false, recordingChunks: 0, recordingBytes: 0, recordingSec: 0 })
+          .where(eq(voiceSessions.id, this.sessionId));
+        this.log.info(voiceLine(this.sessionId, "recording dropped: the call never started"));
+        return;
+      }
       const p = await this.withTimeout(rec.finish(this.endedAtMs ?? this.offsetMs()), RECORDING_FINISH_TIMEOUT_MS);
       await this.db.update(voiceSessions).set({ recordingState: p.chunks > 0 ? "saved" : "failed", recordingChunks: p.chunks, recordingBytes: p.bytes, recordingSec: p.sec })
         .where(eq(voiceSessions.id, this.sessionId));

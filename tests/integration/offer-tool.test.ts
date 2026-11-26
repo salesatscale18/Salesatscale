@@ -156,7 +156,8 @@ describe("check_offer and create_quote with offers", () => {
     expect(await tb.call("create_quote", quoteArgs({ discount_percent: 8, offer: off.offer_id }))).toMatchObject({ outcome: "refused", rule: "Unknown offer" });
     // Up to what was offered, a discount comes only through the offer id; above it, the seller approves.
     const t2 = a.turn();
-    expect(await t2.call("create_quote", quoteArgs({ discount_percent: 8 }))).toMatchObject({ outcome: "refused", rule: "Discount not from an offer" });
+    // (8% here would now bind to the standing Decide now offer of 8%: offers-flow-fix.test.ts.)
+    expect(await t2.call("create_quote", quoteArgs({ discount_percent: 5 }))).toMatchObject({ outcome: "refused", rule: "Discount not from an offer" });
     const held = await t2.call("create_quote", quoteArgs({ discount_percent: 12 }));
     expect(held.result).toMatchObject({ status: "awaiting_seller_approval" });
     expect(held.result.approval_reasons).toEqual(["Discount 12.0% is above the 8.0% limit."]);
