@@ -170,9 +170,16 @@ describe("Classic + guards", () => {
           delete r.result.quote_id;
           delete r.result.quote_message_id;
         }
+        // 5. A test call (call wiring v2, CALL_WIRING_V2_FOR_BUYER_CALLS off): every other result carries the step
+        // (asserted below; tests/integration/voice-call-wiring.test.ts covers it).
+        const own = g[0].toolResults.find((x) => x.callId === r.callId)!.result;
+        if (r.name !== "update_deal_state") r.result = { ...r.result, stage: own.stage };
       }
     }
     expect(normalize(g)).toEqual(normalize(expected));
+    expect(g[0].toolResults.map((r) => String(r.result.stage).split("\n")[0])).toEqual([
+      "## Stage now: 4 Quote and close", "unchanged: 4 Quote and close", "## Stage now: 5 Order form", "## Stage now: 6 After",
+    ]);
 
     // What was compared: the opener request, four tool results (update_deal_state with its full stage block, T1),
     // no notes, no typed lines. The guards stayed silent (the buyer asked for the form; nothing lowered or removed).
@@ -282,9 +289,12 @@ describe("Classic + guards", () => {
           expect(String(q.message).startsWith(HELD_QUOTE_MESSAGE)).toBe(true);
           if (he) expect(String(q.message)).toContain("Hebrew");
           for (const k of ["totals", "lines_for_call", "headline", "price_basis", "delivery", "delivery_by", "approval_reasons", "valid_until"]) expect(q[k]).toBeUndefined();
-          // No figure of the quote anywhere: only its reference, version and ids carry digits.
-          const rest = JSON.stringify({ ...q, quote: undefined, quote_version: undefined, quote_id: undefined, quote_message_id: undefined });
+          // No figure of the quote anywhere: only its reference, version and ids carry digits (and, on a test call on a
+          // profile, the step's number: "4 Quote and close", trimmed to its title and "Moves on when" next to say_this).
+          const rest = JSON.stringify({ ...q, quote: undefined, quote_version: undefined, quote_id: undefined, quote_message_id: undefined, stage: undefined });
           expect(rest).not.toMatch(/\d/);
+          if (profile) expect(String(q.stage)).toMatch(/^## Stage now: 4 Quote and close\nMoves on when: the team decides\.[^\n]*$/);
+          else expect(q.stage).toBeUndefined();
           expect(c.logs.some((l) => l.endsWith("tool create_quote held for approval: totals withheld from the model"))).toBe(true);
           expect(c.logs.some((l) => / tool result sent name=create_quote .* held=yes$/.test(l))).toBe(true);
           // The buyer says yes to the form: refused while the quote waits for the team.

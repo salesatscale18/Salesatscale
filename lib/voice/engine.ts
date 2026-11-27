@@ -21,7 +21,8 @@ import {
 import { readDealState } from "@/lib/agent/service";
 import { formatMoney } from "@/lib/domain/money";
 import { isLocale } from "@/lib/i18n";
-import { writtenByAgent } from "@/lib/agent/core/stage";
+import { deriveStage, STAGE_TITLE, writtenByAgent } from "@/lib/agent/core/stage";
+import { loadStageFacts } from "@/lib/agent/core/stage-facts";
 import { latestBookingOffer } from "@/lib/team-calls/service";
 import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
 import { resultForModel, runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
@@ -37,7 +38,7 @@ import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, t
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
 import {
-  afterQuestionGuardFor, callTurnExtras, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
+  afterQuestionGuardFor, callTurnExtras, callWiringV2For, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
   openerProtectionFor, resolveVoiceSettings, turnTakingFor, versionModelId, voiceFamilyOf,
 } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
@@ -64,6 +65,7 @@ import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { medianOf, type RtElevenUsage } from "@/lib/voice-rt-eleven/summary";
 import { cutLine } from "@/lib/voice/cut-line";
 import { withoutInternalIds } from "./result-ids";
+import { callStageResult, STAGE_SKIP_TOOLS } from "./call-stage";
 import { callHasLines } from "@/lib/voice/call-lines";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
@@ -736,6 +738,11 @@ export class VoiceEngine {
   private lastBuyerLine: { messageId: string; turnId: string; text: string; startMs: number; at: number } | null = null;
   /** The stage the voice model last saw (stageKey of its instructions or of the last full update_deal_state result). */
   private stageDelivered: string | null = null;
+  /**
+   * Call wiring v2: the stage (callStageKey) of the last stage block THIS model connection got in a tool result
+   * (null: none yet). Reset on every connection (start, reconnect, wake): a new session has none of the old results.
+   */
+  private stageSentConn: string | null = null;
   /** The browser said it can play the agent (`{t:"ready"}`). */
   private clientReady = false;
   /** When the first agent audio of the call went to the browser (the `heard` log line's delta). */
@@ -1125,6 +1132,7 @@ export class VoiceEngine {
   /** A model connection is up from now (start, reconnect, wake): its time is paid and its usage counters start at 0. */
   private modelUp(conn: RealtimeConnection) {
     this.conn = conn;
+    this.stageSentConn = null;
     this.connAt = this.clock.now();
     this.connAudio = false;
     this.traceResp = null;
@@ -2997,6 +3005,14 @@ export class VoiceEngine {
         message: sayIn ? `${HELD_FORM_MESSAGE} ${sayIn}` : HELD_FORM_MESSAGE,
       };
     }
+    // Call wiring v2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS): the current step on every result (lib/voice/call-stage.ts).
+    const staged = this.profile && this.wiringV2() && (r.outcome === "ok" || r.outcome === "refused") && !STAGE_SKIP_TOOLS.has(name)
+      ? await this.callStage(name, forModel).catch((e) => {
+        this.log.warn(voiceLine(this.sessionId, `tool ${clip(name, 40)} stage not attached: ${errorSummary(e)}`));
+        return null;
+      })
+      : null;
+    if (staged) forModel = staged.forModel;
     // Every call on a profile (guarded): no internal id (create_quote's quote_id / quote_message_id, any uuid) reaches
     // the model; the stored rows and the browser's messages are made from the tool's own result above.
     if (this.profile) forModel = withoutInternalIds(forModel);
@@ -3014,11 +3030,35 @@ export class VoiceEngine {
         if (this.traceResp && !this.traceResp.closedBy) this.traceResp.closedBy = "tool-result";
       }
       this.conn?.sendToolResult(callId, name, forModel);
+      if (staged && this.conn) this.stageSentConn = staged.key;
     }
     this.traceCallAt.delete(callId);
     turn.awaitingContinuation = true;
     this.afterQResult(!plainSave(r.outcome, forModel, r.result));
     this.send({ t: "tool", id: callId, name, label, status: r.outcome });
+  }
+
+  /** Call wiring v2 on this call (test calls; buyer calls when CALL_WIRING_V2_FOR_BUYER_CALLS is on). */
+  private wiringV2(): boolean {
+    return !!this.loaded && callWiringV2For(this.loaded.session.isTest);
+  }
+
+  /**
+   * Call wiring v2: the result with the current step attached (lib/voice/call-stage.ts), and the stage key it delivers.
+   * update_deal_state already carries its own block (the tool derived it); any other tool: the stage derived here
+   * exactly as update_deal_state derives it (loadStageFacts + deriveStage on the deal state now), in call wording.
+   */
+  private async callStage(name: string, forModel: Record<string, unknown>): Promise<{ forModel: Record<string, unknown>; key: string } | null> {
+    const profile = this.profile!;
+    const { account, conv, version } = this.loaded!;
+    if (name === "update_deal_state" && typeof forModel.stage === "string") {
+      return callStageResult({ forModel, block: forModel.stage, title: null, own: true, last: this.stageSentConn });
+    }
+    const [facts, deal] = await Promise.all([loadStageFacts(this.db, account.id, conv.leadId), readDealState(this.db, account.id, conv.leadId)]);
+    const st = deriveStage({
+      ...facts, playbook: version.playbook, fields: deal?.fields ?? null, objections: deal?.objections ?? null, agentMessages: this.effectiveAgentMessages(),
+    });
+    return callStageResult({ forModel, block: profile.stageText(st.instruction), title: STAGE_TITLE[st.stage], own: false, last: this.stageSentConn });
   }
 
   /** Current: a tool's result as the model gets it on a call, and what the tool's outcome does to the call. */

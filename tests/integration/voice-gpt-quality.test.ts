@@ -140,7 +140,8 @@ describe("quote quantities guard (test calls)", () => {
     await c.buyerSays("We run two restaurants and need temperature monitoring.");
     await c.tool("u1", "update_deal_state", facts("2"));
     const r = await c.tool("q1", "create_quote", quoteArgs(1));
-    expect(r).toEqual({ ok: false, rule: "Quantity not given", message: quantityNotGiven("fridge sensor", "en").message });
+    // Test calls (call wiring v2): the step it is at, unchanged since update_deal_state's own block.
+    expect(r).toEqual({ ok: false, rule: "Quantity not given", message: quantityNotGiven("fridge sensor", "en").message, stage: "unchanged: 2 Understand" });
     expect(await quoteCount(c.leadId)).toBe(0);
     expect(chips(c.sent, "q1")).toEqual(["running", "refused"]);
     expect(qtyLines(c.logs)).toEqual(["quote quantities: refused item=SENSOR qty=1"]);

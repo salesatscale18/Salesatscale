@@ -12,7 +12,7 @@ import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, saveDraftPlaybook } from "@/lib/agent/service";
 import type { PlaybookWithOffers, StoredOffer } from "@/lib/agent/offer-settings";
 import { VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
-import { GUARDED_PROFILE } from "@/lib/voice-guarded/profile";
+import { GUARDED_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
 import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
 import type { VoiceLog } from "@/lib/voice/log";
@@ -174,6 +174,100 @@ describe("A1: no internal id reaches the model (every call on the guarded engine
     await c.buyer("Yes, please send me the order form.");
     const f = await c.tool("f1", "send_order_form", { quote: row.id });
     expect(f, JSON.stringify(f)).toMatchObject({ ok: true, link: "shown in the chat" });
+    await c.end();
+  });
+});
+
+describe("A2: the current step on every tool result (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS off)", () => {
+  const firstLine = (r: Record<string, unknown>) => String(r.stage ?? "").split("\n")[0];
+
+  it("after search_catalog, check_fit, create_quote and check_offer: the full block when the stage changed, else one short line", async () => {
+    const before = (await ensureDraftVersion(db, acc)).playbook;
+    await saveDraftPlaybook(db, acc, { ...before, maxDiscountBp: 500, offers: [{ type: "general", on: true, percentBp: 500 }] } as PlaybookWithOffers);
+    try {
+      const c = await fakeCall();
+      // The first result of the connection gets the full block (none delivered yet).
+      const s1 = await c.tool("s1", "search_catalog", { query: "sensor" });
+      expect(s1.ok).toBe(true);
+      expect(firstLine(s1)).toMatch(/^## Stage now: \d /);
+      expect(String(s1.stage)).toContain("\nDo: ");
+      // Nothing changed: one short line.
+      const s2 = await c.tool("s2", "search_catalog", { query: "seat" });
+      expect(s2.stage).toBe(`unchanged: ${firstLine(s1).replace("## Stage now: ", "")}`);
+      // update_deal_state keeps its own block (once, never a second one), and counts as delivered.
+      const u = await c.tool("u1", "update_deal_state", { ...basics(), price_asked: true });
+      expect(firstLine(u)).toBe("## Stage now: 4 Quote and close");
+      expect(String(u.stage).match(/## Stage now/g)).toHaveLength(1);
+      await c.buyer("Six sensors, please. How much is that?");
+      const fit = await c.tool("c1", "check_fit", { lines: [{ sku: "SENSOR", qty: 6 }], sites: 1 });
+      expect(fit.ok).toBe(true);
+      expect(fit.stage).toBe("unchanged: 4 Quote and close");
+      // The quote is made: the model is told it is at 5 Order form, with its Do line; say_this and its message first.
+      const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }]));
+      expect(q).toMatchObject({ ok: true, status: "ready", message: guardedQuoteMessage(String(q.quote)) });
+      expect(String(q.stage)).toMatch(/^## Stage now: 5 Order form\n/);
+      expect(String(q.stage)).toContain("\nDo: if the buyer agrees");
+      const keys = Object.keys(q);
+      expect(keys.indexOf("message")).toBeLessThan(keys.indexOf("stage"));
+      expect(keys.indexOf("say_this")).toBeLessThan(keys.indexOf("stage"));
+      expect(keys.at(-1)).toBe("stage");
+      await c.said("That is the quote. Shall I send the order form?");
+      await c.buyer("That's a bit much, can you do anything on the price?");
+      await c.tool("o0", "update_deal_state", { ...noUpdate, objection: { play: "too_expensive", buyer_words: "a bit much", step: 4, attempt: true, status: "open" } });
+      const offer = await c.tool("o1", "check_offer", { quote: String(q.quote).split(" ")[0], reason: "next", lines: null, sites: null });
+      expect(offer.ok).toBe(true);
+      expect(offer.stage).toBe("unchanged: 5 Order form");
+      await c.end();
+      // The stored rows are the tools' own results: no stage on them.
+      for (const row of await storedRows(c.conversationId)) {
+        if (row.name !== "update_deal_state") expect((row.result as Record<string, unknown>).stage, row.name).toBeUndefined();
+      }
+    } finally {
+      await saveDraftPlaybook(db, acc, before);
+    }
+  });
+
+  it("a refused tool carries the step too (the quantities guard, the order form not agreed)", async () => {
+    const c = await fakeCall();
+    await c.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+    await c.buyer("We have two restaurants. How much would it cost?");
+    const r = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 5 }]));
+    expect(r).toMatchObject({ ok: false, rule: "Quantity not given" });
+    expect(r.stage).toBe("unchanged: 4 Quote and close");
+    const f = await c.tool("f1", "send_order_form", { quote: "Q-1" });
+    expect(f.ok).toBe(false);
+    expect(f.stage).toBe("unchanged: 4 Quote and close");
+    await c.end();
+  });
+
+  it("a reconnect starts with no block delivered: the first result after it gets the full block again", async () => {
+    const c = await fakeCall();
+    await c.said("Hi, this is Ava from Acme. How do you keep track of your fridges today?");
+    const a = await c.tool("s1", "search_catalog", { query: "sensor" });
+    expect(firstLine(a)).toMatch(/^## Stage now: /);
+    expect((await c.tool("s2", "search_catalog", { query: "sensor" })).stage).toMatch(/^unchanged: /);
+    c.model.conns.at(-1)!.emit({ type: "going-away" });
+    await c.run(3_000);
+    expect(c.model.conns).toHaveLength(2);
+    const b = await c.tool("s3", "search_catalog", { query: "sensor" });
+    expect(b.stage).toBe(a.stage);
+    expect((await c.tool("s4", "search_catalog", { query: "sensor" })).stage).toMatch(/^unchanged: /);
+    await c.end();
+  });
+
+  it("a buyer call: no step on any result but update_deal_state's own block (as before)", async () => {
+    const c = await fakeCall({ buyer: true });
+    const s = await c.tool("s1", "search_catalog", { query: "sensor" });
+    expect(s.ok).toBe(true);
+    expect(s.stage).toBeUndefined();
+    const u = await c.tool("u1", "update_deal_state", { ...basics(), price_asked: true });
+    expect(firstLine(u)).toBe("## Stage now: 4 Quote and close");
+    await c.buyer("Six sensors, please.");
+    const fit = await c.tool("c1", "check_fit", { lines: [{ sku: "SENSOR", qty: 6 }], sites: 1 });
+    const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }]));
+    expect(q.ok).toBe(true);
+    for (const r of [fit, q]) expect(r.stage).toBeUndefined();
+    expect(c.logs.some((l) => /stage not attached/.test(l))).toBe(false);
     await c.end();
   });
 });
