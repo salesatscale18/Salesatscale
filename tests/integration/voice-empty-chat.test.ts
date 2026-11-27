@@ -1,13 +1,13 @@
 /**
  * Voice on a buyer chat that has not started (no conversation yet: the lead has a link, nobody wrote): the button
- * shows, and pressing it starts the chat as opening its link does (lib/chat/start ensureChatStarted: the agent's
- * opener as the first message), then the call, which continues that chat (it re-asks the opener's question, no
- * second introduction). Simulated buyers (channel "simulator") and real leads (web chat, channel "chat").
+ * shows, and pressing it starts the chat with the gates of opening its link but with NO first message (owner, 26 Nov
+ * 2026): the call speaks the opener as the conversation's first message; a start refused after the chat was started
+ * leaves it with the written opener, as opening the link would. Simulated buyers (channel "simulator") and real leads (web chat, channel "chat").
  * PGlite and the free scripted model.
  */
 import { EventEmitter } from "node:events";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { conversations, leads, messages, sellerAccounts, users, voiceSessions, type SellerAccount, type User } from "@/db/schema";
 import type { ContactHours } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -103,7 +103,7 @@ describe("voice on a chat that has not started", () => {
     expect(poll.voice).toEqual({ available: true });
   });
 
-  it("the start makes one conversation with the agent's opener (as opening the link does) and one session", async () => {
+  it("the start makes one EMPTY conversation (no agent message before the call) and one session; the lead waits for a reply as after a chat start", async () => {
     const b = await notStarted("Empty Two");
     const r = await start(b);
     if (!r.ok) throw new Error(r.reason);
@@ -112,9 +112,8 @@ describe("voice on a chat that has not started", () => {
     expect(convs[0]).toMatchObject({ id: r.conversationId, status: "open", channel: "simulator", language: "en" });
     expect(await db.select().from(voiceSessions).where(eq(voiceSessions.conversationId, r.conversationId))).toHaveLength(1);
     expect(r.firstInConversation).toBe(true);
-    const opener = await db.select().from(messages).where(and(eq(messages.conversationId, r.conversationId), eq(messages.actor, "agent")));
-    expect(opener).toHaveLength(1);
-    expect(opener[0].body).toMatch(/automated assistant of Acme/);
+    expect(await db.select().from(messages).where(eq(messages.conversationId, r.conversationId))).toHaveLength(0);
+    expect((await db.select().from(leads).where(eq(leads.id, b.leadId)))[0].status).toBe("waiting_for_reply");
     // A message typed afterwards lands in the same conversation (the chat continues).
     // (the call is still pending here: the chat refuses a send then, so the session is ended first)
     await db.update(voiceSessions).set({ status: "ended" }).where(eq(voiceSessions.conversationId, r.conversationId));
@@ -140,7 +139,11 @@ describe("voice on a chat that has not started", () => {
     const convs = await convsOf(b.leadId);
     expect(convs).toHaveLength(1);
     expect(await db.select().from(voiceSessions).where(eq(voiceSessions.conversationId, convs[0].id))).toHaveLength(0);
-    expect(await db.select().from(messages).where(eq(messages.conversationId, convs[0].id))).toHaveLength(1);
+    // The written opener, posted because no call started (nothing was said).
+    const left = await db.select().from(messages).where(eq(messages.conversationId, convs[0].id));
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatchObject({ actor: "agent", voiceSessionId: null });
+    expect(left[0].body).toMatch(/automated assistant of Acme/);
   });
 
   it("refusals on a not-started chat say why (to a tester): opted out hides it; spend cap, buyer calls off and the start's own refusals are typed", async () => {
@@ -172,10 +175,11 @@ describe("voice on a chat that has not started", () => {
     }
   });
 
-  it("the call continues the started chat: it re-asks the opener's question, no second introduction", async () => {
+  it("the call on the started (empty) chat speaks the opener from its first word: it is the conversation's first message", async () => {
     const b = await notStarted("Empty Seven");
     const r = await start(b);
     if (!r.ok) throw new Error(r.reason);
+    expect(await db.select().from(messages).where(eq(messages.conversationId, r.conversationId))).toHaveLength(0);
     class Fake extends EventEmitter {
       out: (string | Uint8Array)[] = [];
       bufferedAmount = 0;
@@ -196,11 +200,12 @@ describe("voice on a chat that has not started", () => {
     await done;
     const said = ws.out.filter((x): x is string => typeof x === "string").map((x) => JSON.parse(x) as { t: string; role?: string; text?: string; final?: boolean })
       .filter((m) => m.t === "transcript" && m.role === "agent" && m.final);
-    // The call is recorded (on by default): the notice comes first, before the pick-up line.
-    expect(said[0]?.text).toBe("Some calls may be recorded for quality review. So, what made you get in touch today?");
-    expect(said.some((m) => /automated assistant/.test(m.text ?? ""))).toBe(false);
-    // The chat has the opener once (written by the start), then the call's lines.
-    const stored = await db.select().from(messages).where(and(eq(messages.conversationId, r.conversationId), eq(messages.actor, "agent")));
+    // The opener, spoken: the introduction, then the recording line (recorded by default), then the opener's question.
+    expect(said[0]?.text).toMatch(/automated assistant of Acme\. Some calls may be recorded for quality review\. /);
+    expect(said.filter((m) => /automated assistant/.test(m.text ?? ""))).toHaveLength(1);
+    // The chat's first message is the spoken opener (no written one before or after it).
+    const stored = await db.select().from(messages).where(eq(messages.conversationId, r.conversationId)).orderBy(asc(messages.createdAt));
+    expect(stored[0]).toMatchObject({ actor: "agent", voiceSessionId: r.sessionId });
     expect(stored.filter((m) => /automated assistant of Acme/.test(m.body))).toHaveLength(1);
   });
 });
