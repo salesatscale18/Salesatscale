@@ -200,10 +200,11 @@ describe("the New engine keeps Current's buyer fixes (26 Nov 2026)", () => {
         expect(u.ok, JSON.stringify(u)).toBe(true);
         const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 1 }]));
         expect(q, JSON.stringify(q)).toMatchObject({ ok: true, status: "ready" });
-        // The quote's internal id (New's create_quote result carries it as quote_id, as Classic's did).
+        // The quote's internal id (since 27 Nov 2026 no result on a call carries it: a model could still send one it
+        // saw earlier, e.g. Classic's result or a recap).
         const [quoteRow] = await db.select({ id: quotes.id }).from(quotes).where(and(eq(quotes.accountId, acc), eq(quotes.leadId, c.leadId)));
         const internalId = quoteRow.id;
-        if (profile) expect(q.quote_id).toBe(internalId);
+        expect(q.quote_id).toBeUndefined();
         await c.spoken("Yes please, send me the order form.");
         const f = await c.tool("f1", "send_order_form", { quote: internalId });
         expect(f, JSON.stringify(f)).toMatchObject({ ok: true, link: "shown in the chat" });

@@ -63,6 +63,7 @@ import { RT_SPEECH_STREAM_LINE } from "@/lib/voice-rt-eleven/speech-line";
 import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { medianOf, type RtElevenUsage } from "@/lib/voice-rt-eleven/summary";
 import { cutLine } from "@/lib/voice/cut-line";
+import { withoutInternalIds } from "./result-ids";
 import { callHasLines } from "@/lib/voice/call-lines";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
@@ -2996,6 +2997,9 @@ export class VoiceEngine {
         message: sayIn ? `${HELD_FORM_MESSAGE} ${sayIn}` : HELD_FORM_MESSAGE,
       };
     }
+    // Every call on a profile (guarded): no internal id (create_quote's quote_id / quote_message_id, any uuid) reaches
+    // the model; the stored rows and the browser's messages are made from the tool's own result above.
+    if (this.profile) forModel = withoutInternalIds(forModel);
     // The run-once guard answers a duplicate of this call with this result.
     const recent = this.recentCalls.find((c) => c.id === callId);
     if (recent) recent.result = forModel;

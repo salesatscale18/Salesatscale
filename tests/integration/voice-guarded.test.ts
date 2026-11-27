@@ -165,6 +165,11 @@ describe("Classic + guards", () => {
       for (const r of conn.toolResults) {
         // 3. create_quote, a ready quote: the spoken summary (say_this) and the message asking to say it (K5/K6).
         if (r.name === "create_quote") r.result = { ...r.result, say_this: gq.say_this, message: guardedQuoteMessage(String(r.result.quote)) };
+        // 4. Every result (since 27 Nov 2026, every call): no internal id (create_quote's quote_id, quote_message_id).
+        if (r.name === "create_quote") {
+          delete r.result.quote_id;
+          delete r.result.quote_message_id;
+        }
       }
     }
     expect(normalize(g)).toEqual(normalize(expected));
