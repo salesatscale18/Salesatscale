@@ -548,3 +548,57 @@ describe("A4: the quote flow on a call (test calls)", () => {
     }
   });
 });
+
+describe("offer next-action line (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS off): standing_offer and matching_offer", () => {
+  const TERMS = "5% off the one-time charges. Recurring charges are not discounted.";
+  const DISCOUNT_REFUSAL = "A discount comes only from check_offer. Call it with the buyer's quote and reason, offer what it returns, and pass its offer id when the buyer accepts.";
+  for (const buyer of [false, true]) {
+    it(`${buyer ? "a buyer call: the data fields only, no next line, the tool's own messages" : "a test call: one next line from standing_offer and from matching_offer"}`, async () => {
+      const before = (await ensureDraftVersion(db, acc)).playbook;
+      await saveDraftPlaybook(db, acc, { ...before, maxDiscountBp: 500, offers: [{ type: "general", on: true, percentBp: 500 }] } as PlaybookWithOffers);
+      try {
+        const c = await fakeCall({ buyer });
+        await c.tool("u1", "update_deal_state", basics());
+        await c.buyer("How much for six sensors?");
+        const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }]));
+        expect(q, JSON.stringify(q)).toMatchObject({ ok: true, status: "ready" });
+        const quote = String(q.quote).split(" ")[0];
+        await c.said("That is the quote.");
+        await c.buyer("That's a bit much, can you do anything on the price?");
+        await c.tool("o0", "update_deal_state", { ...noUpdate, objection: { play: "too_expensive", buyer_words: "a bit much", step: 4, attempt: true, status: "open" } });
+        const first = await c.tool("o1", "check_offer", { quote, reason: "next", lines: null, sites: null });
+        const offerId = (first.offer as { offer_id: string }).offer_id;
+        expect(offerId).toMatch(/^OF-[0-9a-f]+$/);
+        expect(first.next).toBeUndefined();
+        await c.said("I can take five percent off.");
+        await c.buyer("Anything more than that?");
+        // Nothing more: the earlier offer still stands.
+        const none = await c.tool("o2", "check_offer", { quote, reason: "next", lines: null, sites: null });
+        expect(none, JSON.stringify(none)).toMatchObject({ ok: true, offer: null, standing_offer: { id: offerId, terms: TERMS, quote: `${quote} v1` } });
+        await c.said("That is the best I can do.");
+        await c.buyer("Then make it seven sensors with the five percent.");
+        // 5% on other lines without the offer id: refused, the matching offer as data.
+        const re = await c.tool("q2", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 7 }], { discount_percent: 5 }));
+        expect(re, JSON.stringify(re)).toMatchObject({
+          ok: false, rule: "Discount not from an offer", missing: ["offer"],
+          matching_offer: { id: offerId, terms: TERMS, quote: `${quote} v1`, lines: [{ sku: "SENSOR", qty: 6 }] },
+        });
+        // Not the K4 "not saved yet" message: an offer id is not a fact to save.
+        expect(String(re.message)).toBe(DISCOUNT_REFUSAL);
+        if (buyer) {
+          expect(none.next).toBeUndefined();
+          expect(re.next).toBeUndefined();
+        } else {
+          expect(none.next).toBe(`An earlier offer still stands on ${quote} v1. If the buyer accepts it, call create_quote with offer ${offerId}; do not make a new offer. Its terms: ${TERMS}`);
+          expect(re.next).toBe(`Call create_quote again with offer ${offerId} and that offer's lines; do not change the lines. Its terms: ${TERMS}`);
+        }
+        for (const r of [none, re]) expect(JSON.stringify(r)).not.toMatch(UUID);
+        await c.end();
+        // The stored rows are the tools' own results: no next line on them.
+        for (const row of await storedRows(c.conversationId)) expect((row.result as Record<string, unknown>).next, row.name).toBeUndefined();
+      } finally {
+        await saveDraftPlaybook(db, acc, before);
+      }
+    });
+  }
+});

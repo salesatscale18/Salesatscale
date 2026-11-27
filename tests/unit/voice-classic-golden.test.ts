@@ -206,9 +206,15 @@ describe("Classic (20 Nov) engine: golden against af85493", () => {
     expect(VOICE_TOOL_NAMES.has("order_form_status")).toBe(false);
     // Changed since 20 Nov (Reach part B and N1): request_callback { brief, time } and its booking link;
     // schedule_follow_up texts a link; offers (25 Nov): create_quote's offer id and discount wording. Classic offers
-    // today's definitions of these, through the 20 Nov wording table.
+    // today's definitions of these, through the 20 Nov wording table. Agent memory (27 Nov, approved text E):
+    // send_order_form's quote argument description (the "Q-1001" example dropped; nothing else in it changed).
     const changed = before.filter((b) => JSON.stringify(b) !== JSON.stringify(now.find((t) => t.name === b.name))).map((b) => b.name);
-    expect(changed.sort()).toEqual(["create_quote", "request_callback", "schedule_follow_up"]);
+    expect(changed.sort()).toEqual(["create_quote", "request_callback", "schedule_follow_up", "send_order_form"]);
+    const sof = (list: { name: string; parameters: unknown }[]) => list.find((t) => t.name === "send_order_form")!.parameters as { properties: { quote: { description: string } } };
+    const sofNow = sof(now), sofBefore = sof(before);
+    expect({ ...sofNow, properties: { ...sofNow.properties, quote: { ...sofNow.properties.quote, description: "" } } })
+      .toEqual({ ...sofBefore, properties: { ...sofBefore.properties, quote: { ...sofBefore.properties.quote, description: "" } } });
+    expect(sofNow.properties.quote.description).toBe("The quote number exactly as create_quote returned it or your context lists it (Q- and its number).");
     const rc = now.find((t) => t.name === "request_callback")!.parameters as { required: string[] };
     expect(rc.required).toEqual(["brief", "time"]);
   });

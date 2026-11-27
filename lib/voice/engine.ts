@@ -65,6 +65,7 @@ import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { medianOf, type RtElevenUsage } from "@/lib/voice-rt-eleven/summary";
 import { cutLine } from "@/lib/voice/cut-line";
 import { withoutInternalIds } from "./result-ids";
+import { offerNextLine } from "@/lib/voice-guarded/offer-next";
 import { callStageResult, STAGE_SKIP_TOOLS, type QuoteNeeds } from "./call-stage";
 import { callHasLines } from "@/lib/voice/call-lines";
 
@@ -466,6 +467,15 @@ export const smallerQuoteNotAsked = (what: string) => ({
 /** What update_deal_state's result says when a lowered number was kept as the buyer said (holdLoweredNumbers). */
 export const keptMessage = (kept: readonly { label: string; value: string }[]) =>
   `Not changed: ${kept.map((k) => `${k.label} stays ${k.value}`).join("; ")}, as the buyer said. Change it only when the buyer says the new number; an offer of a smaller start becomes the quote only after they accept it in so many words.`;
+
+/**
+ * The missing facts of a refused create_quote (the K4 refusal message), or none. "Discount not from an offer" carries
+ * `missing: ["offer"]` since agent memory (27 Nov 2026): an offer id, not a fact to save, so its own message stays.
+ */
+export function missingFactsOf(result: Record<string, unknown>): string[] {
+  if (result.rule === "Discount not from an offer" || !Array.isArray(result.missing)) return [];
+  return result.missing.map(String);
+}
 
 /** A create_quote refused for missing facts: no total may be said (23 Nov 2026: one was, on an assumption). */
 export const refusedQuoteMessage = (missing: readonly string[]) =>
@@ -3100,6 +3110,12 @@ export class VoiceEngine {
       })
       : null;
     if (staged) forModel = staged.forModel;
+    // Call wiring v2 (test calls): one next-action line from the offer data fields (standing_offer on a check_offer
+    // with nothing more, matching_offer on a create_quote "Discount not from an offer"), built from the tool's own result.
+    if (this.profile && this.wiringV2()) {
+      const next = offerNextLine(name, r.result);
+      if (next) forModel = { ...forModel, next };
+    }
     // Every call on a profile (guarded): no internal id (create_quote's quote_id / quote_message_id, any uuid) reaches
     // the model; the stored rows and the browser's messages are made from the tool's own result above.
     if (this.profile) forModel = withoutInternalIds(forModel);
@@ -3194,9 +3210,9 @@ export class VoiceEngine {
   /** Current: a tool's result as the model gets it on a call, and what the tool's outcome does to the call. */
   private async currentToolResult(turn: AgentTurn, name: string, r: ToolResult): Promise<Record<string, unknown>> {
     let forModel: Record<string, unknown> = r.result;
-    if (name === "create_quote" && r.outcome !== "ok" && Array.isArray(r.result.missing) && r.result.missing.length) {
+    if (name === "create_quote" && r.outcome !== "ok" && missingFactsOf(r.result).length) {
       // No quote: no total may be said (23 Nov 2026: a total was spoken after this refusal, on an assumption).
-      forModel = { ...r.result, message: refusedQuoteMessage(r.result.missing.map(String)) };
+      forModel = { ...r.result, message: refusedQuoteMessage(missingFactsOf(r.result)) };
     }
     if (name === "send_order_form" && r.outcome !== "ok") {
       // Never a success line for a form that was not sent (the 22 Nov 2026 call said "the link is in the chat").
@@ -3289,8 +3305,8 @@ export class VoiceEngine {
     const profile = this.profile!;
     let forModel: Record<string, unknown> = r.result;
     // K4: no quote, no total.
-    if (name === "create_quote" && r.outcome !== "ok" && Array.isArray(r.result.missing) && r.result.missing.length) {
-      forModel = { ...r.result, message: refusedQuoteMessage(r.result.missing.map(String)) };
+    if (name === "create_quote" && r.outcome !== "ok" && missingFactsOf(r.result).length) {
+      forModel = { ...r.result, message: refusedQuoteMessage(missingFactsOf(r.result)) };
     }
     // K1: the order form held by the guard, in Current's words.
     if (formHeld) forModel = { ...r.result, message: formNotSentMessage(r.result) };

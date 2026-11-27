@@ -54,7 +54,7 @@
     }
   ],
   "sdk": {
-    "gemini": "4d23d896ec0da3c8d3efa076510b619ae80c9d241b49b3faf2c39d09337a1c35",
-    "openai": "ab1c132a9a5d7f61ac3541dd33edecfae3eed59dfbd170bdb7d5e4fe5453a0b4"
+    "gemini": "d7b5fe26688491c0c5bb7b9f3d8e097125430c5900ce6f829a0aaeae4623358b",
+    "openai": "c6c4446ff15ac228100d95579a3cbd7b36dc2680cbc8a1c582998b6f44023a8c"
   }
 }
