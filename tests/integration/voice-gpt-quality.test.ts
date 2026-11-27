@@ -23,6 +23,7 @@ import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/serv
 import type { VoiceLog } from "@/lib/voice/log";
 import { quantityNotGiven } from "@/lib/voice/quote-quantities";
 import { GPT_TOOL_RULES } from "@/lib/voice-guarded/instructions";
+import { quoteFlowInstructions } from "@/lib/voice-guarded/quote-flow";
 import { rtElevenProfile } from "@/lib/voice-rt-eleven/profile";
 import { ScriptedSpeaker } from "@/lib/voice-pipeline/speaker";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -140,7 +141,11 @@ describe("quote quantities guard (test calls)", () => {
     await c.buyerSays("We run two restaurants and need temperature monitoring.");
     await c.tool("u1", "update_deal_state", facts("2"));
     const r = await c.tool("q1", "create_quote", quoteArgs(1));
-    expect(r).toEqual({ ok: false, rule: "Quantity not given", message: quantityNotGiven("fridge sensor", "en").message });
+    // Test calls (call wiring v2): the refusal's v2 wording, and the step again in full: what is not given yet changed.
+    expect(r).toMatchObject({ ok: false, rule: "Quantity not given", message: quantityNotGiven("fridge sensor", "en", { v2: true }).message });
+    expect(Object.keys(r)).toEqual(["ok", "rule", "message", "stage"]);
+    expect(String(r.stage)).toMatch(/^## Stage now: 2 Understand\n/);
+    expect(String(r.stage)).toContain("\nBefore create_quote: every quantity must be a number the buyer said or agreed to. Not given yet: how many fridge sensor. Ask that before you quote.");
     expect(await quoteCount(c.leadId)).toBe(0);
     expect(chips(c.sent, "q1")).toEqual(["running", "refused"]);
     expect(qtyLines(c.logs)).toEqual(["quote quantities: refused item=SENSOR qty=1"]);
@@ -157,9 +162,14 @@ describe("quote quantities guard (test calls)", () => {
     const chat = await call({ chat: ["Hi, we have 4 fridges at our place."] });
     await chat.tool("u1", "update_deal_state", facts("1"));
     expect(await chat.tool("q1", "create_quote", quoteArgs(4))).toMatchObject({ ok: true });
-    // One site grounds 1.
-    expect(await chat.tool("q2", "create_quote", quoteArgs(1))).toMatchObject({ ok: true });
+    // A test call (call wiring v2): this catalog ties no item to sites, so one site no longer grounds 1 sensor.
+    expect(await chat.tool("q2", "create_quote", quoteArgs(1))).toMatchObject({ ok: false, rule: "Quantity not given" });
     await chat.end();
+    // A buyer call (CALL_WIRING_V2_FOR_BUYER_CALLS off): as before, one site grounds 1.
+    const buyer = await call({ chat: ["Hi, we have 4 fridges at our place."], buyerCall: true });
+    await buyer.tool("u1", "update_deal_state", facts("1"));
+    expect(await buyer.tool("q1", "create_quote", quoteArgs(1))).toMatchObject({ ok: true });
+    await buyer.end();
     const agreed = await call();
     await agreed.buyerSays("We have two sites.");
     await agreed.tool("u1", "update_deal_state", facts("2"));
@@ -189,7 +199,7 @@ describe("quote quantities guard (test calls)", () => {
     await c.buyerSays("יש לנו שני סניפים");
     await c.tool("u1", "update_deal_state", facts("2"));
     const r = await c.tool("q1", "create_quote", quoteArgs(1));
-    expect(String(r.message)).toContain(quantityNotGiven("fridge sensor", "he").message);
+    expect(String(r.message)).toContain(quantityNotGiven("fridge sensor", "he", { v2: true }).message);
     await c.buyerSays("שלושה בכל סניף");
     expect(await c.tool("q2", "create_quote", quoteArgs(6))).toMatchObject({ ok: true });
     await c.end();
@@ -238,14 +248,15 @@ describe("the session on GPT test calls", () => {
   it("GPT tool rules at the very top (2.1 and mini); parallel tool calls on 2.1 only; session-updated logged", async () => {
     const full = await call();
     const cfg = full.conn().cfg;
-    expect(cfg.instructions.startsWith(`${GPT_TOOL_RULES}\n\n`)).toBe(true);
+    // A test call (call wiring v2): the rules with the quote flow's swap (no check_fit before create_quote).
+    expect(cfg.instructions.startsWith(`${quoteFlowInstructions(GPT_TOOL_RULES)}\n\n`)).toBe(true);
     expect(cfg.parallelToolCalls).toBe(true);
     expect(cfg.logSessionAck).toBe(true);
     // GPT-Realtime connect lines end with the turn detection, eagerness and reasoning sent (defaults: server VAD, none).
     expect(full.logs.some((l) => / model connected in \d+ms .* parallelTools=on turn=server_vad eagerness=- reasoning=-$/.test(l))).toBe(true);
     await full.end();
     const mini = await call({ engine: "rt_eleven_mini" });
-    expect(mini.conn().cfg.instructions.startsWith(`${GPT_TOOL_RULES}\n\n`)).toBe(true);
+    expect(mini.conn().cfg.instructions.startsWith(`${quoteFlowInstructions(GPT_TOOL_RULES)}\n\n`)).toBe(true);
     expect(mini.conn().cfg.parallelToolCalls).toBeUndefined();
     expect(mini.conn().cfg.logSessionAck).toBe(true);
     await mini.end();

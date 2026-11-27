@@ -15,7 +15,7 @@ import { messages, quotes, rateLimits, users, voiceSessions, type User } from "@
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion } from "@/lib/agent/service";
-import { VoiceEngine, smallerQuoteNotAsked, type VoiceLimits } from "@/lib/voice/engine";
+import { VoiceEngine, smallerQuoteHold, type VoiceLimits } from "@/lib/voice/engine";
 import { ServerEventMapper } from "@/lib/voice/gateway-realtime";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
 import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
@@ -286,7 +286,8 @@ describe("S5: a smaller quote needs the buyer's ask first (Current)", () => {
     await c.buyer("Yeah, I guess so. I need a solution.");
     const held = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 1 }], { sites: 1 }));
     expect(held).toMatchObject({ ok: false, rule: "Smaller quote not asked" });
-    expect(String(held.message)).toContain(smallerQuoteNotAsked("1 site").message);
+    // A test call (call wiring v2): the hold in words that neither read aloud nor invite an offer.
+    expect(String(held.message)).toContain(smallerQuoteHold("1 site", "en").message);
     expect(String(held.message)).not.toMatch(/attempt|step|rule/i);
     expect(c.logs.some((l) => l.endsWith("tool create_quote held: a smaller quote the buyer did not ask for"))).toBe(true);
     expect(await quoteCount()).toBe(before);

@@ -53,6 +53,11 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     await seedCatalog(db, acc, [
       { sku: "SEAT-M", name: "User seat", unit: "seat", plainName: "user seat" },
       { sku: "SETUP", name: "Setup help", unit: "site", kind: "service" },
+    ], [
+      // Each site needs a user seat (catalog site data): "one location" grounds one seat on every call, so the scripted
+      // scenarios run as before on test calls too (call wiring v2: with no site data the site count grounds nothing,
+      // and the scripted agent asks for the number first: tests/integration/voice-call-wiring.test.ts).
+      { kind: "requires", sku: "SEAT-M", oneOf: ["SEAT-M"], perSite: true },
     ]);
     await seedPricing(db, acc, [{ sku: "SEAT-M", oneTime: 10_000 }, { sku: "SETUP", oneTime: 20_000 }], { userId: me.id });
     const { saveLegalSection } = await import("@/lib/orders/settings");

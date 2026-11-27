@@ -47,7 +47,8 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
     const p = parseCreateAccount({ tradeName: "Acme", market: "IL", languages: ["en", "he"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: "sb-acme@x.test" });
     if (!p.ok) throw new Error();
     acc = (await createAccount(db, { userId: me.id, actingAs: false }, p.value)).account.id;
-    await seedCatalog(db, acc, [{ sku: "SEAT-M", name: "User seat", unit: "seat", plainName: "user seat" }]);
+    // Each site needs a user seat (catalog site data): "one location" grounds one seat on test calls too (call wiring v2).
+    await seedCatalog(db, acc, [{ sku: "SEAT-M", name: "User seat", unit: "seat", plainName: "user seat" }], [{ kind: "requires", sku: "SEAT-M", oneOf: ["SEAT-M"], perSite: true }]);
     await seedPricing(db, acc, [{ sku: "SEAT-M", oneTime: 10_000 }], { userId: me.id });
     const { saveLegalSection } = await import("@/lib/orders/settings");
     await saveLegalSection(db, acc, me.id, { sectionKey: "sales_terms", title: "Sales terms", language: "en", body: "Terms" });

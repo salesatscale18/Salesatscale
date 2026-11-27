@@ -21,7 +21,8 @@ import {
 import { readDealState } from "@/lib/agent/service";
 import { formatMoney } from "@/lib/domain/money";
 import { isLocale } from "@/lib/i18n";
-import { writtenByAgent } from "@/lib/agent/core/stage";
+import { deriveStage, STAGE_TITLE, writtenByAgent } from "@/lib/agent/core/stage";
+import { loadStageFacts } from "@/lib/agent/core/stage-facts";
 import { latestBookingOffer } from "@/lib/team-calls/service";
 import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
 import { resultForModel, runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
@@ -37,7 +38,7 @@ import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, t
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
 import {
-  afterQuestionGuardFor, callTurnExtras, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
+  afterQuestionGuardFor, callTurnExtras, callWiringV2For, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
   openerProtectionFor, resolveVoiceSettings, turnTakingFor, versionModelId, voiceFamilyOf,
 } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
@@ -63,6 +64,9 @@ import { RT_SPEECH_STREAM_LINE } from "@/lib/voice-rt-eleven/speech-line";
 import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { medianOf, type RtElevenUsage } from "@/lib/voice-rt-eleven/summary";
 import { cutLine } from "@/lib/voice/cut-line";
+import { withoutInternalIds } from "./result-ids";
+import { offerNextLine } from "@/lib/voice-guarded/offer-next";
+import { callStageResult, STAGE_SKIP_TOOLS, type QuoteNeeds } from "./call-stage";
 import { callHasLines } from "@/lib/voice/call-lines";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
@@ -218,6 +222,13 @@ export type VoiceProfile = {
    * is not run again (VoiceEngine duplicateOf). Absent: every call runs.
    */
   dedupeToolCallsMs?: number;
+  /**
+   * Call wiring v2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS): the stage block a call's tool result carries, as the
+   * profile words it for a call (guarded: the quote flow's sentence swaps and lines, lib/voice-guarded/quote-flow.ts,
+   * then what a quote needs, lib/voice-guarded/stage-hints.ts). `needs` reads the call's quantities as the
+   * quote-quantities guard checks them; called only when the profile wants it. Absent: the block as it is.
+   */
+  stageForCall?(block: string, needs: () => Promise<QuoteNeeds>): Promise<string>;
 };
 
 export type { VoiceEndBy, VoiceEndDetail };
@@ -423,6 +434,30 @@ export const removalNotAsked = (removing: readonly string[]) => ({
   message: `The buyer did not ask to remove ${removing.join(", ")}. The quote stays as it is. If it helps, offer that option in one short sentence and make the new quote only when the buyer agrees.`,
 });
 
+/**
+ * Call wiring v2 (test calls): the removal guard's refusal in words the model cannot turn into an offer (a test call
+ * offered the buyer to remove the installation after the old one). `items`: the lines as the agent names them;
+ * `perSite`: every one is added once per site. English and Hebrew.
+ */
+export function removalKeepLine(items: readonly string[], perSite: boolean, language: "en" | "he") {
+  const list = items.join(", ");
+  const message = language === "he"
+    ? `לא נוצרה הצעת מחיר: השאר את השורה של ${list}. ${perSite ? "היא נדרשת לכל סניף." : "היא חלק מההזמנה הזאת."} אל תציע להוריד אותה ואל תזכיר את זה לקונה; צור שוב את אותה הצעת מחיר עם השורה הזאת.`
+    : `No quote was made: keep the ${list} line. ${perSite ? "It is required for each site." : "It is part of this order."} Do not offer to remove it and do not mention this to the buyer; make the same quote again with that line.`;
+  return { rule: "Removal not asked", message };
+}
+
+/**
+ * Call wiring v2 (test calls): the smaller-quote guard's hold in words that neither read as a line to say nor invite
+ * an offer the buyer did not ask for; the smaller start stays the answer to a budget objection. English and Hebrew.
+ */
+export function smallerQuoteHold(what: string, language: "en" | "he") {
+  const message = language === "he"
+    ? `לא נוצרה הצעת מחיר; אל תזכיר את זה לקונה. הקונה לא ביקש הצעת מחיר עבור ${what}: ההצעה הנוכחית נשארת כמו שהיא. אל תציע מיוזמתך הצעה קטנה יותר. רק אם הקונה אמר שהמחיר מעל התקציב שלו, אפשר לשאול בשאלה קצרה אחת אם להכין הצעה עבור ${what}, וליצור אותה רק אחרי ה"כן" שלו.`
+    : `No quote was made; do not mention this to the buyer. The buyer has not asked for a quote for ${what}: the current quote stays as it is. Do not offer a smaller quote on your own. Only if the buyer said the price is over their budget may you ask, in one short question, whether to prepare a quote for ${what}; make it only after their yes.`;
+  return { rule: "Smaller quote not asked", message };
+}
+
 /** The smaller-quote guard's hold (smallerQuoteAgreed): ask that one question first. */
 export const smallerQuoteNotAsked = (what: string) => ({
   rule: "Smaller quote not asked",
@@ -432,6 +467,15 @@ export const smallerQuoteNotAsked = (what: string) => ({
 /** What update_deal_state's result says when a lowered number was kept as the buyer said (holdLoweredNumbers). */
 export const keptMessage = (kept: readonly { label: string; value: string }[]) =>
   `Not changed: ${kept.map((k) => `${k.label} stays ${k.value}`).join("; ")}, as the buyer said. Change it only when the buyer says the new number; an offer of a smaller start becomes the quote only after they accept it in so many words.`;
+
+/**
+ * The missing facts of a refused create_quote (the K4 refusal message), or none. "Discount not from an offer" carries
+ * `missing: ["offer"]` since agent memory (27 Nov 2026): an offer id, not a fact to save, so its own message stays.
+ */
+export function missingFactsOf(result: Record<string, unknown>): string[] {
+  if (result.rule === "Discount not from an offer" || !Array.isArray(result.missing)) return [];
+  return result.missing.map(String);
+}
 
 /** A create_quote refused for missing facts: no total may be said (23 Nov 2026: one was, on an assumption). */
 export const refusedQuoteMessage = (missing: readonly string[]) =>
@@ -479,6 +523,37 @@ export function fitForCall(forModel: Record<string, unknown>): Record<string, un
     })
     : undefined;
   return { ...rest, ...(lines ? { lines } : {}), prices: FIT_PRICES_FOR_CALL };
+}
+
+/** create_quote refused by the catalog's fit rules on a call (call wiring v2: create_quote checks the fit, no check_fit first). */
+export const fitRefusedMessage = (problems: readonly string[]) =>
+  `No quote was made: the set does not fit${problems.length ? ` (${problems.join(" ")})` : ""}. Change the lines so it fits (add what is missing, in the quantities the buyer gave or agreed to) and call create_quote again. Do not mention this check to the buyer.`;
+
+/** search_catalog's `prices` on a call (call wiring v2). */
+export const SEARCH_PRICES_FOR_CALL = "not shown on a call: prices come only from create_quote";
+/** An item's money fields in search_catalog's result (lib/agent/tools.ts). */
+const SEARCH_ITEM_MONEY = ["one_time_price", "recurring_price", "volume_prices", "priced_by_seller_from_qty"] as const;
+/** A money figure in free text (an item's value line or details): a currency sign or code next to a number. */
+const MONEY_IN_TEXT = /(?:[₪$€£]\s?\d[\d,.]*(?:\s?(?:\/|per|a)\s?\w+)?)|(?:\d[\d,.]*\s?(?:₪|ILS|NIS|USD|EUR|GBP|shekels?|dollars?|euros?)\b)/gi;
+
+/**
+ * search_catalog's result as the model gets it on a call (call wiring v2, test calls): no money (as fitForCall does
+ * for check_fit): no item prices, volume prices, currency, price basis, and no money figure in an item's text; a
+ * `prices` field says where prices come from. The stored row keeps the tool's result.
+ */
+export function searchForCall(forModel: Record<string, unknown>): Record<string, unknown> {
+  const { currency: _c, prices_include_tax: _i, price_basis: _b, prices: _p, ...rest } = forModel;
+  void [_c, _i, _b, _p];
+  const items = Array.isArray(rest.items)
+    ? rest.items.map((it) => {
+      if (!it || typeof it !== "object") return it;
+      const out = { ...(it as Record<string, unknown>) };
+      for (const k of SEARCH_ITEM_MONEY) delete out[k];
+      for (const k of ["value", "details", "availability"]) if (typeof out[k] === "string") out[k] = (out[k] as string).replace(MONEY_IN_TEXT, "(price on the quote)");
+      return out;
+    })
+    : undefined;
+  return { ...rest, ...(items ? { items } : {}), prices: SEARCH_PRICES_FOR_CALL };
 }
 
 /** send_order_form while the conversation's latest quote waits for the team's approval. */
@@ -673,6 +748,8 @@ export class VoiceEngine {
    * `id` is null when the result named no quote id.
    */
   private heldQuote: { id: string | null } | null = null;
+  /** Call wiring v2: the latest quantity of each item the model named in check_fit, create_quote or check_offer on this call. */
+  private quoteLines = new Map<string, number>();
   /** The quote-quantities guard last refused when the call had this many lines (null: never): its no-dead-lock path. */
   private qtyRefusedAt: number | null = null;
   /** This call's agent handed the conversation to the team (hand_off_to_human): the call itself goes on. */
@@ -735,6 +812,11 @@ export class VoiceEngine {
   private lastBuyerLine: { messageId: string; turnId: string; text: string; startMs: number; at: number } | null = null;
   /** The stage the voice model last saw (stageKey of its instructions or of the last full update_deal_state result). */
   private stageDelivered: string | null = null;
+  /**
+   * Call wiring v2: the stage (callStageKey) of the last stage block THIS model connection got in a tool result
+   * (null: none yet). Reset on every connection (start, reconnect, wake): a new session has none of the old results.
+   */
+  private stageSentConn: string | null = null;
   /** The browser said it can play the agent (`{t:"ready"}`). */
   private clientReady = false;
   /** When the first agent audio of the call went to the browser (the `heard` log line's delta). */
@@ -1124,6 +1206,7 @@ export class VoiceEngine {
   /** A model connection is up from now (start, reconnect, wake): its time is paid and its usage counters start at 0. */
   private modelUp(conn: RealtimeConnection) {
     this.conn = conn;
+    this.stageSentConn = null;
     this.connAt = this.clock.now();
     this.connAudio = false;
     this.traceResp = null;
@@ -2803,9 +2886,27 @@ export class VoiceEngine {
    * grounded. Reads the conversation's buyer lines (the chat's and this call's stored ones) and the saved sites.
    */
   private async quoteQuantities(args: unknown): Promise<{ refused: { sku: string; qty: number } | null; item: string }> {
-    const { account, conv } = this.loaded!;
+    const { account } = this.loaded!;
     const raw = args && typeof args === "object" ? (args as { lines?: unknown }).lines : null;
     const lines = (Array.isArray(raw) ? raw : []).map((l) => ({ sku: String((l as { sku?: unknown })?.sku ?? ""), qty: Number((l as { qty?: unknown })?.qty) }));
+    const { buyerLines, sites, tied } = await this.quantityContext();
+    const refused = ungroundedQuoteLine({
+      lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt, perSiteSkus: tied.perSite, onceSkus: tied.once, siteFallback: !this.wiringV2(),
+    });
+    if (!refused) return { refused: null, item: "" };
+    this.qtyRefusedAt = this.lines.length;
+    const [item] = await this.db.select({ name: catalogItems.name, plainName: catalogItems.plainName }).from(catalogItems)
+      .where(and(eq(catalogItems.accountId, account.id), eq(catalogItems.sku, refused.sku))).limit(1);
+    return { refused, item: item?.plainName?.trim() || item?.name || refused.sku };
+  }
+
+  /**
+   * What the quote-quantities checks read: the conversation's buyer lines (the chat's and this call's stored ones, each
+   * with the agent line before it), the saved sites, the items the catalog ties to sites or adds once, and the
+   * published catalog's items by name as the agent says them.
+   */
+  private async quantityContext() {
+    const { account, conv } = this.loaded!;
     const [deal, stored, catalog] = await Promise.all([
       readDealState(this.db, account.id, conv.leadId),
       this.db.select({ body: messages.body, actor: messages.actor }).from(messages)
@@ -2821,12 +2922,8 @@ export class VoiceEngine {
     const buyerLines = [...withAfter(stored.map((m) => ({ role: m.actor, text: m.body ?? "" }))), ...withAfter(this.lines)];
     // The items the catalog ties to sites (one per site) or adds once: its own rules, no SKU named in code.
     const tied = siteTiedSkus(catalog?.rules ?? [], catalog?.autoAdd ?? []);
-    const refused = ungroundedQuoteLine({ lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt, perSiteSkus: tied.perSite, onceSkus: tied.once });
-    if (!refused) return { refused: null, item: "" };
-    this.qtyRefusedAt = this.lines.length;
-    const [item] = await this.db.select({ name: catalogItems.name, plainName: catalogItems.plainName }).from(catalogItems)
-      .where(and(eq(catalogItems.accountId, account.id), eq(catalogItems.sku, refused.sku))).limit(1);
-    return { refused, item: item?.plainName?.trim() || item?.name || refused.sku };
+    const names = new Map((catalog?.items ?? []).map((i) => [i.sku, i.plainName?.trim() || i.name]));
+    return { buyerLines, sites, tied, catalog, names };
   }
 
   /**
@@ -2933,6 +3030,9 @@ export class VoiceEngine {
     this.send({ t: "tool", id: callId, name, label, status: "running" });
     // Every engine (a profile too since 26 Nov 2026: Classic passed the model's arguments as they came).
     const args = await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
+    if (name === "check_fit" || name === "create_quote" || name === "check_offer") this.noteQuoteLines(args);
+    const v2 = this.wiringV2();
+    const lang = this.spokenLanguage === "he" ? "he" : "en";
     const t0 = this.clock.now();
     // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
     // A number the buyer stated (sites, quantities) is not lowered unless their last line says the new number.
@@ -2957,11 +3057,11 @@ export class VoiceEngine {
       : formGate === "no"
         ? await this.refuseRecorded(turn, callId, name, args, FORM_NOT_AGREED)
         : removeGate === "no"
-          ? await this.refuseRecorded(turn, callId, name, args, removalNotAsked(removing))
+          ? await this.refuseRecorded(turn, callId, name, args, v2 ? await this.removalKeep(removing, lang) : removalNotAsked(removing))
           : smallerGate === "no" && smaller
-            ? await this.refuseRecorded(turn, callId, name, args, smallerQuoteNotAsked(smaller.what))
+            ? await this.refuseRecorded(turn, callId, name, args, v2 ? smallerQuoteHold(smaller.what, lang) : smallerQuoteNotAsked(smaller.what))
             : qtyRefused && qtyCheck
-              ? await this.refuseRecorded(turn, callId, name, args, quantityNotGiven(qtyCheck.item, this.spokenLanguage === "he" ? "he" : "en"))
+              ? await this.refuseRecorded(turn, callId, name, args, quantityNotGiven(qtyCheck.item, lang, { v2 }))
               : await this.runRecorded(turn, callId, name, args);
     if (quoteHeld) this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the quote waits for the team's approval"));
     // The conversation's latest quote: held for approval (the order form waits), or ready (the hold is lifted).
@@ -2989,6 +3089,12 @@ export class VoiceEngine {
     const sayIn = this.spokenLanguage !== "en" ? this.sayIn() : null;
     const noTotals = name === "check_fit";
     if (noTotals) forModel = fitForCall(forModel);
+    // Call wiring v2 (test calls): the catalog on a call gives no money; prices come only from create_quote.
+    if (name === "search_catalog" && this.profile && this.wiringV2()) forModel = searchForCall(forModel);
+    // ...and create_quote checks the fit itself (no check_fit first): a set that does not fit says why and what to do.
+    if (name === "create_quote" && this.profile && this.wiringV2() && r.result.rule === "Fit check failed" && typeof forModel.message !== "string") {
+      forModel = { ...forModel, message: fitRefusedMessage(Array.isArray(r.result.problems) ? r.result.problems.map(String) : []) };
+    }
     if (heldNow) forModel = heldQuoteForModel(forModel, this.spokenLanguage === "he" ? "he" : "en", sayIn);
     if (quoteHeld) {
       forModel = {
@@ -2996,6 +3102,23 @@ export class VoiceEngine {
         message: sayIn ? `${HELD_FORM_MESSAGE} ${sayIn}` : HELD_FORM_MESSAGE,
       };
     }
+    // Call wiring v2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS): the current step on every result (lib/voice/call-stage.ts).
+    const staged = this.profile && this.wiringV2() && (r.outcome === "ok" || r.outcome === "refused") && !STAGE_SKIP_TOOLS.has(name)
+      ? await this.callStage(name, forModel).catch((e) => {
+        this.log.warn(voiceLine(this.sessionId, `tool ${clip(name, 40)} stage not attached: ${errorSummary(e)}`));
+        return null;
+      })
+      : null;
+    if (staged) forModel = staged.forModel;
+    // Call wiring v2 (test calls): one next-action line from the offer data fields (standing_offer on a check_offer
+    // with nothing more, matching_offer on a create_quote "Discount not from an offer"), built from the tool's own result.
+    if (this.profile && this.wiringV2()) {
+      const next = offerNextLine(name, r.result);
+      if (next) forModel = { ...forModel, next };
+    }
+    // Every call on a profile (guarded): no internal id (create_quote's quote_id / quote_message_id, any uuid) reaches
+    // the model; the stored rows and the browser's messages are made from the tool's own result above.
+    if (this.profile) forModel = withoutInternalIds(forModel);
     // The run-once guard answers a duplicate of this call with this result.
     const recent = this.recentCalls.find((c) => c.id === callId);
     if (recent) recent.result = forModel;
@@ -3010,6 +3133,7 @@ export class VoiceEngine {
         if (this.traceResp && !this.traceResp.closedBy) this.traceResp.closedBy = "tool-result";
       }
       this.conn?.sendToolResult(callId, name, forModel);
+      if (staged && this.conn) this.stageSentConn = staged.key;
     }
     this.traceCallAt.delete(callId);
     turn.awaitingContinuation = true;
@@ -3017,12 +3141,78 @@ export class VoiceEngine {
     this.send({ t: "tool", id: callId, name, label, status: r.outcome });
   }
 
+  /** Call wiring v2 on this call (test calls; buyer calls when CALL_WIRING_V2_FOR_BUYER_CALLS is on). */
+  private wiringV2(): boolean {
+    return !!this.loaded && callWiringV2For(this.loaded.session.isTest);
+  }
+
+  /**
+   * Call wiring v2: the result with the current step attached (lib/voice/call-stage.ts), and the stage key it delivers.
+   * update_deal_state already carries its own block (the tool derived it); any other tool: the stage derived here
+   * exactly as update_deal_state derives it (loadStageFacts + deriveStage on the deal state now), in call wording.
+   */
+  private async callStage(name: string, forModel: Record<string, unknown>): Promise<{ forModel: Record<string, unknown>; key: string } | null> {
+    const profile = this.profile!;
+    const { account, conv, version } = this.loaded!;
+    // The block as the profile words it for a call (guarded: the quote flow, what a quote needs).
+    const hinted = async (block: string) => (profile.stageForCall ? await profile.stageForCall(block, () => this.quoteNeeds()) : block);
+    if (name === "update_deal_state" && typeof forModel.stage === "string") {
+      const block = await hinted(forModel.stage);
+      return callStageResult({ forModel: { ...forModel, stage: block }, block, title: null, own: true, last: this.stageSentConn });
+    }
+    const [facts, deal] = await Promise.all([loadStageFacts(this.db, account.id, conv.leadId), readDealState(this.db, account.id, conv.leadId)]);
+    const st = deriveStage({
+      ...facts, playbook: version.playbook, fields: deal?.fields ?? null, objections: deal?.objections ?? null, agentMessages: this.effectiveAgentMessages(),
+    });
+    return callStageResult({ forModel, block: await hinted(profile.stageText(st.instruction)), title: STAGE_TITLE[st.stage], own: false, last: this.stageSentConn });
+  }
+
+  /** The items and quantities the model named for a quote on this call (the latest per item). */
+  private noteQuoteLines(args: unknown) {
+    const raw = args && typeof args === "object" ? (args as { lines?: unknown }).lines : null;
+    for (const l of Array.isArray(raw) ? raw : []) {
+      const sku = String((l as { sku?: unknown })?.sku ?? "").trim();
+      const qty = Number((l as { qty?: unknown })?.qty);
+      if (sku && Number.isInteger(qty) && qty > 0) this.quoteLines.set(sku, qty);
+    }
+  }
+
+  /**
+   * Call wiring v2: what a quote still needs, from the same checks the quote-quantities guard runs (no site-count
+   * fallback): the items the model named that the catalog does not tie to sites (nor adds itself) whose quantity is
+   * not grounded yet, and the items the catalog adds once per site. Names as the agent says them.
+   */
+  private async quoteNeeds(): Promise<QuoteNeeds> {
+    const q = await this.quantityContext();
+    const nameOf = (sku: string) => q.names.get(sku) ?? sku;
+    const added = new Set((q.catalog?.autoAdd ?? []).map((r) => r.sku));
+    const notGiven: string[] = [];
+    for (const [sku, qty] of this.quoteLines) {
+      if (q.tied.perSite.has(sku) || q.tied.once.has(sku) || added.has(sku)) continue;
+      const open = ungroundedQuoteLine({
+        lines: [{ sku, qty }], buyerLines: q.buyerLines, callLines: this.lines, sites: q.sites, refusedAt: this.qtyRefusedAt,
+        perSiteSkus: q.tied.perSite, onceSkus: q.tied.once, siteFallback: false,
+      });
+      if (open && !notGiven.includes(nameOf(sku))) notGiven.push(nameOf(sku));
+    }
+    const perSiteAdded = [...new Set((q.catalog?.autoAdd ?? []).filter((r) => r.qty === "sites").map((r) => nameOf(r.sku)))];
+    return { known: this.quoteLines.size > 0, notGiven, perSiteAdded };
+  }
+
+  /** Call wiring v2: the removal guard's refusal, with the lines as the agent names them and whether each is per site. */
+  private async removalKeep(removing: readonly string[], language: "en" | "he") {
+    const q = await this.quantityContext().catch(() => null);
+    const names = removing.map((sku) => q?.names.get(sku) ?? sku);
+    const perSite = !!q && removing.every((sku) => q.tied.perSite.has(sku));
+    return removalKeepLine(names, perSite, language);
+  }
+
   /** Current: a tool's result as the model gets it on a call, and what the tool's outcome does to the call. */
   private async currentToolResult(turn: AgentTurn, name: string, r: ToolResult): Promise<Record<string, unknown>> {
     let forModel: Record<string, unknown> = r.result;
-    if (name === "create_quote" && r.outcome !== "ok" && Array.isArray(r.result.missing) && r.result.missing.length) {
+    if (name === "create_quote" && r.outcome !== "ok" && missingFactsOf(r.result).length) {
       // No quote: no total may be said (23 Nov 2026: a total was spoken after this refusal, on an assumption).
-      forModel = { ...r.result, message: refusedQuoteMessage(r.result.missing.map(String)) };
+      forModel = { ...r.result, message: refusedQuoteMessage(missingFactsOf(r.result)) };
     }
     if (name === "send_order_form" && r.outcome !== "ok") {
       // Never a success line for a form that was not sent (the 22 Nov 2026 call said "the link is in the chat").
@@ -3115,8 +3305,8 @@ export class VoiceEngine {
     const profile = this.profile!;
     let forModel: Record<string, unknown> = r.result;
     // K4: no quote, no total.
-    if (name === "create_quote" && r.outcome !== "ok" && Array.isArray(r.result.missing) && r.result.missing.length) {
-      forModel = { ...r.result, message: refusedQuoteMessage(r.result.missing.map(String)) };
+    if (name === "create_quote" && r.outcome !== "ok" && missingFactsOf(r.result).length) {
+      forModel = { ...r.result, message: refusedQuoteMessage(missingFactsOf(r.result)) };
     }
     // K1: the order form held by the guard, in Current's words.
     if (formHeld) forModel = { ...r.result, message: formNotSentMessage(r.result) };

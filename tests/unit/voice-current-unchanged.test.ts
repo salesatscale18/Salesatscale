@@ -18,6 +18,10 @@
  * chat lines (price early, hesitant yes, Limits, hand-over, Special approval, prices, discounts, hand-off, exceptions,
  * the cards "Too expensive" and "The buyer is upset"), the session config only by its tool list (check_offer added,
  * create_quote's offer argument and descriptions).
+ * Session configs re-pinned for agent memory (27 Nov 2026, approved text E): the only difference, checked by diffing the
+ * dumped configs before and after, is the `quote` argument description of check_offer and of send_order_form (the
+ * "Q-1001" example replaced by "exactly as create_quote returned it or your context lists it (Q- and its number)").
+ * Instructions unchanged.
  */
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";

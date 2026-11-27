@@ -24,6 +24,8 @@ import { isOpenAiVoiceModel, voiceFamilyOf } from "@/lib/voice/settings";
 import type { VoiceCallContext } from "@/lib/voice/instructions";
 import { loadVoiceInstructions as loadClassicInstructions, openerInstruction, type TranscriptLine } from "@/lib/voice-classic/instructions";
 import { chatOpenerText } from "./chat-opener";
+import { callWiringV2For } from "@/lib/voice/settings";
+import { quoteFlowInstructions } from "./quote-flow";
 
 /** Classic's hand-off line (lib/voice-classic/voice-block.ts): replaced (K7). */
 export const CLASSIC_HANDOFF_LINE = "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.";
@@ -112,9 +114,11 @@ export function gptToolRulesFor(modelId: string | null | undefined, isTest: bool
  * The guarded instructions from Classic's (pure). `recorded`: the call is recorded (K8). `gptToolRules`: the GPT tool
  * rules go at the very top (gptToolRulesFor); everything else is unchanged, byte for byte.
  */
-export function guardedInstructions(classic: string, o: { recorded?: boolean; gptToolRules?: boolean } = {}): string {
+export function guardedInstructions(classic: string, o: { recorded?: boolean; gptToolRules?: boolean; quoteFlow?: boolean } = {}): string {
   const out = guardedBody(classic, o);
-  return o.gptToolRules ? `${GPT_TOOL_RULES}\n\n${out}` : out;
+  const all = o.gptToolRules ? `${GPT_TOOL_RULES}\n\n${out}` : out;
+  // Call wiring v2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS): the quote flow's sentence swaps (lib/voice-guarded/quote-flow.ts).
+  return o.quoteFlow ? quoteFlowInstructions(all) : all;
 }
 
 function guardedBody(classic: string, o: { recorded?: boolean }): string {
@@ -178,7 +182,9 @@ export async function loadGuardedInstructions(
     }
   }
   return {
-    instructions: guardedInstructions(instructions, { recorded: opts.recorded, gptToolRules: gptToolRulesFor(opts.modelId, opts.isTest ?? false) }),
+    instructions: guardedInstructions(instructions, {
+      recorded: opts.recorded, gptToolRules: gptToolRulesFor(opts.modelId, opts.isTest ?? false), quoteFlow: callWiringV2For(opts.isTest ?? false),
+    }),
     opener, openerPrompt, language: ctx.language, expectedLanguages: ctx.expectedLanguages, continuing: ctx.continuing,
   };
 }

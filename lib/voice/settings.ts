@@ -484,6 +484,22 @@ export const AFTER_QUESTION_GUARD_FOR_BUYER_CALLS: boolean = false;
 export function afterQuestionGuardFor(isTest: boolean, forBuyers: boolean = AFTER_QUESTION_GUARD_FOR_BUYER_CALLS): boolean {
   return isTest || forBuyers;
 }
+/**
+ * Call wiring v2 (owner-approved, 27 Nov 2026) on BUYER calls. Off: test calls only. On the guarded engine:
+ * - every tool result carries the current step (`stage`: the full block when the stage or what is still missing
+ *   changed since the last block this model connection got, else one short "unchanged" line);
+ * - the stage block of stages 2-4 says what a quote needs (the quantities not given yet, the per-site item to keep);
+ * - the guards' refusals (removal, quantities, smaller quote) in wording the model cannot read aloud or turn into an
+ *   offer;
+ * - the quote-quantities guard: a catalog that ties no item to sites lets the site count ground no item.
+ * Off, a buyer call behaves exactly as before (tests/unit/voice-current-unchanged.test.ts and
+ * tests/integration/voice-call-wiring.test.ts pin it).
+ */
+export const CALL_WIRING_V2_FOR_BUYER_CALLS: boolean = false;
+/** Whether a call runs call wiring v2 (test calls only unless CALL_WIRING_V2_FOR_BUYER_CALLS is on). */
+export function callWiringV2For(isTest: boolean, forBuyers: boolean = CALL_WIRING_V2_FOR_BUYER_CALLS): boolean {
+  return isTest || forBuyers;
+}
 
 /**
  * Google's automaticActivityDetection (Gemini Live `realtimeInputConfig.automaticActivityDetection`, sent raw through
