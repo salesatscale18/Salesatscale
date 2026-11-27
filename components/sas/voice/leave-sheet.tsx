@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * The Back sheet (board VoiceBubbleBack 2 and 3): during a call, "Switch to text?" for buyers (owner, 22 Nov: the voice
- * stops and the chat goes on) or "End the call?" in the test lab (`callWords="end"`: a test call does end); "Leave the
- * chat?" in the text chat.
+ * The Back sheet (board VoiceBubbleBack 2 and 3): during a call, "End the call?" (buyers and the test lab alike; owner,
+ * 26 Nov: End call replaced "Switch to text" in the buyer's voice UI, and still means the voice stops and the chat goes
+ * on); "Leave the chat?" in the text chat.
  * An alertdialog over a scrim, from the bottom: focus moves to the safe choice (Keep talking, Stay in the chat) and
  * stays inside; Escape and a tap on the scrim are the safe choice. Opened by lib/voice/client/back-guard.ts.
  */
@@ -13,10 +13,10 @@ import type { Tr } from "@/lib/voice/client/buyer-ui";
 import type { GuardAsk, GuardChoice } from "@/lib/voice/client/back-guard";
 import "./leave-sheet.css";
 
-export function LeaveSheet({ ask, tr, dir, onChoose, callWords = "text" }: {
+export function LeaveSheet({ ask, tr, dir, onChoose }: {
   ask: GuardAsk; tr: Tr; dir: "ltr" | "rtl"; onChoose: (c: GuardChoice) => void;
-  /** During a call: "text" (buyers: Switch to text? / Stay in voice) or "end" (the test lab: End the call? / Keep talking). */
-  callWords?: "text" | "end";
+  /** Was "text" | "end" (buyers' Switch to text? words): one set of words now; still accepted from the test lab. */
+  callWords?: "end";
 }) {
   const id = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -29,7 +29,6 @@ export function LeaveSheet({ ask, tr, dir, onChoose, callWords = "text" }: {
     return () => (back.current as HTMLElement | null)?.focus?.();
   }, [ask]);
   const end = ask === "end_call";
-  const text = end && callWords === "text";
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -47,14 +46,10 @@ export function LeaveSheet({ ask, tr, dir, onChoose, callWords = "text" }: {
   };
   const safeButton = (
     <button key="safe" ref={safe} type="button" className={`ls-btn ${end ? "ls-btn--secondary" : "ls-btn--primary"}`} onClick={() => onChoose("stay")} data-sheet-safe="">
-      {tr(text ? "buyer.voice.sheet.text.stay" : end ? "buyer.voice.sheet.end.keep" : "buyer.voice.sheet.leave.stay")}
+      {tr(end ? "buyer.voice.sheet.end.keep" : "buyer.voice.sheet.leave.stay")}
     </button>
   );
-  const goButton = text ? (
-    <button key="go" type="button" className="ls-btn ls-btn--primary" onClick={() => onChoose("end_call")} data-sheet-end="">
-      <Icon name="keyboard" />{tr("buyer.voice.to_text")}
-    </button>
-  ) : end ? (
+  const goButton = end ? (
     <button key="go" type="button" className="ls-btn ls-btn--danger" onClick={() => onChoose("end_call")} data-sheet-end="">
       <Icon name="phone-off" />{tr("buyer.voice.end_call")}
     </button>
@@ -69,9 +64,9 @@ export function LeaveSheet({ ask, tr, dir, onChoose, callWords = "text" }: {
       <div
         ref={box} className="ls-sheet" role="alertdialog" aria-modal="true" aria-labelledby={`${id}-t`} aria-describedby={`${id}-d`} onKeyDown={onKey}
       >
-        <h2 className="ls-title" id={`${id}-t`}>{tr(text ? "buyer.voice.sheet.text.title" : end ? "buyer.voice.sheet.end.title" : "buyer.voice.sheet.leave.title")}</h2>
-        <p className="ls-body" id={`${id}-d`}>{tr(text ? "buyer.voice.sheet.text.body" : end ? "buyer.voice.sheet.end.body" : "buyer.voice.sheet.leave.body")}</p>
-        {/* Switch to text over Stay in voice; End call over Keep talking; Stay in the chat over Leave. */}
+        <h2 className="ls-title" id={`${id}-t`}>{tr(end ? "buyer.voice.sheet.end.title" : "buyer.voice.sheet.leave.title")}</h2>
+        <p className="ls-body" id={`${id}-d`}>{tr(end ? "buyer.voice.sheet.end.body" : "buyer.voice.sheet.leave.body")}</p>
+        {/* End call over Keep talking; Stay in the chat over Leave. */}
         {end ? [goButton, safeButton] : [safeButton, goButton]}
       </div>
     </div>

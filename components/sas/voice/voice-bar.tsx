@@ -2,31 +2,36 @@
 
 /**
  * The voice bar (board VoiceBubbleBack 1 and 1b): in voice mode on the buyer chat it takes the composer's place,
- * centred on its white strip: [Mute] · [Speaker, only where the browser offers a choice] · the bubble · [Text], one
+ * centred on its white strip: [Mute] · [Speaker, only where the browser offers a choice] · the bubble · [End call], one
  * button size (44 px circles).
- * A toolbar (arrow keys move between its controls). Mute turns dark while muted; Text switches the chat back to
- * text. The bubble has no pop-up here: a tap only wakes the agent from standby.
+ * A toolbar (arrow keys move between its controls). Mute turns dark while muted; End call (owner, 26 Nov: in Text's
+ * place, doing what Text did) ends the voice part and leaves the buyer in the chat with the composer back (focused,
+ * except where focusing would pop a phone's keyboard). The bubble has no pop-up here: a tap only wakes the agent from
+ * standby.
  *
  * Layout is CSS only (voice-bubble.css .vb-bar), nothing measured in script: the bar lays itself out at whatever
  * width it has, also when it was first rendered in a hidden or off-screen container of another width (the lead page
- * hand-over). Two rows: the short labels ("What you say appears as text…", "You are muted", …) in their own row,
- * in normal flow above the controls, so they can never cover the bubble's rings; then the controls: Mute and Text
- * at the strip's two edges (mirrored in RTL), Speaker between Mute and the bubble, the bubble at the centre.
+ * hand-over). The short labels ("What you say appears as text…", "You are muted", …) get their own row above the
+ * controls only while one shows, so they never cover the bubble's rings and no empty gap stays; the strip sits at the
+ * bottom of the page, so that row comes and goes above the controls without moving them. Then the controls: Mute and
+ * End call at the strip's two edges (mirrored in RTL), Speaker between Mute and the bubble, the bubble at the centre.
  */
 import type { KeyboardEvent } from "react";
 import { Icon } from "@/components/sas/icon";
-import { BubbleFlash, RoundControl, VoiceBubble, useBubbleFlash } from "@/components/sas/voice/voice-bubble";
+import { BubbleFlash, EndCallControl, RoundControl, VoiceBubble, useBubbleFlash } from "@/components/sas/voice/voice-bubble";
 import { bubbleView } from "@/lib/voice/client/bubble";
 import type { Tr } from "@/lib/voice/client/buyer-ui";
 import type { MirrorState, TabCommand } from "@/lib/voice/client/tab-link";
 
-export function VoiceBar({ state, agentName, tr, dir, levels, onCommand, note = null, onNoteDone }: {
+export function VoiceBar({ state, agentName, tr, dir, levels, onCommand, note = null, noteFading = false, onNoteDone }: {
   state: MirrorState; agentName: string; tr: Tr; dir: "ltr" | "rtl";
   levels?: () => { mic: number; out: number };
-  /** Mute and unmute, the speaker, wake, and "end" (Switch to text). */
+  /** Mute and unmute, the speaker, wake, and "end" (End call: the voice stops, the chat stays). */
   onCommand: (c: TabCommand) => void;
-  /** The buyer's first switch: what they say appears as text (a short note above the bubble). */
+  /** The one-time hint: what the buyer says appears as text (a short label above the bubble). */
   note?: string | null;
+  /** The hint is fading out (opacity only; its row collapses once it is gone). */
+  noteFading?: boolean;
   onNoteDone?: () => void;
 }) {
   const view = bubbleView(state, tr, agentName);
@@ -48,10 +53,11 @@ export function VoiceBar({ state, agentName, tr, dir, levels, onCommand, note = 
     e.preventDefault();
     items[next].focus();
   };
+  const fading = !!flash && flash.kind === "first" && noteFading;
   return (
-    <div className={`vb-bar${speaker ? " vb-bar--speaker" : ""}`} role="toolbar" aria-label={tr("buyer.voice.bubble.menu")} dir={dir} onKeyDown={onKey} data-voice-bar="">
-      {/* The short labels' row: always there (its height is kept), so the bar never jumps when one shows. */}
-      <div className="vb-bar__note">{flash ? <BubbleFlash flash={flash} /> : null}</div>
+    <div className={`vb-bar${speaker ? " vb-bar--speaker" : ""}${flash ? " vb-bar--note" : ""}`} role="toolbar" aria-label={tr("buyer.voice.bubble.menu")} dir={dir} onKeyDown={onKey} data-voice-bar="">
+      {/* The short labels' row: only while one shows (compact otherwise). */}
+      {flash ? <div className={`vb-bar__note${fading ? " vb-bar__note--fading" : ""}`}><BubbleFlash flash={flash} /></div> : null}
       <RoundControl
         data="mute" on={state.muted} disabled={!view.controls} icon={<Icon name={state.muted ? "mic" : "mic-off"} />}
         label={tr(state.muted ? "buyer.voice.unmute" : "buyer.voice.mute")} onClick={() => onCommand({ cmd: state.muted ? "unmute" : "mute" })}
@@ -64,10 +70,7 @@ export function VoiceBar({ state, agentName, tr, dir, levels, onCommand, note = 
         />
       ) : null}
       <VoiceBubble state={state} agentName={agentName} tr={tr} dir={dir} levels={levels} onCommand={onCommand} placement="bar" ownFlash={false} />
-      <RoundControl
-        data="text" disabled={state.phase === "ending"} icon={<Icon name="keyboard" />} label={tr("buyer.voice.bar.text")} name={tr("buyer.voice.to_text")}
-        onClick={() => onCommand({ cmd: "end" })}
-      />
+      <EndCallControl state={state} tr={tr} onCommand={onCommand} />
     </div>
   );
 }

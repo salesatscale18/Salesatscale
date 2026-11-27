@@ -52,7 +52,7 @@ import { ResultChip } from "./result-chip";
 import { countChanges } from "@/lib/agent/version-compare";
 import { statusDef } from "@/lib/domain/status";
 import { classicModelId } from "@/lib/voice-classic/settings";
-import { engineLabelKey, engineLabelVars, isPipelineEngine, sessionEngine } from "@/lib/voice-classic/engine-choice";
+import { BUYER_VOICE_ENGINE, engineLabelKey, engineLabelVars, isPipelineEngine, LAB_ENGINE_SELECTOR, sessionEngine } from "@/lib/voice-classic/engine-choice";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
@@ -374,8 +374,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 languages={account.languages.map((l) => ({ value: l, label: LANG_NAME[l] ?? l }))} defaultLanguage={account.languages[0]}
                 versions={callVersions.map((v) => ({ value: v.value, label: v.label }))} defaultVersionId={draft?.id ?? ""}
                 callMax={callMax} limitLines={limitLines}
-                // The engine select: platform admins only (this whole block is: voiceLabAccess above).
-                engines={voice} classicModelNotes={classicModelNotes}
+                // The engine select: platform admins only (this whole block is: voiceLabAccess above), and only while
+                // LAB_ENGINE_SELECTOR is on (off since 26 Nov 2026: every test call runs the buyers' engine).
+                engines={voice && LAB_ENGINE_SELECTOR} classicModelNotes={classicModelNotes}
               />
             </>
           ) : (
@@ -417,8 +418,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 {onVoice && voiceSummary?.mode === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
                 {/* The model this call ran on (its session row): calls on different models of one draft stay apart. */}
                 {onVoice && voiceSummary && voiceModelLabel(voiceSummary.model) !== voiceSummary.model ? <span className="sas-pill" data-voice-model-pill="">{voiceModelLabel(voiceSummary.model)}</span> : null}
-                {/* The voice engine of a Classic (20 Nov) or Classic + guards call: compared side by side with Current calls. */}
-                {voice && onVoice && voiceSummary && voiceSummary.engine !== "current" ? <span className="sas-pill" data-voice-engine-pill="">{t("voice.pill.engine", { engine: engineText(voiceSummary.engine) })}</span> : null}
+                {/* The voice engine of a call that did not run on the buyers' engine (BUYER_VOICE_ENGINE): an older call. */}
+                {voice && onVoice && voiceSummary && voiceSummary.engine !== BUYER_VOICE_ENGINE ? <span className="sas-pill" data-voice-engine-pill="">{t("voice.pill.engine", { engine: engineText(voiceSummary.engine) })}</span> : null}
                 {/* R5-14: when the chat started (its first message), not when the conversation row was made. */}
                 <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={chatStarted.toISOString()} title={zoneTitle(chatStarted, tz)} data-chat-started="">{local(chatStarted)}</time></span>
                 {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}

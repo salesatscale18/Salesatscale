@@ -31,6 +31,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
+import { callHasLines } from "@/lib/voice/call-lines";
 import {
   agentVersions, conversations, leads, messages, sellerAccounts, voiceSessions,
   type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndBy, type VoiceEndDetail, type VoiceEndReason, type VoiceSettings, type VoiceUsage,
@@ -1092,7 +1093,8 @@ export class PipelineVoiceEngine {
         (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `final row write failed (attempt ${attempt} of 2): ${errorSummary(e)}`));
       }
     }
-    if (ended && this.callStart !== null && this.loaded) {
+    // Not for a call in which nothing was said (owner, 26 Nov: no "0:00" line for a call that never connected; lib/voice/call-lines.ts).
+    if (ended && this.callStart !== null && this.loaded && await callHasLines(this.db, this.loaded.account.id, this.sessionId).catch(() => true)) {
       try {
         await this.db.insert(messages).values({
           accountId: this.loaded.account.id, conversationId: this.loaded.conv.id, actor: "system", body: voiceCallEndedLine(f.durationSec), language: "en", createdAt: await this.stamp(),

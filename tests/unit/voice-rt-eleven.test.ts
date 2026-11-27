@@ -209,7 +209,7 @@ describe("the speech player", () => {
 
 describe("the engine list", () => {
   it("the select is wiring only (three options); the rt engines retired (ElevenLabs is a Voice settings choice) but still labelled", () => {
-    expect(ENGINE_ORDER).toEqual(["current", "guarded", "classic"]);
+    expect(ENGINE_ORDER).toEqual(["guarded", "current", "classic"]);
     expect(t(engineLabelKey("rt_eleven"))).toBe("GPT-Realtime 2.1 + ElevenLabs (testing)");
     expect(t(engineLabelKey("rt_eleven_mini"))).toBe("GPT-Realtime mini + ElevenLabs (testing)");
     expect(t("lab.voice.engine_help.rt_eleven")).toBe("GPT-Realtime 2.1 listens and decides and answers in text; ElevenLabs speaks. Test lab only.");
@@ -224,11 +224,12 @@ describe("the engine list", () => {
     expect(sessionEngine({ engine: "rt-eleven" })).toBe("current");
   });
 
-  it("platform admins only (anyone else gets Current)", () => {
+  it("with the lab select on: platform admins only (anyone else gets the buyers' engine); off (today): the buyers' engine for all", () => {
     const env = { VOICE_REALTIME: "scripted" };
-    expect(labEngineChoice({ role: "super_admin" }, "rt_eleven", env)).toBe("rt_eleven");
-    expect(labEngineChoice({ role: "user" }, "rt_eleven", env)).toBe("current");
-    expect(labEngineChoice({ role: "super_admin" }, "rt_eleven", { VOICE_REALTIME: "off" })).toBe("current");
+    expect(labEngineChoice({ role: "super_admin" }, "rt_eleven", env, true)).toBe("rt_eleven");
+    expect(labEngineChoice({ role: "user" }, "rt_eleven", env, true)).toBe("guarded");
+    expect(labEngineChoice({ role: "super_admin" }, "rt_eleven", { VOICE_REALTIME: "off" }, true)).toBe("guarded");
+    expect(labEngineChoice({ role: "super_admin" }, "rt_eleven", env)).toBe("guarded");
   });
 
   it("the profile is exactly guarded's, under its own name", () => {

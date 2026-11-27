@@ -203,7 +203,7 @@ describe("Classic (20 Nov) voice engine (scripted realtime model, fake clock)", 
     await c.settle();
   });
 
-  it("the relay runs the engine stored on the session: Classic for a Classic session, Current otherwise", async () => {
+  it("the relay runs the engine stored on the session: Classic for a Classic session, Current for a Current one, the buyers' engine by default", async () => {
     class FakeSocket extends EventEmitter implements VoiceSocket {
       bufferedAmount = 0;
       sent: (string | Uint8Array)[] = [];
@@ -215,7 +215,7 @@ describe("Classic (20 Nov) voice engine (scripted realtime model, fake clock)", 
         setImmediate(() => this.emit("close", code, ""));
       }
     }
-    const runOne = async (engine: "classic" | undefined) => {
+    const runOne = async (engine: "classic" | "current" | undefined) => {
       const conv = (await startVoiceTestConversation(db, acc, me.id, { scenario: null }))!;
       const s = await createVoiceSession(db, { accountId: acc, conversationId: conv.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, engine });
       if (!s.ok) throw new Error(s.reason);
@@ -241,8 +241,13 @@ describe("Classic (20 Nov) voice engine (scripted realtime model, fake clock)", 
     expect(classic.lines.some((l) => l.endsWith("engine=classic"))).toBe(true);
     expect(classic.row).toMatchObject({ status: "ended", recordingState: "off" });
     expect(classic.row.settings).toMatchObject({ engine: "classic" });
-    const current = await runOne(undefined);
-    expect(current.lines.some((l) => l.includes("engine=classic"))).toBe(false);
+    // Current (switched off since 26 Nov 2026; a lab start with LAB_ENGINE_SELECTOR on can still choose it).
+    const current = await runOne("current");
+    expect(current.lines.some((l) => l.includes("engine="))).toBe(false);
     expect((current.row.settings as Record<string, unknown> | null)?.engine).toBeUndefined();
+    // No engine given: the buyers' engine (BUYER_VOICE_ENGINE, the New one).
+    const fallback = await runOne(undefined);
+    expect(fallback.lines.some((l) => l.endsWith("engine=guarded"))).toBe(true);
+    expect(fallback.row.settings).toMatchObject({ engine: "guarded" });
   });
 });

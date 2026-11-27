@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { READY_MAX_MS, READY_PRIMER_MAX_MS, READY_STEPS_MAX_MS, latencyMs, runReadiness, type ReadinessClock, type ReadinessProbe } from "@/lib/voice/client/readiness";
 import { MAX_DIAG_MS, parseClientMessage } from "@/lib/voice/protocol";
+import { browserHeardLine, browserReadyLine } from "@/lib/voice/engine";
 
 /** A clock that only moves when the check waits. */
 function fakeClock(): ReadinessClock & { t: number } {
@@ -151,6 +152,29 @@ describe("the `ready` check", () => {
     expect(out.waitedMs).toBeLessThan(READY_STEPS_MAX_MS);
   });
 
+  it("element route: the <audio> element's time never advances: `ready` still goes within the cap, saying out timed out and outAdvance=no", async () => {
+    const c = fakeClock();
+    const a = fakeAudio(c, { out: Infinity });
+    a.probe.outputAdvanced = () => false;
+    const r = await runReadiness(a.probe, a.clock);
+    expect(r).toMatchObject({ route: "element", timedOut: "out", outAdvance: "no" });
+    expect(r.steps.out).toBeNull();
+    expect(r.steps.primer).not.toBeNull();
+    expect(r.waitedMs).toBeLessThanOrEqual(READY_MAX_MS);
+  });
+
+  it("element route: outAdvance=yes once its time advanced (also when it only moved after the steps' cap); the direct route reports none", async () => {
+    const ok = fakeAudio(fakeClock(), { out: 120 });
+    expect(await runReadiness(ok.probe, ok.clock)).toMatchObject({ outAdvance: "yes", steps: { out: 120 } });
+    const c = fakeClock();
+    const late = fakeAudio(c, { out: Infinity });
+    late.probe.outputAdvanced = () => c.t > READY_STEPS_MAX_MS;
+    expect(await runReadiness(late.probe, late.clock)).toMatchObject({ timedOut: "out", outAdvance: "yes" });
+    const direct = fakeAudio(fakeClock());
+    direct.probe.route = "direct";
+    expect(await runReadiness(direct.probe, direct.clock)).not.toHaveProperty("outAdvance");
+  });
+
   it("latency figures: seconds to whole ms, nothing for a missing one", () => {
     expect(latencyMs(0.0213)).toBe(21);
     expect(latencyMs(undefined)).toBeUndefined();
@@ -172,6 +196,8 @@ describe("protocol: `ready` diagnostics and `heard`", () => {
       t: "ready", waitedMs: MAX_DIAG_MS, steps: { mic: 0, ctx: null, out: null, primer: null },
     });
     expect(parseClientMessage(JSON.stringify({ t: "ready", steps: [1, 2] }))).toEqual({ t: "ready" });
+    expect(parseClientMessage(JSON.stringify({ t: "ready", route: "element", outAdvance: "no" }))).toEqual({ t: "ready", route: "element", outAdvance: "no" });
+    expect(parseClientMessage(JSON.stringify({ t: "ready", outAdvance: "maybe" }))).toEqual({ t: "ready" });
   });
 
   it("`heard` needs both numbers; they are ints in 0..60000", () => {
@@ -179,5 +205,25 @@ describe("protocol: `ready` diagnostics and `heard`", () => {
     expect(parseClientMessage(JSON.stringify({ t: "heard", sinceFirstChunkMs: 9e9, queuedMs: -3 }))).toEqual({ t: "heard", sinceFirstChunkMs: MAX_DIAG_MS, queuedMs: 0 });
     expect(parseClientMessage(JSON.stringify({ t: "heard", sinceFirstChunkMs: "1", queuedMs: 0 }))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ t: "heard", queuedMs: 0 }))).toBeNull();
+    // The lead-in and the time since the release (the hand-over) are optional, ints in 0..60000; bad ones dropped.
+    expect(parseClientMessage(JSON.stringify({ t: "heard", sinceFirstChunkMs: 360, queuedMs: 300, leadInMs: 300.2, afterReleaseMs: 812.7 })))
+      .toEqual({ t: "heard", sinceFirstChunkMs: 360, queuedMs: 300, leadInMs: 300, afterReleaseMs: 813 });
+    expect(parseClientMessage(JSON.stringify({ t: "heard", sinceFirstChunkMs: 1, queuedMs: 0, leadInMs: "300", afterReleaseMs: null })))
+      .toEqual({ t: "heard", sinceFirstChunkMs: 1, queuedMs: 0 });
+  });
+});
+
+describe("the relay's log lines for `ready` and `heard`", () => {
+  it("ready: the report's fields as before, plus outAdvance (\"-\" from an older page or the direct route)", () => {
+    expect(browserReadyLine({ t: "ready", waitedMs: 640, route: "element", steps: { mic: 2, ctx: 2, out: null, primer: 640 }, timedOut: "out", outAdvance: "no", baseLatencyMs: 10, outputLatencyMs: 17 }))
+      .toBe("browser ready waitedMs=640 route=element mic=2 ctx=2 out=- primer=640 latency=27ms timedOut=out outAdvance=no");
+    expect(browserReadyLine({ t: "ready" })).toBe("browser ready waitedMs=- route=- mic=- ctx=- out=- primer=- latency=-ms timedOut=- outAdvance=-");
+  });
+
+  it("heard: afterRelease and leadIn appended (\"-\" when the page sent none)", () => {
+    expect(browserHeardLine(612.4, { t: "heard", sinceFirstChunkMs: 380, queuedMs: 300, leadInMs: 300, afterReleaseMs: 1040 }))
+      .toBe("browser heard first audio +612ms after it was sent (browser: 380ms after it arrived, queued 300ms) afterRelease=1040ms leadIn=300ms");
+    expect(browserHeardLine(null, { t: "heard", sinceFirstChunkMs: 60, queuedMs: 50 }))
+      .toBe("browser heard first audio +-ms after it was sent (browser: 60ms after it arrived, queued 50ms) afterRelease=- leadIn=-");
   });
 });

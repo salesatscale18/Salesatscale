@@ -28,7 +28,7 @@ import { maxCallSeconds, resolveVoiceSettings, voiceMode, type VoiceMode } from 
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } from "@/lib/voice-guarded/profile";
-import { GUARDED_SILENT_ENGINE, isGuardedEngine, isPipelineEngine, isRtElevenEngine, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
+import { BUYER_VOICE_ENGINE, GUARDED_SILENT_ENGINE, isGuardedEngine, isPipelineEngine, isRtElevenEngine, type PipelineEngineName, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { PipelineVoiceEngine, pipelinePartsFor, type PipelineOverrides, type PipelineParts } from "@/lib/voice-pipeline";
 import type { Speaker } from "@/lib/voice-pipeline/speaker";
 import { rtElevenProfile, rtElevenSpeakerFor } from "@/lib/voice-rt-eleven";
@@ -42,6 +42,16 @@ import { DEFAULT_ELEVEN_CHOICE, ELEVEN_PACE_SPEED_FOR_BUYER_CALLS, elevenSpeedFo
  * pipeline proof (lib/voice-pipeline/engine.ts PipelineVoiceEngine, which implements the same methods).
  */
 type RelayEngine = Pick<VoiceEngine, "sessionId" | "start" | "onClientMessage" | "onClientAudio" | "onClientGone" | "stop">;
+
+/**
+ * The engine a call runs on (one engine for every call, owner 26 Nov 2026). A buyer call: BUYER_VOICE_ENGINE, never
+ * read from the row. A test call: the engine its start stored on the session (lib/voice/service.ts createVoiceSession,
+ * written by the server moments before from labEngineChoice: BUYER_VOICE_ENGINE while LAB_ENGINE_SELECTOR is off; a
+ * row with no engine stored is "current", which only a start with the select on can write).
+ */
+export function callEngineOf(session: Pick<VoiceSession, "isTest" | "settings">): VoiceEngineName {
+  return session.isTest ? sessionEngine(session.settings) : BUYER_VOICE_ENGINE;
+}
 
 /** The part of a `ws` WebSocket the relay uses (a `ws` socket satisfies it). */
 export interface VoiceSocket {
@@ -150,6 +160,22 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
   /** A call where ElevenLabs speaks: stores what its speech used, once the engine has stored the call. */
   let storeSpeech: (() => Promise<void>) | null = null;
   let early: ClientMessage[] = [];
+  /**
+   * A held greeting (auth `holdGreeting`, the lead page hand-over): since when (the auth frame) and when the page's
+   * `ready` released it; logged once the call is accepted ("greeting held: …", then "greeting released after …").
+   */
+  let hold: { since: number; releasedAt: number | null; accepted: boolean; logged: boolean } | null = null;
+  const logRelease = () => {
+    if (!hold || hold.logged || !hold.accepted || hold.releasedAt === null) return;
+    hold.logged = true;
+    log.info(voiceLine(sessionId, `greeting released after ${Math.max(0, Math.round(hold.releasedAt - hold.since))}ms held`));
+  };
+  /** A `ready` from the page: with a hold, that is the release (the first one counts). */
+  const noteReady = (msg: ClientMessage) => {
+    if (msg.t !== "ready" || !hold || hold.releasedAt !== null) return;
+    hold.releasedAt = clock.now();
+    logRelease();
+  };
   let lastSeen = clock.now();
   let audioBudget = { at: clock.now(), tokens: MAX_CLIENT_AUDIO_BYTES * MAX_AUDIO_RATE };
   const timers: { auth: TimerHandle | null; ping: TimerHandle | null; hard: TimerHandle | null } = { auth: null, ping: null, hard: null };
@@ -316,6 +342,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     timers.auth = null;
     const auth = parseAuthMessage(raw);
     if (!auth) return refuse("ticket_invalid");
+    if (auth.holdGreeting) hold = { since: clock.now(), releasedAt: null, accepted: false, logged: false };
     const session = await redeemVoiceTicket(opts.db, auth.sessionId, auth.ticket, new Date(clock.now()));
     if (isClosed()) {
       if (session) await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()));
@@ -324,10 +351,9 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     if (!session) return refuse("ticket_invalid");
     // The mode the call was created in must still be on (a live call never runs as scripted, or the reverse).
     const mode = voiceMode(env);
-    // The engine stored on the session (test lab, platform admins): Classic (20 Nov, lib/voice-classic), "Classic +
-    // guards" (today's engine with the Classic model side, lib/voice-guarded), its silent probe or Current. Buyer calls
-    // always run on Current.
-    const stored = session.isTest ? sessionEngine(session.settings) : "current";
+    // The engine this call runs on (callEngineOf): a buyer call always BUYER_VOICE_ENGINE (the New engine); a test call
+    // the one its start stored on the session (BUYER_VOICE_ENGINE too while the lab select is off).
+    const stored = callEngineOf(session);
     // The pipeline engines (lib/voice-pipeline): no realtime model; a listener, the chat turn and a speaker. Retired
     // from the selector and test calls only: they have no held greeting, so a page that asks for one is refused
     // (never a greeting the page did not release).
@@ -345,7 +371,9 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     const rtEleven = rtEngine !== null;
     const guarded = isGuardedEngine(stored) || rtEleven;
     const modelFor = classic ? classicRealtimeModelFor : realtimeModelFor;
-    const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model, ...(guarded ? { rawTranscripts: true } : {}) }) : null);
+    // Transcripts cleaned on every engine (the New engine too since 26 Nov 2026: Current's cleaner, as its profile's
+    // `clean`); the mapper's rawTranscripts option is no longer asked for.
+    const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model }) : null);
     if (!model) {
       await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
       return refuse("model_unavailable");
@@ -392,6 +420,13 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     sessionId = session.id;
     // A scripted stand-in also names the version's model it stands in for.
     log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId}${session.model && session.model !== model.modelId ? ` for=${session.model}` : ""} maxSec=${maxSec}${session.isTest ? " test" : ""}${speaker ? " speech=elevenlabs" : ""}`));
+    // Once per call: whether the page holds the greeting until it shows the chat (the hand-over), and if it was
+    // already released (a `ready` that came while the ticket was checked), how long it was held.
+    log.info(voiceLine(session.id, hold ? "greeting held: yes (hand-over)" : "greeting held: no"));
+    if (hold) {
+      hold.accepted = true;
+      logRelease();
+    }
     sendJson({ t: "call", maxSec, mode: model.mode });
     const deps = {
       db: opts.db, model, sessionId: session.id, clock, log, onEnding: keepAlive,
@@ -466,6 +501,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       const text = toText(data, false);
       const msg = text === null ? null : parseClientMessage(text);
       if (!msg) return; // unknown frames are ignored
+      noteReady(msg);
       if (phase === "checking" || !engine) {
         if (early.length < MAX_EARLY_MESSAGES) early.push(msg);
         return;

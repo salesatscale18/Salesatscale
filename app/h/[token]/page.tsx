@@ -85,7 +85,7 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
     ));
   }
 
-  const loaded = await loadBuyerChat(state.chat.token, state.chat.ctx, {}, { recordOpen: false });
+  const loaded = await loadBuyerChat(state.chat.token, state.chat.ctx, {}, { recordOpen: false, writtenOpener: false });
   const voiceOffered = !!loaded.props.voice && !!loaded.props.initial.voice?.available;
   return (
     <div className="c-root lp-root" lang={lang} dir="ltr" style={rootStyle}>

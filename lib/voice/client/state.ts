@@ -215,6 +215,9 @@ function onServer(s: VoiceSnapshot, m: ServerMessage, now: number): VoiceSnapsho
       return { ...s, appMessages: s.appMessages + 1 };
     case "flush":
       return { ...s, speakingKey: null };
+    case "agent_audio":
+      // Display pacing only (lib/voice/client/live-text.ts, fed by the VoiceClient): no state here.
+      return s;
     case "notice":
       return { ...s, notice: m.kind };
     case "stats":

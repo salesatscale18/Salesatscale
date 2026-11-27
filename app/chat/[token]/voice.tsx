@@ -2,18 +2,20 @@
 
 /**
  * Buyer calls on the chat page (live voice): a switch of the chat from text to voice and back, as in chat apps.
- * In voice mode the voice bar ([Mute] · bubble · [Text], components/sas/voice/voice-bar.tsx) takes the composer's
+ * In voice mode the voice bar ([Mute] · bubble · [End call], components/sas/voice/voice-bar.tsx) takes the composer's
  * place; the bar above the chat shows only what the voice bar cannot carry: connecting, the microphone prompt or
- * block, errors and refusals, reconnecting, and the short ended note. The buyer's first switch shows its note
- * ("what you say appears as text") above the bubble. State words only: no tool names, no cost, no stats.
+ * block, errors and refusals, reconnecting, and the short ended note. The buyer's first call in this browser shows a
+ * one-time hint ("what you say appears as text") above the bubble. State words only: no tool names, no cost, no stats.
  */
 import { useEffect, useRef, useState } from "react";
 import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
 import { VoiceBar } from "@/components/sas/voice/voice-bar";
 import { useNow, useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import type { VoiceClient } from "@/lib/voice/client/voice-client";
+import type { LiveLine } from "@/lib/voice/client/live-text";
 import { barView, type BarAction } from "@/lib/voice/client/view";
 import { mirrorFromSnapshot } from "@/lib/voice/client/bubble";
+import { claimFirstHint, runHint, type HintPhase } from "@/lib/voice/client/first-hint";
 import { openTabChannel, TabHost, type MirrorState, type OutputDevice, type TabCommand, type TabContext } from "@/lib/voice/client/tab-link";
 
 import type { Tr } from "@/lib/voice/client/buyer-ui";
@@ -57,11 +59,40 @@ export function BuyerCallBar({ client, tr, agentName, dir, onStartAgain, onClose
   );
 }
 
-/** How long the first switch's note stays next to the bubble. */
-const FIRST_NOTE_MS = 10_000;
+/** How often the live text is read while the agent speaks (a word is about 400 ms). */
+const LIVE_TICK_MS = 100;
+/** A done line stays live this long after it finished (its stored row arrives with the next poll), then the row alone shows. */
+const LIVE_KEEP_MS = 6000;
 
-/** Runs a bubble command on the call (from this tab's bubble or an order form tab's). */
-function runCommand(client: VoiceClient, c: TabCommand, setOutput: (id: string) => void) {
+/**
+ * The agent's lines as they are spoken (lib/voice/client/live-text.ts; display only): read from the call's client on a
+ * short timer while a call is on or a line is still being spoken; a new array only when what shows changed.
+ */
+export function useLiveAgentText(client: VoiceClient | null, active: boolean): LiveLine[] {
+  const [lines, setLines] = useState<LiveLine[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!client || (!active && !busy)) return;
+    let last = "";
+    const read = () => {
+      const now = performance.now();
+      const next = client.liveLines().filter((l) => !(l.done && l.doneAt !== null && now - l.doneAt > LIVE_KEEP_MS));
+      const sig = next.map((l) => `${l.key}\u0001${l.text}\u0001${l.done ? 1 : 0}\u0001${l.finals.length}`).join("\u0002");
+      if (sig !== last) {
+        last = sig;
+        setLines(next);
+      }
+      setBusy(next.length > 0);
+    };
+    read();
+    const t = window.setInterval(read, LIVE_TICK_MS);
+    return () => window.clearInterval(t);
+  }, [client, active, busy]);
+  return lines;
+}
+
+/** Runs a bubble command on the call (from this tab's bubble or an order form tab's): End call is "end". */
+export function runCommand(client: VoiceClient, c: TabCommand, setOutput: (id: string) => void) {
   if (c.cmd === "mute" || c.cmd === "unmute") client.mute(c.cmd === "mute");
   else if (c.cmd === "end") client.end();
   else if (c.cmd === "wake") client.wake();
@@ -73,12 +104,10 @@ function runCommand(client: VoiceClient, c: TabCommand, setOutput: (id: string) 
  * form tab of this conversation show and control the same call (lib/voice/client/tab-link.ts). The form's step
  * reaches the call as a context message; the latest one is sent again once the call is live.
  */
-export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble, firstNote = false }: {
+export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble }: {
   client: VoiceClient; tabKey: string | null; tr: Tr; agentName: string; dir: "ltr" | "rtl";
   /** Show the voice bar here (the tab link runs either way while a call is on). */
   showBubble: boolean;
-  /** The buyer's first switch to voice in this conversation: the note that what they say appears as text, once, above the bubble. */
-  firstNote?: boolean;
 }) {
   const s = useVoiceSnapshot(client);
   const now = useNow(s.phase === "live");
@@ -125,21 +154,23 @@ export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble
   useEffect(() => {
     if (live && context.current) client.sendContext(context.current);
   }, [client, live]);
-  // The first switch's note, next to the bubble once the call is live, for a while (or until tapped).
-  const [noteOn, setNoteOn] = useState(false);
+  // The one-time hint (lib/voice/client/first-hint.ts): the buyer's first call in this browser, once it is live, for
+  // about 4 s; then it fades (opacity only) and its row collapses; with reduced motion it just goes. A tap ends it.
+  const [hint, setHint] = useState<HintPhase>("off");
+  const hintRun = useRef<ReturnType<typeof runHint> | null>(null);
   useEffect(() => {
-    if (!firstNote || !live) return;
-    setNoteOn(true);
-    const t = window.setTimeout(() => setNoteOn(false), FIRST_NOTE_MS);
-    return () => window.clearTimeout(t);
-  }, [firstNote, live]);
+    if (!live || hintRun.current || !claimFirstHint()) return;
+    const reduced = !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    hintRun.current = runHint({ reduced, set: setHint });
+  }, [live]);
+  useEffect(() => () => hintRun.current?.cancel(), []);
   const state: MirrorState | null = mirrorFromSnapshot(s, { now, levels: { mic: 0, out: 0 }, outputs, output });
   if (!showBubble || !state || state.phase === "ended") return null;
   return (
     <div className="c-voicebar" dir={dir}>
       <VoiceBar
         state={state} agentName={agentName} tr={tr} dir={dir} levels={client.levels} onCommand={(c) => runCommand(client, c, setOutput)}
-        note={noteOn ? tr("buyer.voice.first_note") : null} onNoteDone={() => setNoteOn(false)}
+        note={hint === "off" ? null : tr("buyer.voice.first_note")} noteFading={hint === "fading"} onNoteDone={() => hintRun.current?.dismiss()}
       />
     </div>
   );

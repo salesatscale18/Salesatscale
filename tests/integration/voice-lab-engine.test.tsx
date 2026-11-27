@@ -15,6 +15,8 @@ import path from "node:path";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+// The lab's engine select switched back on (LAB_ENGINE_SELECTOR, off since 26 Nov 2026): the comparison stays covered.
+vi.mock("@/lib/voice-classic/engine-choice", async (orig) => (await import("../helpers/lab-selector")).selectorOn(await orig()));
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 vi.mock("@/lib/auth/account", () => ({
   get appDb() { return holder.db; },
@@ -127,7 +129,7 @@ describe("test lab: the voice engine selector", () => {
     save("page-engine-select", html);
     expect(html).toContain('data-voice-engine-select=""');
     expect(html).toContain("Voice engine");
-    expect(html).toContain('<option value="current" selected="">Live for buyers (22 Nov)</option>');
+    expect(html).toContain('<option value="guarded" selected="">Live for buyers (23 Nov)</option>');
     expect(html).toContain('<option value="classic">Old baseline (20 Nov)</option>');
     expect(html.indexOf('id="lab-ver"')).toBeLessThan(html.indexOf('id="lab-engine"'));
   });
@@ -142,13 +144,13 @@ describe("test lab: the voice engine selector", () => {
     expect(await startVoiceCallAction({ slug, engine: "classic" })).toEqual({ ok: false, reason: "not_allowed" });
     expect((await db.select({ id: voiceSessions.id }).from(voiceSessions)).length).toBe(before);
     // The rule itself: the field counts from a platform admin only.
-    expect(labEngineChoice(seller, "classic", { VOICE_REALTIME: "scripted" })).toBe("current");
+    expect(labEngineChoice(seller, "classic", { VOICE_REALTIME: "scripted" })).toBe("guarded");
     expect(labEngineChoice(admin, "classic", { VOICE_REALTIME: "scripted" })).toBe("classic");
-    expect(labEngineChoice(admin, "classic", { VOICE_REALTIME: "off" })).toBe("current");
-    expect(labEngineChoice(admin, "something", { VOICE_REALTIME: "scripted" })).toBe("current");
+    expect(labEngineChoice(admin, "classic", { VOICE_REALTIME: "off" })).toBe("guarded");
+    expect(labEngineChoice(admin, "something", { VOICE_REALTIME: "scripted" })).toBe("guarded");
   });
 
-  it("starts a Classic call for an admin (stored on the session, Gemini), and a Current one by default", async () => {
+  it("starts a Classic call for an admin (stored on the session, Gemini), a Current one when picked, the buyers' engine by default", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
@@ -161,7 +163,14 @@ describe("test lab: the voice engine selector", () => {
     expect(s.settings).toEqual({ engine: "classic" });
     expect(s.model).toBe("google/gemini-3.8-live");
     await endMyVoiceCallAction({ slug });
-    const cur = await startVoiceCallAction({ slug });
+    // Nothing picked: the buyers' engine (BUYER_VOICE_ENGINE, the New one), stored on the session.
+    const dflt = await startVoiceCallAction({ slug });
+    if (!dflt.ok) throw new Error(dflt.reason);
+    expect(dflt).toMatchObject({ engine: "guarded", model: "GPT-Realtime mini" });
+    const [d2] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, dflt.sessionId));
+    expect(d2.settings).toEqual({ engine: "guarded" });
+    await endMyVoiceCallAction({ slug });
+    const cur = await startVoiceCallAction({ slug, engine: "current" });
     if (!cur.ok) throw new Error(cur.reason);
     expect(cur).toMatchObject({ engine: "current", model: "GPT-Realtime mini" });
     expect(cur.classicOnGemini).toBeUndefined();

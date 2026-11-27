@@ -22,10 +22,11 @@ describe("GPT tool rules", () => {
     // The scripted stand-in and an unknown model: no rules.
     expect(gptToolRulesFor("scripted", true)).toBe(false);
     expect(gptToolRulesFor(null, true)).toBe(false);
-    // Buyer calls: off while GPT_TOOL_RULES_FOR_BUYER_CALLS is off.
-    expect(GPT_TOOL_RULES_FOR_BUYER_CALLS).toBe(false);
-    for (const m of GPT) expect(gptToolRulesFor(m, false), m).toBe(false);
-    expect(gptToolRulesFor(GPT[0], false, true)).toBe(true);
+    // Buyer calls: on since the owner decision of 26 Nov 2026 (GPT_TOOL_RULES_FOR_BUYER_CALLS: part of the New engine).
+    expect(GPT_TOOL_RULES_FOR_BUYER_CALLS).toBe(true);
+    for (const m of GPT) expect(gptToolRulesFor(m, false), m).toBe(true);
+    for (const m of OTHERS) expect(gptToolRulesFor(m, false), m).toBe(false);
+    expect(gptToolRulesFor(GPT[0], false, false)).toBe(false);
   });
 
   for (const c of input.cases) {
@@ -39,8 +40,8 @@ describe("GPT tool rules", () => {
           expect(gpt.slice(GPT_TOOL_RULES.length + 2), m).toBe(plain);
           expect(gpt.indexOf(GPT_TOOL_RULES)).toBe(0);
           expect(gpt.split(GPT_TOOL_RULES)).toHaveLength(2);
-          // A buyer call on the same model: unchanged.
-          expect(guardedInstructions(classic, { recorded, gptToolRules: gptToolRulesFor(m, false) }), m).toBe(plain);
+          // A buyer call on the same model: the same as a test call (26 Nov 2026).
+          expect(guardedInstructions(classic, { recorded, gptToolRules: gptToolRulesFor(m, false) }), m).toBe(gpt);
         }
         for (const m of OTHERS) expect(guardedInstructions(classic, { recorded, gptToolRules: gptToolRulesFor(m, true) }), m).toBe(plain);
         expect(plain).not.toContain("## Tool rules");

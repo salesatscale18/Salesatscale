@@ -5,13 +5,15 @@
  *
  *   1. mic   the mic capture delivered its first frame (after the audio route switch that starting capture causes)
  *   2. ctx   the AudioContext runs
- *   3. out   the output is moving: on the <audio> element route the element plays and its time advances; on the
+ *   3. out   the output is moving: on the <audio> element route the context runs and the element's currentTime
+ *            advanced >= 0.1 s since the mic went live (it really plays: play() having resolved is not enough); on the
  *            direct route the context clock advanced >= 0.1 s since the mic went live (and its output timestamp moves)
  *   4. primer 150 ms of silence played through the agent's own output path (started only after 1-3)
  *
  * Bounded (the owner's rule: under half a second more than before): steps 1-3 share READY_STEPS_MAX_MS, the
  * primer has READY_PRIMER_MAX_MS, so `ready` goes at most READY_MAX_MS after the check began, with the first
- * step that had not happened by then (`timedOut`).
+ * step that had not happened by then (`timedOut`). On the element route the report also says whether the element's
+ * time advanced by the end of the check (`outAdvance`: "no" when it never did; `ready` goes anyway, never a hang).
  */
 import type { ReadyDiagnostics, ReadyRoute, ReadyStep } from "../protocol";
 
@@ -35,6 +37,8 @@ export type ReadinessProbe = {
   resumeCtx(): void;
   /** The output is moving (see step 3). */
   outputMoving(): boolean;
+  /** The element route: the <audio> element's currentTime has advanced (read at the end, for `outAdvance`). */
+  outputAdvanced?(): boolean;
   /** Starts the silent primer through the agent's output path; `done` when it ended. Throws when it cannot. */
   playPrimer(done: () => void): void;
   latency(): { baseLatencyMs?: number; outputLatencyMs?: number };
@@ -100,7 +104,8 @@ export async function runReadiness(p: ReadinessProbe, clock: ReadinessClock = re
   } catch {
     // No latency figures.
   }
-  return { waitedMs: at(), route: p.route, steps, ...(timedOut ? { timedOut } : {}), ...lat };
+  const advance = p.route === "element" ? { outAdvance: steps.out !== null || (!!p.outputAdvanced && safe(() => p.outputAdvanced!())) ? "yes" as const : "no" as const } : {};
+  return { waitedMs: at(), route: p.route, steps, ...(timedOut ? { timedOut } : {}), ...advance, ...lat };
 }
 
 /** A latency in seconds (AudioContext.baseLatency / outputLatency) as whole ms, or undefined. */

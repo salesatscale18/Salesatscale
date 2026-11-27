@@ -10,9 +10,9 @@
  * outputs) and without it (the outputs hidden from enumerateDevices), each twice: the chat shown directly (/buyer),
  * and the lead page hand-over's set-up simulated (/buyer?stage=1: the chat first rendered off screen in a 390 px
  * container, the call started there with the greeting held, the chat then revealed at the page's width and the
- * greeting released). Checks: Mute's slot starts at the start gutter (16 px) and Text's ends at the end gutter,
+ * greeting released). Checks: Mute's slot starts at the start gutter (16 px) and End call's ends at the end gutter,
  * mirrored in RTL; Speaker, where shown, between Mute and the bubble; the bubble at the centre; no two controls
- * overlap; every label on screen; the first-switch hint above the bubble's outer ring (never over it); no sideways
+ * overlap; every label on screen; the one-time hint, while it shows, above the bubble's outer ring; no sideways
  * scroll; the speaking ring at its largest at least 8 px above the screen's bottom edge. Then, at phone heights
  * (390x844, 375x667), the bar while the agent speaks, and the muted state (Mute pressed and filled dark, the plain mic,
  * "Unmute"), in English and Hebrew. Shots: bar-<width>[-rtl][-nospeaker][-handover].png, bar-390x844-speaking.png,
@@ -48,7 +48,7 @@ const geometry = (page: Page) => page.evaluate(`(() => {
   const b = r(document.querySelector("[data-voice-bar] [data-bubble-button]"));
   const box = (c) => ({ left: c.left, right: c.right, mid: c.left + c.width / 2 });
   const ctl = {};
-  for (const k of ["mute", "speaker", "text"]) {
+  for (const k of ["mute", "speaker", "end"]) {
     const e = document.querySelector("[data-voice-bar] [data-bar-" + k + "]");
     ctl[k] = e ? { ...box(r(e)), circle: box(r(e.querySelector(".vb-ctl__circle"))), label: box(r(e.querySelector(".vb-ctl__label"))) } : null;
   }
@@ -72,19 +72,19 @@ const f1 = (n: number) => n.toFixed(1);
 const measured: string[] = [];
 
 function checkBar(g: Geometry, what: string, o: { rtl: boolean; speaker: boolean }) {
-  const { mute, speaker, text } = g.ctl;
+  const { mute, speaker, end: text } = g.ctl;
   check(g.dir === (o.rtl ? "rtl" : "ltr"), `${what}: the bar is ${o.rtl ? "RTL" : "LTR"} (dir=${g.dir})`);
-  check(!!mute && !!text && !!speaker === o.speaker, `${what}: Mute${o.speaker ? ", Speaker" : ""} and Text show${!o.speaker && speaker ? " (Speaker shows, unexpected)" : ""}`);
+  check(!!mute && !!text && !!speaker === o.speaker, `${what}: Mute${o.speaker ? ", Speaker" : ""} and End call show${!o.speaker && speaker ? " (Speaker shows, unexpected)" : ""}`);
   if (!mute || !text) return;
-  // The start edge: left in LTR, right in RTL. Mute's slot at the start gutter, Text's at the end gutter.
+  // The start edge: left in LTR, right in RTL. Mute's slot at the start gutter, End call's at the end gutter.
   const startGap = (b: Box) => (o.rtl ? g.width - b.right : b.left);
   const endGap = (b: Box) => (o.rtl ? b.left : g.width - b.right);
   check(Math.abs(startGap(mute) - GUTTER) <= 0.5, `${what}: Mute's slot starts at the ${o.rtl ? "right" : "left"} gutter (${f1(startGap(mute))} px from the edge)`);
-  check(Math.abs(endGap(text) - GUTTER) <= 0.5, `${what}: Text's slot ends at the ${o.rtl ? "left" : "right"} gutter (${f1(endGap(text))} px from the edge)`);
-  check(Math.abs(startGap(mute.circle) - endGap(text.circle)) <= 0.5, `${what}: Mute and Text mirror each other (circles ${f1(startGap(mute.circle))} · ${f1(endGap(text.circle))} px from the edges)`);
+  check(Math.abs(endGap(text) - GUTTER) <= 0.5, `${what}: End call's slot ends at the ${o.rtl ? "left" : "right"} gutter (${f1(endGap(text))} px from the edge)`);
+  check(Math.abs(startGap(mute.circle) - endGap(text.circle)) <= 0.5, `${what}: Mute and End call mirror each other (circles ${f1(startGap(mute.circle))} · ${f1(endGap(text.circle))} px from the edges)`);
   check(g.scroll <= g.width, `${what}: no sideways scroll (${g.scroll} / ${g.width})`);
   check(Math.abs(g.bubble.mid - g.width / 2) <= 1, `${what}: the bubble at the centre (${f1(g.bubble.mid - g.width / 2)} px off)`);
-  // In reading order: Mute, Speaker, the bubble, Text; no two overlap (their slots or their labels).
+  // In reading order: Mute, Speaker, the bubble, End call; no two overlap (their slots or their labels).
   const order: Box[] = [mute, ...(speaker ? [speaker] : []), { left: g.bubble.left, right: g.bubble.right, mid: g.bubble.mid }, text];
   const visual = o.rtl ? [...order].reverse() : order;
   const apart = visual.slice(1).map((b, i) => b.left - visual[i].right);
@@ -101,20 +101,20 @@ function checkBar(g: Geometry, what: string, o: { rtl: boolean; speaker: boolean
     check(between, `${what}: Speaker between Mute and the bubble`);
   }
   const side = (b: Box) => f1(b.left) + "-" + f1(b.right);
-  measured.push(`${what}: Mute ${side(mute)}${speaker ? `, Speaker ${side(speaker)}` : ""}, bubble ${side(g.bubble)} (centre ${f1(g.bubble.mid)} / ${g.width / 2}), Text ${side(text)}; start gap ${f1(startGap(mute))}, end gap ${f1(endGap(text))}; ring clear of the bottom ${f1(g.height - largest)}`);
+  measured.push(`${what}: Mute ${side(mute)}${speaker ? `, Speaker ${side(speaker)}` : ""}, bubble ${side(g.bubble)} (centre ${f1(g.bubble.mid)} / ${g.width / 2}), End call ${side(text)}; start gap ${f1(startGap(mute))}, end gap ${f1(endGap(text))}; ring clear of the bottom ${f1(g.height - largest)}`);
   if (g.flash) {
     const clear = g.bubble.top - RING_REACH - g.flash.bottom;
     check(clear >= 0, `${what}: the hint clears the bubble's outer ring (${clear.toFixed(1)} px)`);
     check(g.flash.left >= GUTTER - 0.5 && g.flash.right <= g.width - GUTTER + 0.5, `${what}: the hint inside the gutters`);
     check(g.flash.bg !== "rgba(0, 0, 0, 0)" && g.flash.bg !== "transparent", `${what}: the hint is drawn (background ${g.flash.bg})`);
-  } else check(false, `${what}: the first-switch hint shows`);
+  }
 }
 
 type Opts = { height?: number; shot?: string; muted?: boolean };
 
 async function run(browser: Browser, width: number, staged: boolean, rtl: boolean, speaker: boolean, o: Opts = {}) {
   const height = o.height ?? 800;
-  // A fresh harness each time: the first-switch hint shows on a conversation's first call only.
+  // A fresh harness and browser context each time (the one-time hint shows on a browser's first call only).
   const h = await startVoiceHarness();
   const lang = rtl ? "he" : "en";
   const what = `${width}${o.height ? `x${height}` : ""}px ${rtl ? "RTL" : "LTR"} ${speaker ? "with Speaker" : "no Speaker"} ${staged ? "from the hand-over" : "direct"}`;

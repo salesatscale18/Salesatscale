@@ -8,7 +8,7 @@
  * The harness page is not a Next page: an init script gives its first entry the state Next's router writes
  * (`__NA`), as on the real chat page. Checks, in English and Hebrew on a phone: one guard on the same URL with the
  * query string; Back opens "Leave the chat?" with focus on Stay in the chat, Tab stays inside, Escape is Stay and
- * re-arms; Leave goes back to the page before; during a call Back opens "Switch to text?", Escape stays in voice, Switch to text
+ * re-arms; Leave goes back to the page before; during a call Back opens "End the call?", Escape stays in voice (Keep talking), End call
  * ends voice mode and the chat is guarded again; reload during a call gets the browser's leave prompt and not
  * after; the voice bar takes the composer's place. Screenshots back-*.png and voice-bar-*.png.
  */
@@ -100,13 +100,13 @@ async function main() {
       const sym = await barSymmetry(page);
       const inside = await page.evaluate(`(() => { const r = [...document.querySelectorAll("[data-voice-bar] .vb-ctl__circle")].map((e) => e.getBoundingClientRect()); return Math.min(...r.map((x) => x.left)) >= 16 && Math.max(...r.map((x) => x.right)) <= innerWidth - 16; })()`);
       check(inside, `${lang}: all four controls fit inside the 16 px gutters at 390 px`);
-      check(sym.off <= 1 && Math.abs(sym.leftGap - sym.rightGap) <= 1, `${lang}: bubble at the bar's centre (${sym.off.toFixed(1)} px off), equal gaps to Speaker and Text (${sym.leftGap.toFixed(1)} / ${sym.rightGap.toFixed(1)} px)`);
-      check(JSON.stringify(sym.sizes) === JSON.stringify(["44x44"]), `${lang}: Mute, Speaker and Text are the same 44 px circle (${sym.sizes.join(", ")})`);
+      check(sym.off <= 1 && Math.abs(sym.leftGap - sym.rightGap) <= 1, `${lang}: bubble at the bar's centre (${sym.off.toFixed(1)} px off), equal gaps to Speaker and End call (${sym.leftGap.toFixed(1)} / ${sym.rightGap.toFixed(1)} px)`);
+      check(JSON.stringify(sym.sizes) === JSON.stringify(["44x44"]), `${lang}: Mute, Speaker and End call are the same 44 px circle (${sym.sizes.join(", ")})`);
       await shot(page, `voice-bar-${lang}`);
       await page.evaluate(() => history.back());
-      check(await sheet(page, "end_call"), `${lang}: Back during the call opens Switch to text?`);
-      check(await focusIn(page, "[data-sheet-safe]"), `${lang}: focus on Stay in voice`);
-      check((await page.textContent("[data-leave-sheet] h2")) === (lang === "he" ? "לעבור לכתיבה?" : "Switch to text?"), `${lang}: the voice sheet's title`);
+      check(await sheet(page, "end_call"), `${lang}: Back during the call opens End the call?`);
+      check(await focusIn(page, "[data-sheet-safe]"), `${lang}: focus on Keep talking`);
+      check((await page.textContent("[data-leave-sheet] h2")) === (lang === "he" ? "לסיים את השיחה?" : "End the call?"), `${lang}: the voice sheet's title`);
       await shot(page, `back-end-${lang}`);
       await page.keyboard.press("Escape");
       check((await gone(page)) && (await page.locator('[data-voice-bubble][data-bubble-phase="live"]').count()) === 1, `${lang}: Escape stays in voice`);
@@ -120,7 +120,7 @@ async function main() {
       check(await sheet(page, "end_call"), `${lang}: Back asks again`);
       await page.click("[data-sheet-end]");
       check(await page.waitForSelector("#c-input", { timeout: 15_000 }).then(() => true, () => false), `${lang}: the composer comes back`);
-      check(await page.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).then(() => true, () => false), `${lang}: Switch to text stops the voice; the chat stays`);
+      check(await page.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).then(() => true, () => false), `${lang}: End call stops the voice; the chat stays`);
       check(await guarded(page), `${lang}: the chat is guarded again`);
       await page.evaluate(() => history.back());
       check(await sheet(page, "leave_chat"), `${lang}: after the call, Back asks Leave the chat?`);

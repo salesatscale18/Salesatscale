@@ -1,5 +1,6 @@
 /**
- * Which voice engine runs a call: "current" (lib/voice/engine.ts, the default and the only one for buyers),
+ * Which voice engine runs a call (since 26 Nov 2026 one engine for every call: BUYER_VOICE_ENGINE, "guarded", and the
+ * lab select is off: LAB_ENGINE_SELECTOR below): "current" (lib/voice/engine.ts, the engine of buyer calls until 26 Nov, now switched off),
  * "classic" (lib/voice-classic/engine.ts, the 20 Nov engine) or "guarded" ("Classic + guards": today's engine with
  * the Classic model side and today's guards, lib/voice-guarded) or "guarded_silent" (guarded plus, on Gemini, the
  * silent bookkeeping probe: lib/voice-guarded/silent-probe.ts), picked in the test lab by platform admins only; or a pipeline (lib/voice-pipeline: a transcription model listens, the
@@ -50,6 +51,26 @@ export const RT_ELEVEN_MODELS: Readonly<Record<RtElevenEngineName, string>> = {
  */
 export const isRetiredEngine = (e: unknown): boolean => isPipelineEngine(e) || isRtElevenEngine(e) || e === GUARDED_SILENT_ENGINE;
 
+/**
+ * ONE ENGINE FOR EVERY CALL (owner decision, 26 Nov 2026). The engine every buyer call runs on, whatever the model
+ * (Gemini, GPT-Realtime; ElevenLabs Realtime never reaches a buyer: ELEVEN_REALTIME_FOR_BUYER_CALLS): "guarded", the
+ * New (23 Nov) engine (lib/voice/engine.ts with the lib/voice-guarded profile). Every way a buyer call starts (the
+ * chat page's switch to voice, the lead page hand-over's "Talk now") goes through lib/voice/buyer.ts
+ * startBuyerVoiceCall → lib/voice/service.ts createVoiceSession, which stores it on the session, and the socket
+ * (lib/voice/socket.ts callEngineOf) runs it; a buyer can never pick another.
+ */
+export const BUYER_VOICE_ENGINE = GUARDED_ENGINE;
+
+/**
+ * The test lab's "Voice engine" select (owner decision, 26 Nov 2026: OFF). Off: the lab shows no select and no engine
+ * help line, and every test call runs BUYER_VOICE_ENGINE (an engine id posted by an old form or a saved call's "Call
+ * again" is ignored): a test call runs exactly what buyers get. The other engines stay in the code, switched off:
+ * "current" (Live for buyers until 26 Nov, lib/voice/engine.ts without a profile) and "classic" (20 Nov, frozen,
+ * lib/voice-classic). Set this to true to bring the select and the comparison back unchanged (labEngineChoice, the
+ * page's `engines` prop, the start action's refusal of retired ids).
+ */
+export const LAB_ENGINE_SELECTOR: boolean = false;
+
 /** The engines that run today's engine with the guarded profile (lib/voice-guarded/profile.ts). */
 export const isGuardedEngine = (e: VoiceEngineName): e is typeof GUARDED_ENGINE | typeof GUARDED_SILENT_ENGINE => e === GUARDED_ENGINE || e === GUARDED_SILENT_ENGINE;
 
@@ -75,11 +96,12 @@ export const ENGINE_DATES: Readonly<Record<VoiceEngineName, string>> = {
 };
 
 /**
- * The test lab's "Voice engine" list: the WIRING only (owner, 24 Nov 2026: one rule; the version's Voice settings
- * decide the model and the voice). Live for buyers first, the old baseline last. The retired ids are not offered
+ * The test lab's "Voice engine" list (shown only while LAB_ENGINE_SELECTOR is on): the WIRING only (owner, 24 Nov 2026:
+ * one rule; the version's Voice settings decide the model and the voice). The buyers' engine first (BUYER_VOICE_ENGINE,
+ * since 26 Nov), then the previous one (Current, 22 Nov), the old baseline last. The retired ids are not offered
  * (isRetiredEngine).
  */
-export const ENGINE_ORDER: readonly VoiceEngineName[] = ["current", "guarded", "classic"];
+export const ENGINE_ORDER: readonly VoiceEngineName[] = ["guarded", "current", "classic"];
 
 /** An engine's label's values ({date}). */
 export const engineLabelVars = (engine: VoiceEngineName | null | undefined) => ({ date: ENGINE_DATES[engine ?? "current"] ?? ENGINE_DATES.current });
@@ -98,10 +120,20 @@ export function sessionEngine(settings: unknown): VoiceEngineName {
 }
 
 /**
- * The engine a test-lab call starts on: what the form posted, honoured only for a platform admin (the same check as
- * the voice model picker and the whole voice lab: lib/voice/lab.ts voiceLabAccess). Anyone else gets Current.
+ * The engine a test-lab call starts on. With the select off (LAB_ENGINE_SELECTOR, today): BUYER_VOICE_ENGINE, whatever
+ * was posted. With it on: what the form posted, honoured only for a platform admin (the same check as the voice model
+ * picker and the whole voice lab: lib/voice/lab.ts voiceLabAccess); "current" when "current" was posted; anyone else,
+ * or nothing posted, gets BUYER_VOICE_ENGINE. `selector`: tests only (the constant otherwise).
  */
-export function labEngineChoice(user: { role: string } | null | undefined, posted: unknown, env: Record<string, string | undefined> = process.env): VoiceEngineName {
-  if (voiceLabAccess(user, env) !== "ok") return "current";
-  return otherEngine(posted) ?? "current";
+export function labEngineChoice(
+  user: { role: string } | null | undefined, posted: unknown, env: Record<string, string | undefined> = process.env, selector: boolean = LAB_ENGINE_SELECTOR,
+): VoiceEngineName {
+  if (!selector || voiceLabAccess(user, env) !== "ok") return BUYER_VOICE_ENGINE;
+  return posted === "current" ? "current" : otherEngine(posted) ?? BUYER_VOICE_ENGINE;
 }
+
+/**
+ * Whether the start action refuses a posted engine id: a retired one (isRetiredEngine), and only while the select is
+ * on. With it off, any posted id is ignored (labEngineChoice), never refused.
+ */
+export const labEngineRefused = (posted: unknown, selector: boolean = LAB_ENGINE_SELECTOR): boolean => selector && isRetiredEngine(posted);

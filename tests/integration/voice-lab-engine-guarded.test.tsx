@@ -15,6 +15,8 @@ import path from "node:path";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+// The lab's engine select switched back on (LAB_ENGINE_SELECTOR, off since 26 Nov 2026): the comparison stays covered.
+vi.mock("@/lib/voice-classic/engine-choice", async (orig) => (await import("../helpers/lab-selector")).selectorOn(await orig()));
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 vi.mock("@/lib/auth/account", () => ({
   get appDb() { return holder.db; },
@@ -127,11 +129,11 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     save("guarded-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
-      ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["classic", "Old baseline (20 Nov)"],
+      ["guarded", "Live for buyers (23 Nov)"], ["current", "Previous (22 Nov)"], ["classic", "Old baseline (20 Nov)"],
     ]);
-    expect(select).toContain('<option value="current" selected="">Live for buyers (22 Nov)</option>');
+    expect(select).toContain('<option value="guarded" selected="">Live for buyers (23 Nov)</option>');
     // One helper line under the row for the selected engine (what it is based on, whether buyers get it).
-    expect(html).toMatch(/<p class="sas-small lab-choices__why lab-choices__help" id="lab-engine-help" data-voice-engine-help="">The engine every buyer call runs on: [^<]*Buyers get it\. The model and voice come from the version&#x27;s Voice settings\.<\/p>/);
+    expect(html).toMatch(/<p class="sas-small lab-choices__why lab-choices__help" id="lab-engine-help" data-voice-engine-help="">The engine every buyer call runs on \(since 26 Nov\): [^<]*Buyers get it\. The model and voice come from the version&#x27;s Voice settings\.<\/p>/);
     expect(html).toMatch(/<select[^>]*aria-describedby="lab-engine-help"/);
     // The Version select names each version's date: "v1 · Draft · 23 Nov".
     const ver = /<select[^>]*id="lab-ver"[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
@@ -142,21 +144,21 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     const { t } = await import("@/lib/i18n");
     const { ENGINE_ORDER, engineHelpKey } = await import("@/lib/voice-classic/engine-choice");
     const help = Object.fromEntries(ENGINE_ORDER.map((e) => [e, t(engineHelpKey(e))]));
-    expect(help.guarded).toBe("Newest engine code with the simpler speaking instructions, a server-written price sentence and plain objection notes. Test lab only. The model and voice come from the version's Voice settings.");
-    expect(help.current).toMatch(/Buyers get it\. The model and voice come from the version's Voice settings\.$/);
+    expect(help.guarded).toBe("The engine every buyer call runs on (since 26 Nov): the simpler speaking instructions, a server-written price sentence and plain objection notes. Buyers get it. The model and voice come from the version's Voice settings.");
+    expect(help.current).toMatch(/Switched off: buyers no longer get it\. The model and voice come from the version's Voice settings\.$/);
     expect(help.classic).toMatch(/with the model's own voice\. Test lab only\.$/);
-    expect(Object.keys(help)).toEqual(["current", "guarded", "classic"]);
+    expect(Object.keys(help)).toEqual(["guarded", "current", "classic"]);
   });
 
   it("never shows it to a seller, and the server ignores the field from one", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     as(seller);
     const html = await render({ mode: "voice" });
-    expect(html).not.toContain("New (23 Nov)");
+    expect(html).not.toContain("Live for buyers (23 Nov)");
     expect(await startVoiceCallAction({ slug, engine: "guarded" })).toEqual({ ok: false, reason: "not_allowed" });
-    expect(labEngineChoice(seller, "guarded", { VOICE_REALTIME: "scripted" })).toBe("current");
+    expect(labEngineChoice(seller, "guarded", { VOICE_REALTIME: "scripted" })).toBe("guarded");
     expect(labEngineChoice(admin, "guarded", { VOICE_REALTIME: "scripted" })).toBe("guarded");
-    expect(labEngineChoice(admin, "guarded", { VOICE_REALTIME: "off" })).toBe("current");
+    expect(labEngineChoice(admin, "guarded", { VOICE_REALTIME: "off" })).toBe("guarded");
     expect(sessionEngine({ engine: "guarded" })).toBe("guarded");
     expect(sessionEngine({ engine: "GUARDED" })).toBe("current");
     expect(sessionEngine(null)).toBe("current");
@@ -192,9 +194,9 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     expect(s.recordingState).toBe("saved");
     const html = await render({ c: r.conversationId });
     save("guarded-page-call", html);
-    expect(html).toContain('data-voice-engine-pill=""');
-    expect(html).toContain("Engine: New (23 Nov)");
-    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">New \(23 Nov\)<\/dd>/);
+    // The buyers' engine (26 Nov 2026): no engine pill in the header (it marks a call on another engine); This call names it.
+    expect(html).not.toContain('data-voice-engine-pill=""');
+    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">Live for buyers \(23 Nov\)<\/dd>/);
     expect(html).toContain("Call again");
     const [again] = findElements(await pageElement({ c: r.conversationId }), VoiceCallAgainBar);
     expect(again.props).toMatchObject({ engine: "guarded" });
@@ -205,7 +207,7 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     await endMyVoiceCallAction({ slug });
     as(seller);
     const sellerHtml = await render({ c: r.conversationId });
-    expect(sellerHtml).not.toContain("New (23 Nov)");
+    expect(sellerHtml).not.toContain("Live for buyers (23 Nov)");
   });
 });
 
@@ -216,7 +218,7 @@ describe("test lab: the voice engine selector, Classic + guards (silent probe)",
     as(seller);
     expect(await render({ mode: "voice" })).not.toContain("silent probe");
     expect(await startVoiceCallAction({ slug, engine: "guarded_silent" })).toEqual({ ok: false, reason: "not_allowed" });
-    expect(labEngineChoice(seller, "guarded_silent", { VOICE_REALTIME: "scripted" })).toBe("current");
+    expect(labEngineChoice(seller, "guarded_silent", { VOICE_REALTIME: "scripted" })).toBe("guarded");
     expect(sessionEngine({ engine: "guarded_silent" })).toBe("guarded_silent");
     expect(sessionEngine({ engine: "guarded-silent" })).toBe("current");
     as(admin);

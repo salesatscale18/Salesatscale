@@ -18,7 +18,7 @@ import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, 
 import { isOpenAiVoiceModel, maxCallSeconds, resolveVoiceSettings, sentCallVoice, storedSpeech, versionModelId, type CallVoiceInfo, voiceCapabilities, voiceFormExtras, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
-import { isGatewayPipelineEngine, isPipelineEngine, isRetiredEngine, labEngineChoice, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGatewayPipelineEngine, isPipelineEngine, labEngineChoice, labEngineRefused, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { speechFor } from "@/lib/voice-rt-eleven/rule";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
@@ -36,7 +36,7 @@ export type StartVoiceCallResult =
       ok: true; conversationId: string; sessionId: string; ticket: string; wsUrl: string; mode: "scripted" | "live"; maxSec: number;
       /** The call's voice model, as its label ("GPT-Realtime mini"): its version's (a Classic call: Gemini). */
       model: string;
-      /** The voice engine the call runs on (platform admins pick it; anyone else gets Current). */
+      /** The voice engine the call runs on (the buyers' engine while the lab select is off: labEngineChoice). */
       engine: VoiceEngineName;
       /** A Classic call on a version set to a non-Gemini model: it runs on Gemini instead (the page says so). */
       classicOnGemini?: boolean;
@@ -57,8 +57,9 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   if (gate === "not_admin") return { ok: false, reason: "not_allowed" };
   if (gate === "voice_off") return { ok: false, reason: "voice_off" };
   // Retired engines (owner, 24 Nov 2026): the pipelines, the realtime + ElevenLabs engines and the silent probe. No new
-  // call starts on one (Call again on an old one too); ElevenLabs is a Voice settings choice now.
-  if (isRetiredEngine(input?.engine)) return { ok: false, reason: "not_allowed" };
+  // call starts on one (Call again on an old one too); ElevenLabs is a Voice settings choice now. While the engine select
+  // is off (LAB_ENGINE_SELECTOR) a posted id is ignored instead: the call runs the buyers' engine (labEngineChoice).
+  if (labEngineRefused(input?.engine)) return { ok: false, reason: "not_allowed" };
   const mode = voiceMode();
   if (a.account.status === "paused") return { ok: false, reason: "account_paused" };
   // A live call is refused at the caps before anything is created (scripted calls cost nothing).
@@ -77,7 +78,8 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const versionId = isUuid(rawVersion) ? rawVersion : undefined;
   const conv = await startVoiceTestConversation(appDb, a.account.id, a.user.id, { scenario: scenario && scenario.language === language ? scenario.id : null, versionId, language });
   if (!conv) return { ok: false, reason: "error" };
-  // The voice engine: honoured from a platform admin only (checked here on the server); anyone else gets Current.
+  // The voice engine: the buyers' engine (BUYER_VOICE_ENGINE) while the lab select is off; with it on, honoured from
+  // a platform admin only (checked here on the server). lib/voice-classic/engine-choice.ts labEngineChoice.
   const engine = labEngineChoice(a.user, input?.engine);
   const s = await createVoiceSession(appDb, { accountId: a.account.id, conversationId: conv.conversationId, userId: a.user.id, isTest: true }, { engine });
   if (!s.ok) {

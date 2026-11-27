@@ -11,7 +11,8 @@
  *   whatever the version's fillers setting;
  * - Current's order_form_status line, where Current places it (before the order-form note line);
  * - a recorded call: Current's one recording rule, at the end of the voice block (where Current places it);
- * - a TEST call on a GPT-Realtime model (2.1 or mini): the short GPT tool rules at the very top (GPT_TOOL_RULES);
+ * - a call on a GPT-Realtime model (2.1 or mini; buyer calls too since 26 Nov: GPT_TOOL_RULES_FOR_BUYER_CALLS): the
+ *   short GPT tool rules at the very top (GPT_TOOL_RULES);
  *   Gemini and ElevenLabs Realtime get the text above byte for byte.
  * tests/unit/voice-guarded-instructions.test.ts asserts the result is Classic's plus exactly these.
  */
@@ -80,10 +81,10 @@ function lineStarting(text: string, start: string): string {
 }
 
 /**
- * The GPT tool rules on BUYER calls. Off: test calls only (a guarded engine runs on test calls only today; this keeps it
- * so if that changes). Turn on once test calls proved it.
+ * The GPT tool rules on BUYER calls. ON since the owner decision of 26 Nov 2026: the New engine (this profile) is the
+ * engine of every buyer call, and these rules are part of it (proven on test calls first).
  */
-export const GPT_TOOL_RULES_FOR_BUYER_CALLS = false;
+export const GPT_TOOL_RULES_FOR_BUYER_CALLS: boolean = true;
 
 /**
  * Short tool rules for the OpenAI realtime models (GPT-Realtime 2.1 and mini), at the very top of the instructions
@@ -101,7 +102,7 @@ export const GPT_TOOL_RULES = [
   "- Order: call dependent tools in order: first save the details with update_deal_state, then check_fit, then create_quote.",
 ].join("\n");
 
-/** Whether a call's instructions start with the GPT tool rules: a GPT-Realtime model, on a test call. */
+/** Whether a call's instructions start with the GPT tool rules: a GPT-Realtime model, on a test call or (GPT_TOOL_RULES_FOR_BUYER_CALLS) a buyer call. */
 export function gptToolRulesFor(modelId: string | null | undefined, isTest: boolean, forBuyers: boolean = GPT_TOOL_RULES_FOR_BUYER_CALLS): boolean {
   return voiceFamilyOf(modelId) === "openai" && isOpenAiVoiceModel(modelId) && (isTest || forBuyers);
 }
@@ -151,14 +152,18 @@ export function guardedRemovedLines(o: { fillers?: boolean } = {}): string[] {
 
 /**
  * Loads a call's instructions as Classic does (the same data, opener and pick-up line) and adds the guarded lines.
- * The engine's own options beyond Classic's (the spoken language, its stage count) are not used: as Classic.
+ * The engine's stage count is not used: as Classic. `language` (since 26 Nov 2026, Current's buyer fix): the language
+ * the call speaks now, on a reconnect or wake after the buyer switched language; Classic's loader then builds them as
+ * for a conversation in that language (Classic's own text, "start in <language>"), as Current's loader does. The same
+ * language as the conversation's (every first connection): exactly Classic's.
  */
 export async function loadGuardedInstructions(
   db: Db,
   a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: DealState | null; now: Date },
-  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean } = {},
+  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean; language?: string } = {},
 ): Promise<VoiceCallContext> {
-  const ctx = await loadClassicInstructions(db, a, { recap: opts.recap, resumed: opts.resumed, woke: opts.woke });
+  const switched = !!opts.language && opts.language !== (a.conv.language || "en");
+  const ctx = await loadClassicInstructions(db, switched ? { ...a, conv: { ...a.conv, language: opts.language! } } : a, { recap: opts.recap, resumed: opts.resumed, woke: opts.woke });
   return {
     instructions: guardedInstructions(ctx.instructions, { recorded: opts.recorded, gptToolRules: gptToolRulesFor(opts.modelId, opts.isTest ?? false) }),
     opener: ctx.opener, openerPrompt: ctx.openerPrompt, language: ctx.language, expectedLanguages: ctx.expectedLanguages, continuing: ctx.continuing,

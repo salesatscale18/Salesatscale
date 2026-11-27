@@ -46,7 +46,7 @@ import { displaySeller, orderLabel } from "@/lib/orders/service";
 import { SMS_NUDGE_EVENTS } from "@/lib/sms/rules";
 import { CHAT_OPENED_EVENT } from "@/lib/agent/thread-markers";
 import {
-  agentTyping, chatLinkExpiresAt, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL, WEB_CHAT_CHANNELS, webChatChannelOf,
+  agentTyping, chatLinkExpiresAt, isSimulatedLead, isWebChat, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL, WEB_CHAT_CHANNELS, webChatChannelOf,
 } from "./rules";
 import { chatTokenFor, hashToken, linkIdFromChatToken, shortCodeMatches, shortCodeRange } from "./token";
 
@@ -338,7 +338,11 @@ const gateStatus = (lead: { buyerRef?: string | null; phone: string }, status: s
  * provider ones (Twilio, number): an approved opening template is required and
  * contact hours count. Off: no template needed (the default opener is used) and no contact hours.
  */
-export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: string, now = new Date()) {
+/**
+ * `opts.existingConversation`: the opener goes into this already prepared web chat (a lead page hand-over left it
+ * empty, lib/chat/start.ts ensureWrittenOpener), so that chat does not count as "already started".
+ */
+export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: string, now = new Date(), opts: { existingConversation?: string } = {}) {
   const lead = await realLead(db, accountId, leadId);
   if (!lead) return null;
   const [[account], [consent], [live], [active], capped, market] = await Promise.all([
@@ -346,7 +350,10 @@ export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: st
     db.select({ id: consentRecords.id }).from(consentRecords).where(and(eq(consentRecords.accountId, accountId), eq(consentRecords.leadId, leadId))).limit(1),
     db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live"))),
     db.select({ id: conversations.id }).from(conversations)
-      .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false), ne(conversations.status, "closed")))
+      .where(and(
+        eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false), ne(conversations.status, "closed"),
+        ...(opts.existingConversation ? [ne(conversations.id, opts.existingConversation)] : []),
+      ))
       .limit(1),
     spendCapped(db, accountId, now),
     marketOfLead(db, accountId, lead.marketId),
@@ -377,29 +384,25 @@ export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: st
 
 export type SimStartResult = { ok: true; conversationId: string; messageId: string } | { ok: false; reason: SimOpenerRefusal | "not_found" };
 
-/**
- * Start conversation: the agent sends its opening message on the simulator
- * channel. The text is the approved opening template when there is one for the
- * lead's language (required with WhatsApp rules on), else the fixed opener
- * (lib/agent/core/opener.ts): the agent's name, what leads ask about and the
- * seller's opening question, from the playbook. No model call.
- */
-export async function startSimulatorConversation(
-  db: Db, actor: Actor, accountId: string, leadId: string, now = new Date(),
-  /**
-   * `contactHours: false`: the buyer opened the chat (or a person acted now), so contact hours do not hold the
-   * opener back (lib/chat/start.ts). `leadInterest`: what the lead asked about on the form, when known.
-   * `firstMessage`: the first line in place of the opener (lib/chat/continuation.ts: a lead the agent already
-   * talked to elsewhere gets a continuation line), built from the same names; null keeps the opener.
-   */
-  opts: {
-    contactHours?: boolean; leadInterest?: string | null;
-    /** The conversation's starting language in place of the lead's (a continuation: the language the buyer last wrote in). */
-    language?: Locale;
-    firstMessage?: (f: { names: BuyerNames; firstName: string; lang: Locale }) => string | null;
-  } = {},
-): Promise<SimStartResult> {
-  const facts = await simulatorOpenerFacts(db, accountId, leadId, now);
+/** The opener's options (lib/chat/start.ts builds them: contact hours, the lead's interest, a continuation line). */
+export type SimOpenerOptions = {
+  /** `false`: the buyer opened the chat (or a person acted now), so contact hours do not hold the opener back. */
+  contactHours?: boolean;
+  /** What the lead asked about on the form, when known. */
+  leadInterest?: string | null;
+  /** The conversation's starting language in place of the lead's (a continuation: the language the buyer last wrote in). */
+  language?: Locale;
+  /** The first line in place of the opener (lib/chat/continuation.ts), built from the same names; null keeps the opener. */
+  firstMessage?: (f: { names: BuyerNames; firstName: string; lang: Locale }) => string | null;
+};
+
+type PreparedOpener =
+  | { ok: false; reason: SimOpenerRefusal | "not_found" }
+  | { ok: true; lead: Lead; liveId: string; channel: string; body: string; templateId: string | null; templateName: string | null; continued: boolean };
+
+/** The opener's gates and text (the approved template or the fixed opener, or the continuation line). No writes. */
+async function prepareOpener(db: Db, accountId: string, leadId: string, now: Date, opts: SimOpenerOptions, existingConversation?: string): Promise<PreparedOpener> {
+  const facts = await simulatorOpenerFacts(db, accountId, leadId, now, { existingConversation });
   if (!facts) return { ok: false, reason: "not_found" };
   if (facts.refusal && !(opts.contactHours === false && facts.refusal === "outside_contact_hours")) return { ok: false, reason: facts.refusal };
   const { lead, account, live, template } = facts;
@@ -413,28 +416,130 @@ export async function startSimulatorConversation(
   const body = continued ?? (template
     ? renderTemplate(template.body, vars)
     : openerText({ name: vars["1"], agent: names.agent, company: names.seller, gender: names.gender, language: lang, opener: live.playbook.opener, leadInterest: opts.leadInterest }));
+  return {
+    ok: true, lead, liveId: live.id, channel, body, continued: !!continued,
+    templateId: continued ? null : template?.id ?? null, templateName: template && !continued ? template.name : null,
+  };
+}
+
+/**
+ * Start conversation: the agent sends its opening message on the simulator
+ * channel. The text is the approved opening template when there is one for the
+ * lead's language (required with WhatsApp rules on), else the fixed opener
+ * (lib/agent/core/opener.ts): the agent's name, what leads ask about and the
+ * seller's opening question, from the playbook. No model call.
+ *
+ * `opts.withoutOpener` (the lead page hand-over, lib/chat/start.ts ensureChatPrepared): the same gates, the
+ * conversation and the chat link, but no message yet; postSimulatorOpener writes it later (or a call speaks first).
+ */
+export async function startSimulatorConversation(
+  db: Db, actor: Actor, accountId: string, leadId: string, now = new Date(),
+  opts: SimOpenerOptions & { withoutOpener?: boolean } = {},
+): Promise<SimStartResult> {
+  const p = await prepareOpener(db, accountId, leadId, now, opts);
+  if (!p.ok) return p;
+  const { lead, liveId, channel } = p;
+  const deferred = !!opts.withoutOpener;
   const conversationId = randomUUID();
   const messageId = randomUUID();
+  const language = opts.language ?? lead.language;
   await atomic(db, (q) => [
     q.insert(conversations).values({
-      id: conversationId, accountId, leadId, channel, agentVersionId: live.id, language: opts.language ?? lead.language, createdByUserId: actor.userId, createdAt: now, updatedAt: now,
+      id: conversationId, accountId, leadId, channel, agentVersionId: liveId, language, createdByUserId: actor.userId, createdAt: now, updatedAt: now,
     }),
-    q.insert(messages).values({
-      id: messageId, accountId, conversationId, actor: "agent", body, language: opts.language ?? lead.language, agentVersionId: live.id,
-      deliveryStatus: "delivered", templateId: continued ? null : template?.id ?? null, createdAt: now,
-    }),
-    q.update(leads).set({ status: "waiting_for_reply", lastActivityAt: now })
-      .where(and(eq(leads.id, leadId), eq(leads.accountId, accountId), eq(leads.status, "new"))),
+    ...(deferred ? [] : [
+      q.insert(messages).values({
+        id: messageId, accountId, conversationId, actor: "agent", body: p.body, language, agentVersionId: liveId,
+        deliveryStatus: "delivered", templateId: p.templateId, createdAt: now,
+      }),
+      q.update(leads).set({ status: "waiting_for_reply", lastActivityAt: now })
+        .where(and(eq(leads.id, leadId), eq(leads.accountId, accountId), eq(leads.status, "new"))),
+    ]),
     q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId))),
     q.insert(leadEvents).values({
       id: randomUUID(), accountId, leadId, type: "conversation.started", actor: actor.userId ? "human" : "system", actorUserId: actor.userId,
-      data: { conversationId, channel, ...(template && !continued ? { template: template.name } : {}), ...(continued ? { continued: true } : {}) },
+      data: {
+        conversationId, channel,
+        ...(deferred ? { openerPending: true } : { ...(p.templateName ? { template: p.templateName } : {}), ...(p.continued ? { continued: true } : {}) }),
+      },
     }),
   ]);
   if (actor.actingAs) await writeAudit(db, actor, { accountId, action: "conversation.started", targetType: "lead", targetId: leadId, details: { conversationId, channel } });
   // The chat link is created at the first outreach (for a real lead, every SMS points to it).
   await ensureChatLink(db, actor, accountId, leadId);
   return { ok: true, conversationId, messageId };
+}
+
+/** The opener for an existing web chat (its text and template), from prepareConversationOpener. */
+export type ConversationOpener =
+  | { ok: true; conversationId: string; leadId: string; body: string; templateId: string | null; language: string }
+  | { ok: false; reason: SimOpenerRefusal | "not_found" };
+
+/**
+ * The opener an existing web chat would get (lib/chat/start.ts writtenOpenerText and ensureWrittenOpener): the same
+ * gates and text as startSimulatorConversation, in the conversation's language unless `opts.language` says otherwise.
+ * No writes. Not found for a test or non-web-chat conversation.
+ */
+export async function prepareConversationOpener(
+  db: Db, accountId: string, conversationId: string, now: Date, opts: SimOpenerOptions,
+): Promise<ConversationOpener> {
+  const [conv] = await db.select().from(conversations).where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId)));
+  if (!conv || conv.isTest || !isWebChat(conv.channel)) return { ok: false, reason: "not_found" };
+  const language: Locale | undefined = opts.language ?? (isLocale(conv.language) ? conv.language : undefined);
+  const p = await prepareOpener(db, accountId, conv.leadId, now, { ...opts, language }, conv.id);
+  if (!p.ok) return p;
+  return { ok: true, conversationId: conv.id, leadId: conv.leadId, body: p.body, templateId: p.templateId, language: language ?? conv.language };
+}
+
+export type SimOpenerPostResult = { ok: true; messageId: string } | { ok: false; reason: "not_empty" };
+
+/**
+ * Writes a prepared opener (prepareConversationOpener) into its web chat while the chat holds no agent message yet
+ * (lib/chat/start.ts ensureWrittenOpener). Race-safe: one transaction locks the conversation row first, then
+ * inserts the message only while the chat holds no agent message and is not closed, so two callers at once (or a
+ * call's spoken greeting written first) never give two openers.
+ */
+export async function postSimulatorOpener(
+  db: Db, accountId: string, p: Extract<ConversationOpener, { ok: true }>, now: Date,
+): Promise<SimOpenerPostResult> {
+  const conv = { id: p.conversationId, leadId: p.leadId };
+  const language = p.language;
+  const messageId = randomUUID();
+  const own = and(eq(conversations.id, conv.id), eq(conversations.accountId, accountId));
+  const posted = sql`exists (select 1 from ${messages} where ${messages.id} = ${messageId})`;
+  await atomic(db, (q) => [
+    // The lock: a second caller waits here until the first one commits; its next statement then sees that message.
+    q.update(conversations).set({ updatedAt: now }).where(own),
+    // Every column, in the table's order (Drizzle's insert … select needs that); one row: this conversation, when empty.
+    q.insert(messages).select(q.select({
+      id: sql`${messageId}::uuid`.as("id"),
+      accountId: conversations.accountId,
+      conversationId: conversations.id,
+      actor: sql`'agent'::text`.as("actor"),
+      actorUserId: sql`null::uuid`.as("actor_user_id"),
+      body: sql`${p.body}::text`.as("body"),
+      language: sql`${language}::text`.as("language"),
+      agentVersionId: conversations.agentVersionId,
+      usage: sql`null::jsonb`.as("usage"),
+      channelMessageId: sql`null::text`.as("channel_message_id"),
+      deliveryStatus: sql`'delivered'::text`.as("delivery_status"),
+      deliveryError: sql`null::text`.as("delivery_error"),
+      templateId: sql`${p.templateId}::uuid`.as("template_id"),
+      voiceSessionId: sql`null::uuid`.as("voice_session_id"),
+      spokenAtMs: sql`null::integer`.as("spoken_at_ms"),
+      answerMs: sql`null::integer`.as("answer_ms"),
+      typedInCall: sql`false`.as("typed_in_call"),
+      createdAt: sql`${now.toISOString()}::timestamptz`.as("created_at"),
+    }).from(conversations).where(and(
+      own, ne(conversations.status, "closed"),
+      sql`not exists (select 1 from ${messages} where ${messages.conversationId} = ${conv.id} and ${messages.actor} = 'agent')`,
+    ))),
+    q.update(leads).set({ status: "waiting_for_reply", lastActivityAt: now })
+      .where(and(eq(leads.id, conv.leadId), eq(leads.accountId, accountId), eq(leads.status, "new"), posted)),
+    q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, conv.leadId), eq(leads.accountId, accountId), posted)),
+  ]);
+  const [row] = await db.select({ id: messages.id }).from(messages).where(and(eq(messages.id, messageId), eq(messages.accountId, accountId)));
+  return row ? { ok: true, messageId } : { ok: false, reason: "not_empty" };
 }
 
 // ---------------------------------------------------------------------------

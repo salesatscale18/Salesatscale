@@ -26,12 +26,12 @@ import { barView, type BarAction, type BarView, type CostFormat } from "@/lib/vo
 import { elapsedSec, isIdlePhase } from "@/lib/voice/client/state";
 import { endMyVoiceCallAction, startVoiceCallAction } from "./voice-actions";
 import { startChatAction } from "./actions";
-import { ENGINE_ORDER, engineHelpKey, engineLabelKey, engineLabelVars, otherEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { BUYER_VOICE_ENGINE, ENGINE_ORDER, engineHelpKey, engineLabelKey, engineLabelVars, otherEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 
 /** "Live for buyers (22 Nov)" / "New (23 Nov)" / "New + silent tools (23 Nov, testing)" / "Old baseline (20 Nov)". */
 const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engineLabelKey(engine), engineLabelVars(engine));
-/** The select's value as an engine (anything else: Current; the server checks again). */
-const engineOf = (v: string): VoiceEngineName => otherEngine(v) ?? "current";
+/** The select's value as an engine (anything else: the buyers' engine; the server checks again). */
+const engineOf = (v: string): VoiceEngineName => (v === "current" ? "current" : otherEngine(v) ?? BUYER_VOICE_ENGINE);
 
 // ---------------------------------------------------------------------------
 // The lab's call (module level)
@@ -195,7 +195,7 @@ export function VoiceLabChoices({
   const [scenario, setScenario] = useState("");
   const [language, setLanguage] = useState(defaultLanguage);
   const [versionId, setVersionId] = useState(defaultVersionId);
-  const [engine, setEngine] = useState<VoiceEngineName>("current");
+  const [engine, setEngine] = useState<VoiceEngineName>(BUYER_VOICE_ENGINE);
   const start = useStartCall();
   const busy = !isIdlePhase(s.phase) && !STARTER_PHASES.has(s.phase);
   const own = STARTER_PHASES.has(s.phase);

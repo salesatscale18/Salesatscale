@@ -28,6 +28,7 @@ import { resultForModel, runTool, type ToolContext, type ToolResult, type TurnMe
 import type { OfferCall } from "@/lib/agent/offer-records";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
+import { endsWithQuestion } from "@/lib/agent/core/facts";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { RealtimeUsageAccumulator, type VoiceCallTimes, type VoiceCallUsageRecord } from "@/lib/ai/models";
 import { realtimeCallCost } from "./eleven-realtime";
@@ -36,13 +37,14 @@ import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, t
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
 import {
-  callTurnExtras, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
+  afterQuestionGuardFor, callTurnExtras, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
   openerProtectionFor, resolveVoiceSettings, turnTakingFor, versionModelId, voiceFamilyOf,
 } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
 import { orderFormAgreed, smallerQuoteAgreed, smallerQuoteParts } from "./form-agreement";
-import { lineSaysNumber, quantityLogLine, quantityNotGiven, quoteQuantityGuardOn, ungroundedQuoteLine } from "./quote-quantities";
+import { lineSaysNumber, quantityLogLine, quantityNotGiven, quoteQuantityGuardOn, siteTiedSkus, ungroundedQuoteLine, type BuyerLine } from "./quote-quantities";
+import { publishedCatalog } from "@/lib/catalog/service";
 import { parallelToolCallsFor } from "./gateway-realtime";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
@@ -59,6 +61,8 @@ import { SpeechPlayer, type SpeechJob } from "@/lib/voice-rt-eleven/player";
 import { RT_SPEECH_STREAM_LINE } from "@/lib/voice-rt-eleven/speech-line";
 import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { medianOf, type RtElevenUsage } from "@/lib/voice-rt-eleven/summary";
+import { cutLine } from "@/lib/voice/cut-line";
+import { callHasLines } from "@/lib/voice/call-lines";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -169,12 +173,15 @@ export type VoiceEngineDeps = {
 };
 
 /**
- * The model side of another engine run on this one (lib/voice-guarded: "Classic + guards"): its instructions and
- * tools, its transcripts as said (no cleaner), its stage and result wording and the quote's spoken summary. With a
- * profile the engine also drives the model as Classic did (notes, injected lines, no language notes, no argument
- * rewriting, Classic's stage count) and shapes tool results as Classic with only the guards added
- * (guardedToolResult). Everything else (recording, the opener's wait, one agent at a time, the infrastructure, the
- * guards themselves) is this engine's.
+ * The model side of another engine run on this one (lib/voice-guarded: "Classic + guards", the New engine of every
+ * call since 26 Nov 2026): its instructions and tools, its transcript cleaning, its stage and result wording and the
+ * quote's spoken summary. With a profile the engine counts the stage as Classic did and shapes tool results as
+ * Classic with only the guards added (guardedToolResult). Since 26 Nov 2026 (New became the buyers' engine) a profile
+ * call keeps Current's buyer fixes, run as Current runs them: the opt-out and card replies in the call's language and
+ * no injected reply on top of a spoken line's own answer, the language-switch note and the language hints, the tool
+ * argument repair (voiceToolArgs), and the order form's note as Current places it (never mid-call on Gemini, in the
+ * instructions of every later connection). Everything else (recording, the opener's wait, one agent at a time, the
+ * infrastructure, the guards themselves) is this engine's.
  */
 export type VoiceProfile = {
   /** Stored on the session (settings.engine) and logged (`engine=<name>`). */
@@ -182,7 +189,8 @@ export type VoiceProfile = {
   loadInstructions(
     db: Db, a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: Awaited<ReturnType<typeof readDealState>>; now: Date },
     /** `modelId`: the realtime model the call runs on (a scripted call: the version's model it stands in for); `isTest`: a test-lab call. */
-    opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean },
+    /** `language`: the language the call speaks now (a reconnect or wake after the buyer switched language), as Current's loader takes it. */
+    opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean; language?: string },
   ): Promise<VoiceCallContext>;
   tools(family: SchemaFamily): RealtimeToolDef[];
   /** A transcript as stored and shown (Current: cleanTranscript). */
@@ -325,6 +333,31 @@ export function stageKey(text: string): string | null {
 export function isBookkeepingOnly(result: Record<string, unknown>): boolean {
   const saved = Array.isArray(result.saved) ? result.saved : [];
   return result.ok === true && saved.length === 0 && !result.recorded && !result.objection_recorded && !result.rejected_placeholder && !result.kept_as_buyer_said;
+}
+
+/**
+ * The after-question guard (TEST calls only while AFTER_QUESTION_GUARD_FOR_BUYER_CALLS is off; every model family).
+ * The fault (Gemini 3.8 Live test call 449eb784): the agent asks the buyer a question, then saves details with
+ * update_deal_state after its audio, and with BLOCKING tools continues by itself after the result: a short "…" or the
+ * same question reworded. An output filter in the engine (no instruction): such a continuation is not played, not
+ * stored and not counted. Only these tools count as bookkeeping; any other tool's continuation is spoken as always.
+ */
+export const BOOKKEEPING_TOOLS: readonly string[] = ["update_deal_state"];
+/**
+ * A continuation counts only when it starts within this long of the last bookkeeping result (the model continues at
+ * once; anything later is left alone: never the answer to a buyer whose words reached the engine late).
+ */
+export const AFTER_QUESTION_CONTINUATION_MS = 5_000;
+/** Result fields that ask the model to say something (a guard's message, a kept number, a line to say). */
+export const SPEAK_FIELDS = ["kept_as_buyer_said", "kept_message", "message", "say_this", "instruction", "instructions"] as const;
+/**
+ * A bookkeeping call counts for the after-question guard only as a plain successful save: an ok outcome, and nothing
+ * in its result (as sent to the model, or the tool's own) that asks the model to speak (SPEAK_FIELDS). A refusal, a
+ * kept number or any message makes the model's continuation an answer to the app: it is always played. (`note`, the
+ * shortened result's "not saved yet" data, says it is not a cue to speak.)
+ */
+export function plainSave(outcome: string, ...results: (Record<string, unknown> | null | undefined)[]): boolean {
+  return outcome === "ok" && results.every((r) => !r || (r.ok !== false && SPEAK_FIELDS.every((k) => r[k] === undefined || r[k] === null || r[k] === "")));
 }
 
 /** A line in English or Hebrew (other languages are not judged: the model decides). */
@@ -514,7 +547,18 @@ export function browserReadyLine(msg: Extract<ClientMessage, { t: "ready" }>): s
   const v = (n: number | null | undefined) => (n === null || n === undefined ? "-" : String(n));
   const lat = msg.baseLatencyMs === undefined && msg.outputLatencyMs === undefined ? "-" : String((msg.baseLatencyMs ?? 0) + (msg.outputLatencyMs ?? 0));
   const s = msg.steps;
-  return `browser ready waitedMs=${v(msg.waitedMs)} route=${msg.route ?? "-"} mic=${v(s?.mic)} ctx=${v(s?.ctx)} out=${v(s?.out)} primer=${v(s?.primer)} latency=${lat}ms timedOut=${msg.timedOut ?? "-"}`;
+  return `browser ready waitedMs=${v(msg.waitedMs)} route=${msg.route ?? "-"} mic=${v(s?.mic)} ctx=${v(s?.ctx)} out=${v(s?.out)} primer=${v(s?.primer)} latency=${lat}ms timedOut=${msg.timedOut ?? "-"} outAdvance=${msg.outAdvance ?? "-"}`;
+}
+
+/**
+ * The log line of a browser's `heard` (once per call): when the first agent audio actually started playing there,
+ * `sentAgoMs` after the relay sent it ("-": unknown), from the browser's own figures: since the frame arrived, how far
+ * ahead it was queued, since the page released the held greeting (the hand-over's chat on screen; "-": no release)
+ * and the silence played in front of it (the lead-in; "-": an older page).
+ */
+export function browserHeardLine(sentAgoMs: number | null, msg: Extract<ClientMessage, { t: "heard" }>): string {
+  const v = (n: number | null | undefined) => (n === null || n === undefined ? "-" : `${n}ms`);
+  return `browser heard first audio +${sentAgoMs === null ? "-" : Math.max(0, Math.round(sentAgoMs))}ms after it was sent (browser: ${msg.sinceFirstChunkMs}ms after it arrived, queued ${msg.queuedMs}ms) afterRelease=${v(msg.afterReleaseMs)} leadIn=${v(msg.leadInMs)}`;
 }
 
 /** Languages written in a script other than Latin. */
@@ -555,8 +599,8 @@ export function grownFrom(next: string, prev: string): boolean {
   return !!b && a.length > b.length && a.startsWith(`${b} `);
 }
 
-/** A line the buyer cut short, as stored: the words actually said, ending with "…". */
-export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "")}…`;
+/** A line the buyer cut short, as stored: the words actually said, then one "…" (lib/voice/cut-line.ts). */
+export { cutLine };
 
 type Loaded = { session: VoiceSession; conv: Conversation; lead: Lead; version: AgentVersion; account: SellerAccount };
 
@@ -596,8 +640,20 @@ export class VoiceEngine {
     chars: 0,
     times: [] as RtTimes[],
   };
-  /** Profile (Classic's notes): a form note that came while the model was away, sent with the next connection. */
-  private heldFormNote: string | null = null;
+  /**
+   * The after-question guard (BOOKKEEPING_TOOLS). `afterQ`: the tool calls since the agent's last spoken output, with
+   * the results still out, and (once all are in) whether that output ended with a question, the agent's text then
+   * and when. `afterQDrop`: the continuation being dropped now. `lastSaid`: the agent's latest spoken output since the
+   * buyer last spoke ("" once they speak).
+   */
+  private afterQ: { tools: string[]; pending: number; question: boolean; speaks: boolean; said: string; turnId: string | null; turnText: string; at: number } | null = null;
+  private afterQDrop: { tools: string[]; turnId: string | null; turnText: string; text: string; raw: string; audioMs: number; audio: boolean } | null = null;
+  /** A drop ended before its response did (the buyer spoke, a note): that response's turn-done still ends the agent's line as said. */
+  private afterQDoneFor: string | null = null;
+  /** After a drop ended at a tool call (Gemini's transcript is the whole turn so far): the dropped words are cut from it. */
+  private afterQSkip: { turnId: string; keep: string; from: string } | null = null;
+  private afterQDrops = 0;
+  private lastSaid = "";
   /** The call's recording (null: not recorded). */
   private recorder: CallRecorder | null = null;
   /** The call clock (ms since connect) when the call ended: the recording's end. */
@@ -775,7 +831,7 @@ export class VoiceEngine {
     this.speaker = deps.speaker ?? null;
     this.player = this.speaker ? new SpeechPlayer({
       speaker: this.speaker, clock: this.clock, frameBytes: PIPELINE_TIMING.frameBytes, leadMs: PIPELINE_TIMING.leadMs,
-      send: (frame) => this.onSpeechFrame(frame),
+      send: (frame, job) => this.onSpeechFrame(frame, job),
       onFirstAudio: (job) => this.onSpeechFirstAudio(job),
       onChars: (n) => void (this.rt.chars += n),
       onJobEnd: (job) => this.onSpeechJobEnd(job),
@@ -827,7 +883,7 @@ export class VoiceEngine {
         // Log only: when the first agent audio actually started playing in the browser (once per call).
         if (this.heardLogged) return;
         this.heardLogged = true;
-        this.trace(`browser heard first audio +${this.firstAudioSentAt === null ? "-" : Math.max(0, Math.round(this.clock.now() - this.firstAudioSentAt))}ms after it was sent (browser: ${msg.sinceFirstChunkMs}ms after it arrived, queued ${msg.queuedMs}ms)`);
+        this.trace(browserHeardLine(this.firstAudioSentAt === null ? null : this.clock.now() - this.firstAudioSentAt, msg));
         return;
       case "context":
         this.onFormContext(msg);
@@ -859,14 +915,8 @@ export class VoiceEngine {
     this.formLast = { step: msg.step, event: msg.event };
     this.formNotes ??= new FormContextNotes(this.clock, (note) => {
       if (this.ended) return;
-      if (this.profile) {
-        // Classic: the note goes in now on every model; while the model is away it waits for the next connection.
-        if (this.conn && !this.reconnecting && !this.waking && this.standbySince === null && this.conn.sendNote) {
-          this.noteSent("order form step");
-          this.conn.sendNote(note);
-        } else this.heldFormNote = note;
-        return;
-      }
+      // Every engine (a profile too since 26 Nov 2026): Current's way. Classic sent the note mid-call on Gemini as well,
+      // and right after a wake, where Gemini answers it as a turn (notesMidCall).
       this.formNote = note;
       if (!this.notesMidCall()) return;
       // Off the line (standby, a wake or a reconnect under way): nothing now, the next connection's instructions carry it.
@@ -983,8 +1033,23 @@ export class VoiceEngine {
     return p;
   }
 
+  /**
+   * Whose agent audio the browser is getting (agent_audio, display only): the turn, and whether its whole length was
+   * told. Changes only with the turn (and after a flush), so it adds one small frame per spoken turn.
+   */
+  private audioMark: { id: string; total: boolean } | null = null;
+
+  private markAgentAudio(id: string, totalMs: number | null = null) {
+    const m = this.audioMark;
+    if (m && m.id === id && (m.total || totalMs === null)) return;
+    this.audioMark = { id, total: totalMs !== null };
+    this.send(totalMs === null ? { t: "agent_audio", id } : { t: "agent_audio", id, totalMs: Math.round(totalMs) });
+  }
+
   private send(msg: ServerMessage | Uint8Array) {
     if (this.firstAudioSentAt === null && msg instanceof Uint8Array && msg.byteLength > 0) this.firstAudioSentAt = this.clock.now();
+    // A flush drops what the browser queued: the next agent audio says again whose it is.
+    if (!(msg instanceof Uint8Array) && msg.t === "flush") this.audioMark = null;
     try {
       this.out(msg);
     } catch (e) {
@@ -1056,12 +1121,6 @@ export class VoiceEngine {
     this.traceResp = null;
     this.activeSince = this.clock.now();
     this.usageAcc.newSession();
-    // Profile (Classic): a form note held while the model was away goes in now, after the fresh instructions and recap.
-    if (this.profile && this.heldFormNote) {
-      this.noteSent("order form step");
-      conn.sendNote?.(this.heldFormNote);
-      this.heldFormNote = null;
-    }
   }
 
   /** Cost so far, from the latest usage snapshot and the model-connected time (0 for the scripted model). */
@@ -1408,6 +1467,8 @@ export class VoiceEngine {
    * `response`: it goes with a request for the model's response (requestResponse); the trace says which.
    */
   private noteSent(kind: string, response = false) {
+    // What the model says next answers this (the opener, a note, a warning, a typed line): never dropped as a continuation.
+    this.afterQReset(false);
     this.log.info(voiceLine(this.sessionId, `note sent: ${kind}`));
     this.trace(`${response ? "response request" : "note"} kind=${kind}`);
   }
@@ -1531,9 +1592,9 @@ export class VoiceEngine {
     // The version's own pause and interruption level replace the style's (models with tunable turn detection).
     const tt = turnTakingFor(settings.style, this.model.modelId, { pauseMs: settings.pauseMs, interrupt: settings.interrupt });
     return {
-      // The order form's latest step (a note the model reads, never answers), on every connection after it came.
-      // (A profile: notes go in as notes, as Classic: never in the instructions.)
-      instructions: this.formNote && !this.profile ? `${instructions}\n\n### The order form (a note from the app, not from the buyer)\n${this.formNote}` : instructions,
+      // The order form's latest step (a note the model reads, never answers), on every connection after it came (a
+      // profile too since 26 Nov 2026).
+      instructions: this.formNote ? `${instructions}\n\n### The order form (a note from the app, not from the buyer)\n${this.formNote}` : instructions,
       tools: this.profile ? this.profile.tools(family) : realtimeTools(family), toolBehavior: this.profile?.toolBehavior?.(family) ?? "blocking", pace: settings.pace,
       // The call starts in the conversation's language; the buyer may switch (never locked).
       language: languages?.language ?? (this.loaded!.conv.language || "en"),
@@ -1566,7 +1627,7 @@ export class VoiceEngine {
     return voiceFamilyOf(this.model.modelId) === "gemini" ? "gemini" : null;
   }
 
-  /** A transcript as stored and shown: markers taken out (Current), or as said (a profile). */
+  /** A transcript as stored and shown: markers taken out (Current; a profile: its own `clean`, the guarded one is Current's). */
   private clean(text: string): string {
     return this.profile ? this.profile.clean(text) : cleanTranscript(text);
   }
@@ -1585,8 +1646,8 @@ export class VoiceEngine {
     const next = spokenLanguageOf(text, this.spokenLanguage, this.latinLanguage);
     if (next === this.spokenLanguage) return;
     this.spokenLanguage = next;
-    // A profile (Classic): no language note; the language only picks the words of the quote summary.
-    if (!this.profile && this.notesMidCall() && this.conn && !this.reconnecting && !this.waking && this.standbySince === null) {
+    // Every engine (a profile too since 26 Nov 2026); on Gemini the next connection's instructions carry the language.
+    if (this.notesMidCall() && this.conn && !this.reconnecting && !this.waking && this.standbySince === null) {
       this.noteSent("language");
       this.conn.sendNote?.(`(Note from the system, not from the buyer: the buyer now speaks ${languageNameEn(next)}. Speak ${languageNameEn(next)} from now on, also after an interruption or a pause, until the buyer speaks another language. Do not answer this note.)`);
     }
@@ -1631,9 +1692,7 @@ export class VoiceEngine {
     this.warnHeld = false;
     this.send({ t: "notice", kind: "limit_soon" });
     this.noteSent("time limit", true);
-    this.conn?.requestResponse(this.profile
-      ? "The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat."
-      : `The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat. ${this.sayIn()}`);
+    this.conn?.requestResponse(`The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat. ${this.sayIn()}`);
   }
 
   // -------------------------------------------------------------------------
@@ -1651,6 +1710,19 @@ export class VoiceEngine {
         this.log.info(voiceLine(this.sessionId, `provider ${clip(e.name, 40)}: ${clip(e.detail, 300)}`));
         return;
       case "audio": {
+        // The after-question guard: the model's own continuation after its question and a bookkeeping call is not
+        // played, not recorded and not counted (the trace still shows the response).
+        if (this.afterQDrop || this.afterQArmed()) {
+          const starting = !this.afterQDrop;
+          if (starting) this.startAfterQDrop(true);
+          this.afterQDrop!.audioMs += pcmDurationMs(e.pcm.byteLength);
+          this.traceAudio(e.pcm.byteLength, this.agentTurn?.text.length ?? 0);
+          if (starting) this.trace(`after-question continuation: dropping tools=${this.afterQDrop!.tools.join(",")}`);
+          this.connAudio = true;
+          return;
+        }
+        // New spoken output: tool calls from here on are counted after it.
+        this.afterQ = null;
         const turn = this.ensureAgentTurn();
         this.traceAudio(e.pcm.byteLength, turn.heardAudio ? turn.text.length : 0);
         turn.heardAudio = true;
@@ -1668,6 +1740,7 @@ export class VoiceEngine {
         this.connAudio = true;
         this.clearQuiet();
         this.setState("speaking");
+        this.markAgentAudio(turn.id);
         this.send(e.pcm);
         this.noteOpenerAudio(e.pcm.byteLength);
         // The recording's right channel: as the browser plays it (queued after what it still has).
@@ -1678,6 +1751,11 @@ export class VoiceEngine {
         // A transcription marker ("<no speech detected>") is no text: never shown, stored or a caption.
         const said = this.clean(e.text);
         if (!said) return;
+        // The after-question guard: the words of a continuation being dropped are never shown or stored.
+        if (this.afterQDrop) {
+          this.afterQDropText(maskCardNumbers(said).text);
+          return;
+        }
         // Transcript of the response that already ended: it goes with that response's row, never into a new turn.
         if (e.late && !this.agentTurn) {
           void this.enqueue(() => this.storeLateTranscript(maskCardNumbers(said).text));
@@ -1686,9 +1764,17 @@ export class VoiceEngine {
         // The rest of the transcript of a response already stored as cut (typed text cut it; the provider's
         // transcript of that response keeps coming, from its start): the same utterance, not a new one.
         if (!this.agentTurn && this.cutText && maskCardNumbers(said).text.startsWith(this.cutText)) return;
+        // The continuation's words came before its audio: it is dropped from here.
+        if (this.afterQArmed() && this.afterQContinuationText(maskCardNumbers(said).text)) {
+          this.startAfterQDrop(true);
+          this.trace(`after-question continuation: dropping tools=${this.afterQDrop!.tools.join(",")} (words before audio)`);
+          this.afterQDropText(maskCardNumbers(said).text);
+          return;
+        }
         const turn = this.ensureAgentTurn();
         turn.awaitingContinuation = false;
-        turn.text = maskCardNumbers(said).text;
+        turn.text = this.afterQSkipped(turn, maskCardNumbers(said).text);
+        this.lastSaid = turn.text;
         if (e.final) turn.finalText = true;
         if (!e.final) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(turn.text), final: false, atMs: turn.startMs });
         return;
@@ -1701,6 +1787,7 @@ export class VoiceEngine {
           if (e.final) this.buyerTurn = null;
           return;
         }
+        this.afterQReset(true);
         this.buyerActivity();
         this.markHeard();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
@@ -1714,6 +1801,8 @@ export class VoiceEngine {
         return;
       }
       case "speech-started":
+        // The after-question guard stops at the buyer's first speech (whatever follows is never dropped).
+        this.afterQReset(true);
         // The opening line is protected: no buyer audio reached the model, and nothing here counts as a barge-in.
         if (this.openerGuard) {
           this.trace("buyer speech started (opener protected: ignored)");
@@ -1743,6 +1832,7 @@ export class VoiceEngine {
         // Whether the agent's audio of the current response had already gone out when the model called the tool.
         const r = this.traceResp && !this.traceResp.closedBy ? this.traceResp : null;
         this.traceCallAt.set(e.callId, this.clock.now());
+        this.afterQTool(e.name);
         if (this.speaker) this.rt.responseTools.push(e.name);
         const dup = this.duplicateOf(e.callId, e.name, e.args);
         this.trace(`tool call received name=${clip(e.name, 40)} id=${clip(e.callId, 200).slice(-8)} r=${r ? r.n : "-"} afterSpeech=${r ? `yes sinceAudioMs=${Math.round(this.clock.now() - r.at)}` : "no"}${dup ? " dup=yes" : ""}`);
@@ -1763,6 +1853,20 @@ export class VoiceEngine {
         this.trace(`turn done interrupted=${e.interrupted ? "yes" : "no"} ${this.traceRespSummary()}`);
         this.traceResp = null;
         if (!this.agentTurn) this.cutText = null;
+        // The after-question guard: the dropped continuation ended (one we cancelled ends "interrupted"). The agent's
+        // line before it is stored as said: whole, unless the buyer cut into it; its late transcript (which would
+        // carry the dropped words) is not taken.
+        if (this.afterQDrop || (this.afterQDoneFor !== null && this.afterQDoneFor === this.agentTurn?.id)) {
+          this.endAfterQDrop("done");
+          this.afterQDoneFor = null;
+          const cut = !!this.agentTurn?.interrupted;
+          void this.enqueue(async () => {
+            await this.handleTurnDone(cut);
+            this.lateTarget = null;
+          });
+          return;
+        }
+        this.afterQDoneFor = null;
         void this.enqueue(() => this.handleTurnDone(!!e.interrupted));
         return;
       case "usage":
@@ -1831,6 +1935,8 @@ export class VoiceEngine {
         return;
       }
       case "trace":
+        // The buyer's voice (speech stopped, Gemini's voice activity): the after-question guard stops there too.
+        if (e.what.startsWith("buyer ")) this.afterQReset(true);
         // Text output: the buyer's speech end starts the turn's clock (think = until the reply text is complete).
         if (this.speaker && e.what === "buyer speech stopped") {
           this.rt.heardAt = this.clock.now();
@@ -1846,6 +1952,126 @@ export class VoiceEngine {
         this.onResponseText(e);
         return;
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // The after-question guard (BOOKKEEPING_TOOLS): an output filter, never an instruction
+  // -------------------------------------------------------------------------
+
+  /** This call runs the guard: test calls, or buyer calls once AFTER_QUESTION_GUARD_FOR_BUYER_CALLS is on. */
+  private afterQOn(): boolean {
+    return !!this.loaded && afterQuestionGuardFor(this.loaded.session.isTest);
+  }
+
+  /** A tool call from the model: one more call since the agent's last spoken output (a drop under way ends: what follows the result is a new continuation). */
+  private afterQTool(name: string) {
+    if (this.afterQDrop) this.endAfterQDrop("tool");
+    const w = (this.afterQ ??= { tools: [], pending: 0, question: false, speaks: false, said: "", turnId: null, turnText: "", at: 0 });
+    w.tools.push(name);
+    w.pending++;
+    w.question = false;
+  }
+
+  /**
+   * A call's result went to the model (or never will: cancelled). Once every result is in, the model may continue by
+   * itself: whether the agent's last spoken output ended with a question is taken now, before it can.
+   */
+  private afterQResult(speaks = false) {
+    const w = this.afterQ;
+    if (!w || w.pending <= 0) return;
+    w.pending--;
+    // A result that asks the model to say something (plainSave): its continuation is never dropped.
+    if (speaks) w.speaks = true;
+    if (w.pending) return;
+    w.said = this.lastSaid;
+    w.question = endsWithQuestion(this.lastSaid.trim());
+    w.turnId = this.agentTurn?.id ?? null;
+    w.turnText = this.agentTurn?.text ?? "";
+    w.at = this.clock.now();
+  }
+
+  /**
+   * The model's output starting now is its own continuation after it asked the buyer a question and then only saved
+   * details: every call since that question was bookkeeping and has its result, the buyer has not spoken and the
+   * engine asked for nothing since (both clear `afterQ`), and it comes right after the results.
+   */
+  private afterQArmed(): boolean {
+    const w = this.afterQ;
+    return !!w && !w.pending && w.question && !w.speaks && w.tools.length > 0 && w.tools.every((t) => BOOKKEEPING_TOOLS.includes(t))
+      && this.clock.now() - w.at <= AFTER_QUESTION_CONTINUATION_MS && this.afterQOn();
+  }
+
+  /** The buyer spoke (speech start, words, a typed line) or the engine put something in (a note, a response request): the guard stops. */
+  private afterQReset(buyer: boolean) {
+    if (this.afterQDrop) this.endAfterQDrop(buyer ? "buyer" : "note");
+    this.afterQ = null;
+    this.afterQSkip = null;
+    if (buyer) this.lastSaid = "";
+  }
+
+  /** A transcript while armed (before any audio of it) is the continuation's own: a new turn, or the turn's text grown past what it said. */
+  private afterQContinuationText(text: string): boolean {
+    const w = this.afterQ!;
+    const turn = this.agentTurn;
+    if (!turn || turn.id !== w.turnId) return true;
+    return text.startsWith(w.turnText) && text.trim().length > w.turnText.trim().length;
+  }
+
+  /**
+   * The continuation is dropped from here: its audio and words go nowhere. The agent's turn keeps what it said before
+   * (a whole line: the model went on past it), and is stored when the dropped response ends. Audio output: the
+   * provider's own cancel where it has one (OpenAI response.cancel; Gemini has none: its audio is simply not played).
+   */
+  private startAfterQDrop(audio: boolean) {
+    const w = this.afterQ!;
+    this.afterQ = null;
+    this.afterQSkip = null;
+    this.lastSaid = w.said;
+    const turn = this.agentTurn;
+    const keep = turn && turn.id === w.turnId ? w.turnText : "";
+    this.afterQDrop = { tools: [...new Set(w.tools)], turnId: turn?.id ?? null, turnText: keep, text: "", raw: "", audioMs: 0, audio };
+    if (turn) {
+      if (turn.text !== keep) {
+        turn.text = keep;
+        // Words of the continuation already shown (it wrote before it spoke): the line as it was.
+        if (keep) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(keep), final: false, atMs: turn.startMs });
+      }
+      if (keep) turn.finalText = true;
+      turn.awaitingContinuation = false;
+    }
+    if (audio) this.conn?.cancelResponse?.();
+  }
+
+  /** Words of the continuation being dropped (the whole text so far): only their length is kept, for the log. */
+  private afterQDropText(text: string) {
+    const d = this.afterQDrop!;
+    d.raw = text;
+    d.text = d.turnText && text.startsWith(d.turnText) ? text.slice(d.turnText.length) : text;
+  }
+
+  /**
+   * The drop ends: the dropped response ended, called a tool, the buyer spoke, the engine put something in, or the
+   * call stops. One log line (lengths only, never words).
+   */
+  private endAfterQDrop(by: "done" | "tool" | "buyer" | "note" | "stop") {
+    const d = this.afterQDrop;
+    if (!d) return;
+    this.afterQDrop = null;
+    this.afterQDrops++;
+    this.log.info(voiceLine(this.sessionId, `after-question continuation dropped len=${d.text.trim().length} audioMs=${d.audio ? Math.round(d.audioMs) : "-"} tools=${d.tools.join(",")}`));
+    // Gemini's transcript is the whole turn so far: once the turn goes on (a tool call), the dropped words are cut from it.
+    if (by === "tool" && d.turnId && d.raw && d.raw.startsWith(d.turnText)) this.afterQSkip = { turnId: d.turnId, keep: d.turnText, from: d.raw };
+    // Ended before its response did: that response's turn-done, for the same turn, still ends the agent's line as said.
+    if (d.audio && (by === "buyer" || by === "note")) this.afterQDoneFor = d.turnId;
+  }
+
+  /** The agent's transcript as stored: the words of a dropped continuation left out (afterQSkip). */
+  private afterQSkipped(turn: AgentTurn, text: string): string {
+    const sk = this.afterQSkip;
+    if (!sk) return text;
+    if (sk.turnId === turn.id && text.startsWith(sk.from)) return `${sk.keep} ${text.slice(sk.from.length)}`.trim();
+    this.afterQSkip = null;
+    return text;
   }
 
   // -------------------------------------------------------------------------
@@ -1886,6 +2112,15 @@ export class VoiceEngine {
       return;
     }
     if (!text) return;
+    // The after-question guard: the model's own continuation after its spoken question and a bookkeeping call is not
+    // handed to the speaker (never spoken, stored or counted); its tool calls go with the agent's next line.
+    if (this.afterQArmed()) {
+      this.startAfterQDrop(false);
+      this.trace(`after-question continuation: dropping tools=${this.afterQDrop!.tools.join(",")} (not spoken)`);
+      this.afterQDropText(text);
+      this.endAfterQDrop("done");
+      return;
+    }
     this.startSpeech(this.clean(text));
   }
 
@@ -1902,6 +2137,9 @@ export class VoiceEngine {
     turn.text = said;
     turn.finalText = true;
     turn.awaitingContinuation = false;
+    // Spoken output: the after-question guard counts tool calls from here, against this line.
+    this.afterQ = null;
+    this.lastSaid = said;
     const now = this.clock.now();
     const from = this.rt.heardAt;
     const toolRounds = this.rt.toolRounds;
@@ -1915,7 +2153,7 @@ export class VoiceEngine {
   }
 
   /** A frame of the speaker's audio: to the browser and the recording's agent channel, as agent audio always goes. */
-  private onSpeechFrame(frame: Uint8Array) {
+  private onSpeechFrame(frame: Uint8Array, job?: SpeechJob) {
     if (this.ended) return;
     if (this.currentWake) {
       this.currentWake.entry.firstAudioMs ??= Math.max(0, Math.round(this.clock.now() - this.currentWake.at));
@@ -1924,6 +2162,8 @@ export class VoiceEngine {
     this.connAudio = true;
     this.clearQuiet();
     this.setState("speaking");
+    // Whose line this audio speaks, and its whole length once synthesis finished (the browser paces the line by it).
+    if (job) this.markAgentAudio(job.turnId, job.synthDone ? job.receivedMs : null);
     this.send(frame);
     this.noteOpenerAudio(frame.byteLength);
     this.recorder?.agent(frame, this.offsetMs());
@@ -2055,7 +2295,10 @@ export class VoiceEngine {
    * left out), marked not to start speech (scheduling SILENT on Gemini) and naming the call it duplicates.
    */
   private answerDuplicate(callId: string, name: string, first: RecentToolCall) {
-    if (this.cancelledCalls.has(callId)) return;
+    if (this.cancelledCalls.has(callId)) {
+      this.afterQResult(!plainSave("ok", first.result));
+      return;
+    }
     const { say_this: _say, message: _msg, scheduling: _sch, ...data } = first.result ?? { ok: true };
     void _say;
     void _msg;
@@ -2064,6 +2307,7 @@ export class VoiceEngine {
     if (this.conn) this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=0ms chars=${JSON.stringify(result).length} dup=yes`);
     this.traceCallAt.delete(callId);
     this.conn?.sendToolResult(callId, name, result);
+    this.afterQResult(!plainSave("ok", first.result));
   }
 
   /**
@@ -2262,7 +2506,8 @@ export class VoiceEngine {
       const deal = await readDealState(this.db, account.id, conv.leadId);
       const ctx = this.profile
         ? await this.profile.loadInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
-          ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, recorded: this.recorded, ...this.callModel(),
+          // The language the call speaks now, as Current (Gemini takes no mid-call language note: it reads it here).
+          ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded, ...this.callModel(),
         })
         : await loadVoiceInstructions(this.db, { account, version: this.instructionVersion(version), conv, lead, deal, now: new Date(this.clock.now()) }, {
           ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES), agentMessages: this.effectiveAgentMessages() } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded,
@@ -2321,6 +2566,8 @@ export class VoiceEngine {
     const { conv, account } = this.loaded;
     const masked = maskCardNumbers(raw.replace(/\s+/g, " ").trim().slice(0, 4000));
     if (!masked.text) return;
+    // A buyer line (a typed one comes only here): the after-question guard stops.
+    this.afterQReset(true);
     // A later transcript of the buyer's last spoken line of THIS call (the same utterance) updates its row: one row per
     // buyer turn. The provider says so (`revises`), or the text is that line grown (a running transcript) shortly after.
     const prev = this.lastBuyerLine;
@@ -2391,18 +2638,9 @@ export class VoiceEngine {
     // A spoken turn is already being answered by the model (the provider's own turn detection starts its response):
     // an injected instruction on top would be a second answer to the same turn. So the fixed replies below are
     // injected only for a typed line, which the model never hears; on a spoken one the model answers by its rules
-    // (the voice block's card and opt-out lines; the record_opt_out result gives the exact reply).
-    if (this.profile) {
-      // Classic: the fixed replies are asked for on any line, spoken or typed, in English.
-      if (isSpokenOptOut(masked.text)) await this.codeOptOut(masked.text, true, OPT_OUT_REPLY.en);
-      else if (masked.found) {
-        this.noteSent("card number", true);
-        this.conn.requestResponse(`The buyer started reading out a card number. Stop them politely and say exactly this and nothing else: "${CARD_REPLY.en}"`);
-      } else if (typed) {
-        this.noteSent("typed line", schemaFamilyOf(this.model.modelId) !== "gemini");
-        this.conn.sendText(masked.text);
-      }
-    } else if (isSpokenOptOut(masked.text)) {
+    // (the voice block's card and opt-out lines; the record_opt_out result gives the exact reply). Every engine (a
+    // profile too since 26 Nov 2026: Classic asked for the English reply on any line, a second answer on a spoken one).
+    if (isSpokenOptOut(masked.text)) {
       await this.codeOptOut(masked.text, typed);
     } else if (masked.found && !typed) {
       this.log.info(voiceLine(this.sessionId, "note skipped: card number on a spoken turn (the model answers it)"));
@@ -2436,7 +2674,7 @@ export class VoiceEngine {
     this.trackSpokenLanguage(text);
     this.send({ t: "transcript", id: prev.turnId, role: "buyer", text, final: true, atMs: prev.startMs });
     // An opt-out said in the rest of the line counts as if it came whole (spoken: the model answers it).
-    if (!this.profile && isSpokenOptOut(text)) await this.codeOptOut(text, false);
+    if (isSpokenOptOut(text)) await this.codeOptOut(text, false);
   }
 
   /**
@@ -2549,7 +2787,7 @@ export class VoiceEngine {
   }
 
   /**
-   * The quote-quantities guard (test calls): the first create_quote line whose quantity the buyer never gave
+   * The quote-quantities guard (every call): the first create_quote line whose quantity the buyer never gave
    * (lib/voice/quote-quantities.ts), with the item's name as the agent says it; null `refused` when every one is
    * grounded. Reads the conversation's buyer lines (the chat's and this call's stored ones) and the saved sites.
    */
@@ -2557,15 +2795,22 @@ export class VoiceEngine {
     const { account, conv } = this.loaded!;
     const raw = args && typeof args === "object" ? (args as { lines?: unknown }).lines : null;
     const lines = (Array.isArray(raw) ? raw : []).map((l) => ({ sku: String((l as { sku?: unknown })?.sku ?? ""), qty: Number((l as { qty?: unknown })?.qty) }));
-    const [deal, stored] = await Promise.all([
+    const [deal, stored, catalog] = await Promise.all([
       readDealState(this.db, account.id, conv.leadId),
-      this.db.select({ body: messages.body }).from(messages)
-        .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer"))),
+      this.db.select({ body: messages.body, actor: messages.actor }).from(messages)
+        .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), inArray(messages.actor, ["buyer", "agent"])))
+        .orderBy(asc(messages.createdAt)),
+      publishedCatalog(this.db, account.id),
     ]);
     const siteValue = Number(String((deal?.fields as Record<string, { value?: string } | undefined> | undefined)?.sites?.value ?? "").trim());
     const sites = Number.isInteger(siteValue) && siteValue > 0 ? siteValue : null;
-    const buyerLines = [...stored.map((m) => m.body ?? ""), ...this.lines.filter((l) => l.role === "buyer").map((l) => l.text)];
-    const refused = ungroundedQuoteLine({ lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt });
+    // Each buyer line with the agent line right before it (a bare "two" answering "How many sites?" is a site count).
+    const withAfter = (rows: readonly { role: string; text: string }[]): BuyerLine[] =>
+      rows.flatMap((l, i) => (l.role === "buyer" ? [{ text: l.text, after: i > 0 && rows[i - 1].role === "agent" ? rows[i - 1].text : null }] : []));
+    const buyerLines = [...withAfter(stored.map((m) => ({ role: m.actor, text: m.body ?? "" }))), ...withAfter(this.lines)];
+    // The items the catalog ties to sites (one per site) or adds once: its own rules, no SKU named in code.
+    const tied = siteTiedSkus(catalog?.rules ?? [], catalog?.autoAdd ?? []);
+    const refused = ungroundedQuoteLine({ lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt, perSiteSkus: tied.perSite, onceSkus: tied.once });
     if (!refused) return { refused: null, item: "" };
     this.qtyRefusedAt = this.lines.length;
     const [item] = await this.db.select({ name: catalogItems.name, plainName: catalogItems.plainName }).from(catalogItems)
@@ -2675,8 +2920,8 @@ export class VoiceEngine {
     const label = toolLabel(name);
     this.setState("checking");
     this.send({ t: "tool", id: callId, name, label, status: "running" });
-    // A profile (Classic) passes the model's arguments as they came.
-    const args = this.profile ? rawArgs : await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
+    // Every engine (a profile too since 26 Nov 2026: Classic passed the model's arguments as they came).
+    const args = await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
     const t0 = this.clock.now();
     // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
     // A number the buyer stated (sites, quantities) is not lowered unless their last line says the new number.
@@ -2690,7 +2935,7 @@ export class VoiceEngine {
     // A quote for fewer units or sites than before goes only when the buyer asked for it (or said yes to the offer).
     const smaller = name === "create_quote" && removeGate !== "no" ? await this.smallerQuote(args).catch(() => null) : null;
     const smallerGate = smaller ? smallerQuoteAgreed(this.lines, (line) => smaller.numbers.some((n) => lineSaysNumber(line, n))) : "yes";
-    // Test calls (QUOTE_QUANTITY_GUARD_FOR_BUYER_CALLS): a quote only with quantities the buyer gave
+    // Every call (buyer calls: QUOTE_QUANTITY_GUARD_FOR_BUYER_CALLS, on since 26 Nov): a quote only with quantities the buyer gave
     // (lib/voice/quote-quantities.ts), checked last, before the tool runs: one log line per decision.
     const qtyCheck = name === "create_quote" && removeGate !== "no" && smallerGate !== "no" && quoteQuantityGuardOn(this.loaded!.session.isTest)
       ? await this.quoteQuantities(args).catch(() => null) : null;
@@ -2757,6 +3002,7 @@ export class VoiceEngine {
     }
     this.traceCallAt.delete(callId);
     turn.awaitingContinuation = true;
+    this.afterQResult(!plainSave(r.outcome, forModel, r.result));
     this.send({ t: "tool", id: callId, name, label, status: r.outcome });
   }
 
@@ -2880,11 +3126,21 @@ export class VoiceEngine {
         await this.putOrderFormInChat(r.result.link);
         forModel = { ...r.result, link: "shown in the chat", message: ORDER_FORM_IN_CHAT_MESSAGE };
       }
+      if (name === "record_opt_out" && OPT_OUT_REPLY[this.spokenLanguage]) {
+        // Current's: the reply in the language the call speaks now (the tool gives the conversation's).
+        const reply = OPT_OUT_REPLY[this.spokenLanguage];
+        forModel = { ...r.result, reply, message: `The buyer is opted out and will not be contacted again. Say exactly this and nothing else: ${reply}` };
+      }
       // T1: the full update_deal_state result, the stage in Classic's call wording.
       if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...forModel, stage: profile.stageText(r.result.stage) };
       forModel = this.afterCallTool(turn, name, r, forModel);
     }
     if (typeof forModel.message === "string") forModel = { ...forModel, message: profile.resultMessage(forModel.message) };
+    // Current's: on a call in another language than English, guidance the result gives (in English) names the language
+    // to answer in. Not the opt-out reply (exact words) nor the quote summary (say_this: said as written).
+    if (this.spokenLanguage !== "en" && name !== "record_opt_out" && forModel.say_this === undefined && typeof forModel.message === "string") {
+      forModel = { ...forModel, message: `${forModel.message} ${this.sayIn()}` };
+    }
     return profile.shapeResult ? profile.shapeResult(name, forModel, { family: schemaFamilyOf(this.model.modelId) }) : forModel;
   }
 
@@ -3122,6 +3378,9 @@ export class VoiceEngine {
     this.reconnecting = true;
     this.setState("reconnecting");
     this.closeModel();
+    // A new connection: the after-question guard starts over.
+    this.afterQReset(false);
+    this.afterQDoneFor = null;
     await this.finalizeAgentTurn("stop");
     // Text output: a reply already handed to our speaker goes on playing (the model is not needed for it).
     if (!this.player?.active) this.agentSpeaking = false;
@@ -3179,14 +3438,16 @@ export class VoiceEngine {
       ...(this.lastError ? { lastError: this.lastError } : {}),
     };
     usage = usage ? { ...usage, endDetail } : ({ ...EMPTY_USAGE, endDetail } as VoiceCallUsageRecord);
+    this.endAfterQDrop("stop");
     this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${durationSec} activeSec=${activeSec} by=${endDetail.by}`
       + `${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""}${this.modelClose ? ` model=${this.modelClose.code ?? "-"}/"${this.modelClose.reason}"@${this.modelClose.msAfterConnect ?? "?"}ms` : ""}`
-      + `${this.diagnostics.size ? ` diagnostics=${[...this.diagnostics].map(([k, n]) => `${k}:${n}`).join(",")}` : ""}${this.profile ? ` engine=${this.profile.engine}` : ""}`));
+      + `${this.diagnostics.size ? ` diagnostics=${[...this.diagnostics].map(([k, n]) => `${k}:${n}`).join(",")}` : ""}${this.profile ? ` engine=${this.profile.engine}` : ""}`
+      + `${this.afterQDrops ? ` afterQ=${this.afterQDrops}` : ""}`));
     const answerMsAvg = this.answerMsAvg();
     const rtu = (usage as { rtEleven?: RtElevenUsage }).rtEleven;
     if (rtu) {
       const ms = (v: number | null) => (v === null ? "-" : `${v}ms`);
-      this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} rt summary turns=${rtu.turns} median think=${ms(rtu.medianThinkMs)} speak=${ms(rtu.medianSpeakMs)} total=${ms(rtu.medianAnswerMs)} toolRounds=${rtu.medianToolRounds ?? "-"} dropped=${rtu.droppedTexts} bargeIns=${rtu.bargeIns} chars=${rtu.spokenChars} speakModel=${rtu.speakModel || "-"} costMicros=${costMicros} (realtime ${rtu.realtimeCostMicros} + speak ${rtu.speakCostMicros}${rtu.speakRateKnown ? "" : ", speech rate unknown"})`));
+      this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} rt summary turns=${rtu.turns} median think=${ms(rtu.medianThinkMs)} speak=${ms(rtu.medianSpeakMs)} total=${ms(rtu.medianAnswerMs)} toolRounds=${rtu.medianToolRounds ?? "-"} dropped=${rtu.droppedTexts}${this.afterQDrops ? ` afterQ=${this.afterQDrops}` : ""} bargeIns=${rtu.bargeIns} chars=${rtu.spokenChars} speakModel=${rtu.speakModel || "-"} costMicros=${costMicros} (realtime ${rtu.realtimeCostMicros} + speak ${rtu.speakCostMicros}${rtu.speakRateKnown ? "" : ", speech rate unknown"})`));
     }
     const set = {
       status: "ended" as const, endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec,
@@ -3248,7 +3509,8 @@ export class VoiceEngine {
     const { durationSec, costMicros, answerMsAvg } = row;
     // The end line only when this write ended the row: a row the stale close ended has its own line, and one it
     // could not end is left to the stale close (which adds it).
-    if (row.connected && row.ended && this.loaded) {
+    // And only for a call in which something was said: one that never connected gets no "0:00" line (lib/voice/call-lines.ts).
+    if (row.connected && row.ended && this.loaded && await callHasLines(this.db, this.loaded.account.id, this.sessionId).catch(() => true)) {
       // Like the other operational notes in a thread (system messages): when and how long.
       const { conv, account } = this.loaded;
       try {

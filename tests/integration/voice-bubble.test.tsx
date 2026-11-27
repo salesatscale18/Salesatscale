@@ -173,7 +173,9 @@ describe("the order form and standby (step 3)", () => {
     send({ t: "wake" });
     await clock.advance(1_000, settle);
     expect(model.connections).toHaveLength(2);
-    // The woken model reads it in its instructions; no note item that could prompt an answer.
+    // The woken model reads it in its instructions; no note item that could prompt an answer. Buyer calls run the New
+    // engine since 26 Nov 2026 (BUYER_VOICE_ENGINE), which keeps Current's way here (Classic sent a held note right
+    // after the wake, which Gemini answers as a turn).
     expect(model.connections[1].notes).toHaveLength(0);
     expect(model.connections[1].cfg.instructions).toContain("The buyer opened the order form, on step: Company details");
     send({ t: "end" });

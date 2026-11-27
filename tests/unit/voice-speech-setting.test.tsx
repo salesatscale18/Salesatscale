@@ -76,13 +76,14 @@ describe("the one rule: the version decides model and voice, the engine only the
   });
 
   it("the engine select is wiring only: three options; the retired ids are refused for new calls but keep their labels", () => {
-    expect(ENGINE_ORDER).toEqual(["current", "guarded", "classic"]);
-    expect(ENGINE_ORDER.map((e) => t(engineLabelKey(e), engineLabelVars(e)))).toEqual(["Live for buyers (22 Nov)", "New (23 Nov)", "Old baseline (20 Nov)"]);
+    // The buyers' engine first (26 Nov 2026); the labels say which one buyers get.
+    expect(ENGINE_ORDER).toEqual(["guarded", "current", "classic"]);
+    expect(ENGINE_ORDER.map((e) => t(engineLabelKey(e), engineLabelVars(e)))).toEqual(["Live for buyers (23 Nov)", "Previous (22 Nov)", "Old baseline (20 Nov)"]);
     for (const e of ["rt_eleven", "rt_eleven_mini", "guarded_silent", "pipeline", "pipeline_lite", "pipeline_chat"]) expect(isRetiredEngine(e)).toBe(true);
     for (const e of ["current", "guarded", "classic"]) expect(isRetiredEngine(e)).toBe(false);
     expect(t(engineLabelKey("rt_eleven"))).toBe("GPT-Realtime 2.1 + ElevenLabs (testing)");
     expect(t(engineLabelKey("guarded_silent"), engineLabelVars("guarded_silent"))).toBe("New + silent tools (23 Nov, testing)");
-    expect(labEngineChoice({ role: "user" }, "guarded", { VOICE_REALTIME: "scripted" })).toBe("current");
+    expect(labEngineChoice({ role: "user" }, "classic", { VOICE_REALTIME: "scripted" }, true)).toBe("guarded");
   });
 });
 

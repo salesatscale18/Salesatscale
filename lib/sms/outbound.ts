@@ -24,7 +24,7 @@ import type { Actor } from "@/lib/accounts/audit";
 import { isSimulatedLead, WEB_CHAT_CHANNELS, webChatChannelOf } from "@/lib/simulator/rules";
 import { nudgeBuyer, type NudgeDeps, type NudgeResult } from "./service";
 import { isUnverifiedLead } from "@/lib/leads/unverified";
-import { ensureChatStarted } from "@/lib/chat/start";
+import { ensureChatStarted, ensureLeadWrittenOpener, ensureWrittenOpenerUnlessCall } from "@/lib/chat/start";
 
 /** The SMS outcome when no SMS was tried (a simulated buyer, a test lead). */
 export type MaybeNudge = NudgeResult | { outcome: "skipped"; reason: "simulated_lead" | "test_lead" | "no_phone" | "not_found" };
@@ -48,6 +48,8 @@ export async function sendChatLink(db: Db, actor: Actor, accountId: string, lead
   if (skipped) return skipped;
   // The link leads to a chat that already holds the agent's intro.
   await ensureChatStarted(db, { accountId, leadId, now: deps.now, actor });
+  // A lead page chat prepared without its opener (the buyer never chose on the hand-over) gets it now.
+  await ensureLeadWrittenOpener(db, accountId, leadId, deps.now);
   return nudgeBuyer(db, actor, { accountId, leadId, kind: "chat_link", now: deps.now }, deps);
 }
 
@@ -118,6 +120,8 @@ export async function offerOrderFormInChat(
   let [open] = await openChat();
   // A first chat starts with the agent's intro (or the continuation line and its card), then the form (lib/chat/start.ts).
   let posted: string | null = null;
+  // A lead page chat prepared without its opener: the written opener first, then the form under it.
+  if (open) await ensureWrittenOpenerUnlessCall(db, accountId, open.id, new Date(now.getTime() - 2));
   if (!open) {
     const started = await ensureChatStarted(db, { accountId, leadId, now: new Date(now.getTime() - 2), actor });
     if (started.started) {

@@ -1,0 +1,35 @@
+/**
+ * Generates buyer-guarded.json: what the New engine (lib/voice-guarded, engine "guarded") sent on a TEST call before
+ * it became the engine of every buyer call (owner decision, 26 Nov 2026; origin/main at c7c9702), for input.json:
+ * its instructions (with and without the recording rule; on Gemini, and on GPT-Realtime 2.1 / mini where a test call
+ * got the GPT tool rules) and its AI SDK session config (Gemini and OpenAI, guarded tools). Run once from the repo
+ * root at that commit:
+ *   cp tests/fixtures/voice-classic/generate-buyer-guarded.ts.txt gen-bg.ts
+ *   npx tsx gen-bg.ts > tests/fixtures/voice-classic/buyer-guarded.json; rm gen-bg.ts
+ * tests/unit/voice-current-unchanged.test.ts asserts a BUYER call now gets exactly this.
+ */
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { buildVoiceInstructions, expectedCallLanguages } from "@/lib/voice-classic/instructions";
+import { gptToolRulesFor, guardedInstructions } from "@/lib/voice-guarded/instructions";
+import { guardedTools } from "@/lib/voice-guarded/profile";
+import { toSdkSessionConfig } from "@/lib/voice/gateway-realtime";
+
+const input = JSON.parse(readFileSync("tests/fixtures/voice-classic/input.json", "utf8"));
+const hash = (v: unknown) => createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
+const MODELS = ["google/gemini-3.8-live", "openai/gpt-realtime-2.1", "openai/gpt-realtime-mini"];
+const cases = input.cases.map((c: any) => {
+  const classic = buildVoiceInstructions({ ...c, expectedLanguages: expectedCallLanguages(c.language, c.seller.languages) });
+  const models: Record<string, { instructions: string; recorded: string }> = {};
+  for (const m of MODELS) {
+    const gptToolRules = gptToolRulesFor(m, true);
+    models[m] = { instructions: hash(guardedInstructions(classic, { gptToolRules })), recorded: hash(guardedInstructions(classic, { gptToolRules, recorded: true })) };
+  }
+  return { id: c.id, models };
+});
+const cfg = { instructions: "x", tools: guardedTools("gemini"), toolBehavior: "blocking", pace: "normal", language: "he", expectedLanguages: ["he", "en"], scenario: null };
+const sdk = {
+  gemini: hash(toSdkSessionConfig(cfg as any, "google/gemini-3.8-live")),
+  openai: hash(toSdkSessionConfig({ ...cfg, tools: guardedTools("openai"), turnTaking: { silenceMs: 600, threshold: 0.5, prefixPaddingMs: 300 }, voice: "alloy" } as any, "openai/gpt-realtime-2.1")),
+};
+process.stdout.write(`${JSON.stringify({ note: "sha256 of the New (guarded) engine's TEST-call output at c7c9702, for input.json: generate-buyer-guarded.ts.txt.", cases, sdk }, null, 2)}\n`);

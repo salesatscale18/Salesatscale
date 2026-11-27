@@ -18,6 +18,8 @@ import path from "node:path";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+// The lab's engine select switched back on (LAB_ENGINE_SELECTOR, off since 26 Nov 2026): the comparison stays covered.
+vi.mock("@/lib/voice-classic/engine-choice", async (orig) => (await import("../helpers/lab-selector")).selectorOn(await orig()));
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 vi.mock("@/lib/auth/account", () => ({
   get appDb() { return holder.db; },
@@ -159,7 +161,7 @@ describe("the engine select: wiring only", () => {
     save("settings-page-engine-row", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
-      ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["classic", "Old baseline (20 Nov)"],
+      ["guarded", "Live for buyers (23 Nov)"], ["current", "Previous (22 Nov)"], ["classic", "Old baseline (20 Nov)"],
     ]);
     for (const engine of ["rt_eleven", "rt_eleven_mini", "guarded_silent", "pipeline", "pipeline_lite", "pipeline_chat"]) {
       expect(await startVoiceCallAction({ slug, engine })).toEqual({ ok: false, reason: "not_allowed" });
@@ -222,7 +224,7 @@ describe("the one rule through the start action and the relay", () => {
     const keys = rows.map((x) => x[0]);
     expect(keys.indexOf("Model")).toBeLessThan(keys.indexOf("Voice"));
     expect(keys.indexOf("Voice")).toBeLessThan(keys.indexOf("Engine"));
-    expect(Object.fromEntries(rows)).toMatchObject({ Model: "GPT-Realtime mini · scripted stand-in", Voice: "Rachel (ElevenLabs)", Speaking: "scripted", Engine: "Live for buyers (22 Nov)" });
+    expect(Object.fromEntries(rows)).toMatchObject({ Model: "GPT-Realtime mini · scripted stand-in", Voice: "Rachel (ElevenLabs)", Speaking: "scripted", Engine: "Previous (22 Nov)" });
     await endMyVoiceCallAction({ slug });
   });
 
@@ -262,7 +264,7 @@ describe("the one rule through the start action and the relay", () => {
     const s = await sessionRow(r.sessionId);
     expect(s.settings).toMatchObject({ engine: "guarded", speech: "elevenlabs", voice: "Rachel (ElevenLabs)", model: GPT });
     const rows = Object.fromEntries(cardRows(await render({ c: r.conversationId })));
-    expect(rows).toMatchObject({ Model: "GPT-Realtime 2.1 · scripted stand-in", Voice: "Rachel (ElevenLabs)", Engine: "New (23 Nov)" });
+    expect(rows).toMatchObject({ Model: "GPT-Realtime 2.1 · scripted stand-in", Voice: "Rachel (ElevenLabs)", Engine: "Live for buyers (23 Nov)" });
     await endMyVoiceCallAction({ slug });
   });
 

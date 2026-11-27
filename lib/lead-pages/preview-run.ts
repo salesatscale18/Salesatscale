@@ -6,7 +6,7 @@
  *   continues that run (lib/lead-pages/intake.ts).
  * - "Start over": the same link with `fresh` (hosted form: `&fresh=1`; the snippet on the seller's
  *   page: `&sas-fresh=1` in the fragment): the form opens empty and its send makes a NEW preview run
- *   (a new test lead and a new conversation with the opener), even with the same number.
+ *   (a new test lead and a new conversation; its written opener follows the choice on the hand-over), even with the same number.
  * - The seller's own form has no "Start over": its test code is a fixed hidden field on their form.
  *
  * The link inside a run is decided on the server from the run (a preview submission on a preview-run

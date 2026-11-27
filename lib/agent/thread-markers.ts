@@ -69,9 +69,22 @@ export type CallBlockInfo = {
 /** A conversation's voice calls, as stored on voice_sessions. `buyerTurns`: the buyer's lines in the call (spoken or typed). */
 export type VoiceSessionRow = {
   connectedAt: Date | null; endedAt: Date | null; status: string; durationSec: number | null; buyerTurns?: number;
+  /** The call's stored lines, any actor (isUnsaidCall); left out: not counted. */
+  lines?: number;
   /** Seller threads: the call's recording (lib/voice/recording.ts), shown as one block at the call's summary row. */
   id?: string; recordingState?: string | null; recordingSec?: number | null; recordingKeepDays?: number | null; model?: string | null;
 };
+
+/**
+ * A finished call in which nothing was said: no line from the agent or the buyer was stored with it (the model never
+ * connected, the agent never spoke, the buyer hung up before anything was said, a held greeting never released).
+ * It is not shown as a call anywhere: no "Voice call ended · 0:00" line is stored for it and no call row shows for
+ * it in the buyer chat or the seller's threads (owner, 26 Nov 2026). `lines`: its stored lines (any actor); unknown
+ * (undefined) counts as said, so a caller that does not count keeps today's rows.
+ */
+export function isUnsaidCall(v: { status: string; lines?: number }): boolean {
+  return v.status === "ended" && v.lines === 0;
+}
 
 /** A finished call shorter than this with nothing from the buyer shows as one row (its summary), not a start and a summary. */
 export const EMPTY_CALL_MAX_SEC = 15;
@@ -87,7 +100,7 @@ export function isEmptyShortCall(durationSec: number | null | undefined, buyerTu
  */
 export function voiceMarkers(sessions: readonly VoiceSessionRow[]): ThreadMarker[] {
   return sessions.flatMap((v): ThreadMarker[] => {
-    if (!v.connectedAt) return [];
+    if (!v.connectedAt || isUnsaidCall(v)) return [];
     const start: ThreadMarker = { kind: "voice_started", at: v.connectedAt };
     if (!(v.status === "ended" && v.endedAt)) return [start];
     const state = v.recordingState === "saved" ? "saved" : v.recordingState === "deleted" ? "deleted" : v.recordingState ? "not_recorded" : null;

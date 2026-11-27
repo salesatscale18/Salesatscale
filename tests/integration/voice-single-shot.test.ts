@@ -125,24 +125,24 @@ describe("single-shot wiring (recording fake model, fake clock)", () => {
     const c = await call(model, { waitForClientAudio: true, clientReadyMs: 3_000 });
     await c.run(400);
     expect(model.conns[0].sent.filter((x) => x.kind === "respond")).toHaveLength(0);
-    const ready = parseClientMessage(JSON.stringify({ t: "ready", waitedMs: 412, route: "element", steps: { mic: 40, ctx: 41, out: 250, primer: 410 }, baseLatencyMs: 10, outputLatencyMs: 35 }));
+    const ready = parseClientMessage(JSON.stringify({ t: "ready", waitedMs: 412, route: "element", steps: { mic: 40, ctx: 41, out: 250, primer: 410 }, outAdvance: "yes", baseLatencyMs: 10, outputLatencyMs: 35 }));
     c.engine.onClientMessage(ready!);
     c.engine.onClientMessage({ t: "ready" }); // a duplicate: no second line
     await c.settle();
     expect(model.conns[0].sent[0]).toMatchObject({ kind: "respond" });
     const browser = c.logs.filter((l) => l.includes("browser ready"));
     expect(browser).toHaveLength(1);
-    expect(browser[0]).toMatch(/browser ready waitedMs=412 route=element mic=40 ctx=41 out=250 primer=410 latency=45ms timedOut=-$/);
+    expect(browser[0]).toMatch(/browser ready waitedMs=412 route=element mic=40 ctx=41 out=250 primer=410 latency=45ms timedOut=- outAdvance=yes$/);
     expect(c.logs.some((l) => /opening waited \d+ms for the browser's audio \(ready\)/.test(l))).toBe(true);
     // The first agent audio goes out; 180 ms later the browser says it started playing.
     model.conns[0].emit({ type: "audio", pcm: new Uint8Array(960) });
     await c.settle();
     await c.run(180);
-    c.engine.onClientMessage({ t: "heard", sinceFirstChunkMs: 150, queuedMs: 50 });
+    c.engine.onClientMessage(parseClientMessage(JSON.stringify({ t: "heard", sinceFirstChunkMs: 150, queuedMs: 50, leadInMs: 300, afterReleaseMs: 812 }))!);
     c.engine.onClientMessage({ t: "heard", sinceFirstChunkMs: 999, queuedMs: 0 });
     const heard = c.logs.filter((l) => l.includes("browser heard first audio"));
     expect(heard).toHaveLength(1);
-    expect(heard[0]).toMatch(/trace t=\d+ browser heard first audio \+180ms after it was sent \(browser: 150ms after it arrived, queued 50ms\)$/);
+    expect(heard[0]).toMatch(/trace t=\d+ browser heard first audio \+180ms after it was sent \(browser: 150ms after it arrived, queued 50ms\) afterRelease=812ms leadIn=300ms$/);
     c.engine.onClientMessage({ t: "end" });
     await c.settle();
   });
@@ -153,7 +153,7 @@ describe("single-shot wiring (recording fake model, fake clock)", () => {
     c.engine.onClientMessage(parseClientMessage(JSON.stringify({ t: "ready" }))!);
     await c.settle();
     expect(model.conns[0].sent[0]).toMatchObject({ kind: "respond" });
-    expect(c.logs.find((l) => l.includes("browser ready"))).toMatch(/browser ready waitedMs=- route=- mic=- ctx=- out=- primer=- latency=-ms timedOut=-$/);
+    expect(c.logs.find((l) => l.includes("browser ready"))).toMatch(/browser ready waitedMs=- route=- mic=- ctx=- out=- primer=- latency=-ms timedOut=- outAdvance=-$/);
     c.engine.onClientMessage({ t: "end" });
     await c.settle();
   });

@@ -19,7 +19,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { leadPages, leadPageSubmissions, leads, markets, orderFormSettings, sellerAccounts, type Lead, type LeadPage, type LeadPageSubmission, type SellerAccount } from "@/db/schema";
-import { ensureChatStarted } from "@/lib/chat/start";
+import { ensureChatPrepared, ensureWrittenOpener } from "@/lib/chat/start";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { activeChatToken, ensureChatLink, recordChatOpen, resolveChatLink, type ChatContext } from "@/lib/simulator/service";
 import { chatPath } from "@/lib/simulator/token";
@@ -80,7 +80,12 @@ export type HandoverState =
 
 export type HandoverInput = { token: string; cookie: string | null; ip: string; now?: Date; env?: Record<string, string | undefined>; sms?: NudgeDeps };
 
-/** Everything the hand-over page shows. Starts the chat (template opener, no model call) and sends the SMS, once. */
+/**
+ * Everything the hand-over page shows. Prepares the chat WITHOUT its opener (owner, 26 Nov: "Talk now" opens an
+ * empty conversation, so the call's first sentence is heard from its beginning) and sends the SMS, once. The
+ * written opener follows from handoverWrittenOpener ("Chat in writing", a call that could not start), the chat
+ * page (lib/chat/start.ts ensureLeadWrittenOpener) or the cron (runPendingOpeners).
+ */
 export async function loadHandover(db: Db, input: HandoverInput): Promise<HandoverState> {
   const now = input.now ?? new Date();
   if (!(await rateLimit(db, `lp:handover:${hashKey(input.ip)}`, HANDOVER_LIMIT, now)).ok) return { kind: "busy" };
@@ -97,8 +102,8 @@ export async function loadHandover(db: Db, input: HandoverInput): Promise<Handov
   const inBrowser = chatInBrowser(sub, lead, input.cookie);
   let chat: { ctx: ChatContext; token: string } | null = null;
   if (sub.consent && !optedOut && inBrowser) {
-    const started = await ensureChatStarted(db, { accountId: account.id, leadId: lead.id, now });
-    if (started.started || started.reason === "exists") {
+    const started = await ensureChatPrepared(db, { accountId: account.id, leadId: lead.id, now });
+    if (started.prepared || started.reason === "exists") {
       const link = await ensureChatLink(db, SYSTEM, account.id, lead.id);
       const resolved = link ? await resolveChatLink(db, link.token, now) : null;
       if (link && resolved?.state === "live") {
@@ -167,4 +172,23 @@ export async function recordHandoverChoice(
     .where(and(eq(leadPageSubmissions.id, row.sub.id), eq(leadPageSubmissions.accountId, row.account.id), isNull(leadPageSubmissions.handoverAt)));
   if (!(await input.staffViewer(row.account.id))) await recordChatOpen(db, row.account.id, row.lead.id, now, "link");
   return { ok: true };
+}
+
+/**
+ * The written opener for the hand-over's chat ("Chat in writing" or "Continue to the chat", and a call that could not
+ * start): lib/chat/start.ts ensureWrittenOpener on the submission's conversation, idempotent. Only for the browser
+ * the chat was offered to, within the hand-over's 30 minutes. No call check here: the buyer chose writing on this
+ * screen (a failed call's session row may still read as pending for a few seconds).
+ */
+export async function handoverWrittenOpener(
+  db: Db, input: { token: string; cookie: string | null; now?: Date },
+): Promise<{ ok: true; posted: boolean } | { ok: false; reason: "not_found" | "expired" | "not_allowed" }> {
+  const now = input.now ?? new Date();
+  const row = await loadRow(db, input.token);
+  if (!row) return { ok: false, reason: "not_found" };
+  if (handoverExpired(row.sub.createdAt, now)) return { ok: false, reason: "expired" };
+  if (!row.sub.consent || row.lead.status === "opted_out" || !chatInBrowser(row.sub, row.lead, input.cookie)) return { ok: false, reason: "not_allowed" };
+  if (!row.sub.conversationId) return { ok: false, reason: "not_found" };
+  const r = await ensureWrittenOpener(db, row.account.id, row.sub.conversationId);
+  return { ok: true, posted: r.posted };
 }

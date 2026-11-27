@@ -4,12 +4,14 @@
    left: 50%, no mirroring). Its short labels and the form's tray sit centred above it. */
 /* The tokens on the bar too: its short labels' row sits outside the bubble. */
 .vb, .vb-bar { --vb-size: 60px; --vb-brand: var(--brand, #0f6b5a); --vb-on: var(--brand-on, #fff); --vb-ink: var(--ink, #0f1420);
-  --vb-muted: var(--muted, #566073); --vb-line: var(--line, #dde1e8); }
+  --vb-muted: var(--muted, #566073); --vb-line: var(--line, #dde1e8);
+  /* The design system's light danger colours, fixed: the bar is light only, as the bubble. */
+  --vb-danger: #c23a2b; --vb-danger-soft: #fbe9e6; }
 .vb {
   z-index: 30; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none;
   font-family: inherit; font-size: 14px; line-height: 20px; color: var(--vb-ink); }
 .vb > * { pointer-events: auto; }
-/* In the chat's voice bar: in line with Mute and Text (its short labels are the bar's own row above, .vb-bar__note). */
+/* In the chat's voice bar: in line with Mute and End call (its short labels are the bar's own row above, .vb-bar__note). */
 .vb--bar { position: relative; }
 /* On the order form: centred above the page's bottom edge, clear of the home indicator. */
 .vb--fixed { position: fixed; inset-block-end: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); }
@@ -47,26 +49,34 @@
   .vb-wave i { transition: none; }
 }
 
-/* The voice bar (board VoiceBubbleBack 1): [Mute] · [Speaker] · bubble · [Text] across the composer's strip. */
+/* The voice bar (board VoiceBubbleBack 1): [Mute] · [Speaker] · bubble · [End call] across the composer's strip. */
 /* Pure CSS, nothing measured in script, so it lays out right at any width, also after being rendered in a hidden or
    off-screen container of another width (the lead page hand-over). Five tracks: four equal slots for the controls
    and the bubble's track (its 60 px and a little room for its rings) at the exact centre. The outer controls sit at
-   the strip's edges, mirrored: Mute at the start of slot 1 (the start gutter), Text at the end of slot 4 (the end
+   the strip's edges, mirrored: Mute at the start of slot 1 (the start gutter), End call at the end of slot 4 (the end
    gutter); Speaker, where shown, centred in slot 2, between Mute and the bubble. So the bar reads balanced with or
    without Speaker, the bubble stays centred, nothing can overflow the strip (the slots shrink with it; a 44 px
    circle fits a slot down to a 280 px wide strip), RTL mirrors through the grid (start/end are logical), and the bar
    never needs a phone-only rule.
-   Row 1 is the short labels' row ("What you say appears as text…", "You are muted", "1 min left"), in normal flow,
-   its height kept whether or not one shows (the bar never jumps). The row gap is at least how far the speaking ring
-   reaches above the bubble (inset 17 px, scaled to 1.14: about 24 px), so a label can never cover a ring. */
+   The short labels' row ("What you say appears as text…", "You are muted", "1 min left") is there only while one
+   shows (.vb-bar--note, owner 26 Nov: no permanent empty gap): space is reserved only then. The strip is the last thing
+   on the page, so the row opens and closes above the controls and the controls never move (the chat above gives or
+   takes the room). The row gap is at least how far the speaking ring reaches above the bubble (inset 17 px, scaled to
+   1.14: about 24 px), so a label can never cover a ring; compact, the bar keeps that much above the bubble (16 px here
+   plus the strip's 8 px), so the ring stays on the strip. */
 .vb-bar { --vb-bar-mid: 76px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--vb-bar-mid) minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: minmax(24px, auto) auto; row-gap: 24px; align-items: center; justify-items: center; max-width: 440px; margin-inline: auto; }
+  grid-template-rows: auto; padding-block-start: 16px; align-items: center; justify-items: center; max-width: 440px; margin-inline: auto; }
+.vb-bar--note { grid-template-rows: minmax(24px, auto) auto; row-gap: 24px; padding-block-start: 0; }
 .vb-bar__note { grid-row: 1; grid-column: 1 / -1; align-self: end; min-width: 0; max-width: 100%; display: flex; justify-content: center; }
-.vb-bar__note .vb-flash { max-width: 100%; }
-.vb-bar > .vb { grid-row: 2; grid-column: 3; }
-.vb-bar > [data-bar-mute] { grid-row: 2; grid-column: 1; justify-self: start; }
-.vb-bar > [data-bar-speaker] { grid-row: 2; grid-column: 2; }
-.vb-bar > [data-bar-text] { grid-row: 2; grid-column: 5; justify-self: end; }
+.vb-bar__note .vb-flash { max-width: 100%; transition: opacity .4s ease; }
+/* The one-time hint fades out (opacity only); its row collapses once it is gone. Reduced motion: no fade at all. */
+.vb-bar__note--fading .vb-flash { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .vb-bar__note .vb-flash { transition: none; } }
+.vb-bar > .vb { grid-row: 1; grid-column: 3; }
+.vb-bar > [data-bar-mute] { grid-row: 1; grid-column: 1; justify-self: start; }
+.vb-bar > [data-bar-speaker] { grid-row: 1; grid-column: 2; }
+.vb-bar > [data-bar-end] { grid-row: 1; grid-column: 5; justify-self: end; }
+.vb-bar--note > .vb, .vb-bar--note > .vb-ctl { grid-row: 2; }
 /* A control fills its slot up to 64 px; the label stays on one line (centred, it may run past a narrow slot evenly). */
 .vb-ctl { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 64px; flex: none; white-space: nowrap; padding: 0; border: 0; background: none; cursor: pointer;
   font: inherit; font-size: 11px; line-height: 14px; font-weight: 500; color: var(--muted, #566073); }
@@ -80,8 +90,13 @@
 /* Muted: Mute turns dark (it now reads Unmute). */
 .vb-ctl--on .vb-ctl__circle, .vb-ctl--on:hover:not(:disabled) .vb-ctl__circle { background: var(--ink, #0f1420); border-color: var(--ink, #0f1420); color: #fff; }
 .vb-ctl:disabled { cursor: default; opacity: .5; }
+/* End call: the design system's destructive secondary action (.sas-btn--danger): a danger outline on white, the icon
+   and its label in the danger colour (#c23a2b on white: 5.4:1). */
+.vb-ctl--danger { color: var(--vb-danger); }
+.vb-ctl--danger .vb-ctl__circle { border-color: var(--vb-danger); color: var(--vb-danger); }
+.vb-ctl--danger:hover:not(:disabled) .vb-ctl__circle { background: var(--vb-danger-soft); }
 
-/* The order form's tray (a tap on the bubble): Mute and Text, round, labels under; no headline. */
+/* The order form's tray (a tap on the bubble): Mute and End call, round, labels under; no headline. */
 .vb-tray { display: flex; gap: 12px; padding: 12px 14px 10px; background: #fff; border: 1px solid var(--vb-line); border-radius: 18px;
   box-shadow: 0 12px 32px rgba(15, 20, 32, .2); }
 
