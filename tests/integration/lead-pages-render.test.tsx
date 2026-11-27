@@ -194,7 +194,8 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     expect(html).not.toMatch(/data-handover-continue=""[^>]*disabled=""|disabled=""[^>]*data-handover-continue=""/);
     expect(html).toContain('data-ring="done"');
     expect(html).toContain('class="lp-offstage" inert="" aria-hidden="true" data-handover-chat="handover"');
-    expect(html).toContain("You asked about Fridge monitoring.");
+    // No opener after Send (owner, 26 Nov): the chat waits for the buyer's choice.
+    expect(html).not.toContain("You asked about Fridge monitoring.");
     expect(html).toContain("Conversation by Sales at Scale");
     // Mock SMS: never the "sent" line.
     expect(html).not.toContain("We also sent this link to your phone.");
@@ -235,8 +236,9 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     expect(back).toContain('data-handover="chat"');
     expect(back).toContain("Thanks, Someone");
     expect(back).toContain("Continue to the chat");
-    // The normal new-lead opener in a fresh chat.
-    expect(back).toContain("You asked about Fridge monitoring.");
+    // Its own fresh chat, prepared without the opener (it follows the buyer's choice).
+    expect(back).toContain('data-handover-chat="handover"');
+    expect(back).not.toContain("You asked about Fridge monitoring.");
     expect(back).not.toContain("Dana");
     expect(back).not.toContain("Welcome back");
     expect(back).not.toContain("received your details");

@@ -42,7 +42,7 @@ const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
 const { REPEAT_MS, submitLeadPage } = await import("@/lib/lead-pages/intake");
-const { loadHandover, recordHandoverChoice } = await import("@/lib/lead-pages/handover");
+const { handoverWrittenOpener, loadHandover, recordHandoverChoice } = await import("@/lib/lead-pages/handover");
 const { createLeadPage, goLiveLeadPage, latestLeadsOfPage } = await import("@/lib/lead-pages/service");
 const { pageFunnel, rangeOfDays } = await import("@/lib/lead-pages/stats");
 const { formTimingToken, leadCookieValue, previewTokenFor } = await import("@/lib/lead-pages/tokens");
@@ -143,6 +143,9 @@ describe("lead pages: preview runs (Open continues, Start over is a new run; nev
       expect(h.startOver).toMatch(new RegExp(`^/p/${page.publicKey}\\?preview=[^&]+&fresh=1$`));
       const convs = await convsOf(s.leadId);
       expect(convs).toHaveLength(1);
+      // Prepared without the opener; "Chat in writing" posts it.
+      expect(await firstMessage(convs[0].id)).toBeUndefined();
+      expect(await handoverWrittenOpener(db, { token: s.id === sa.id ? a.token : b.token, cookie: null })).toEqual({ ok: true, posted: true });
       expect((await firstMessage(convs[0].id)).body).toContain("Fridge monitoring");
     }
     // No real lead with the typed number, and no unverified-claim notes anywhere.

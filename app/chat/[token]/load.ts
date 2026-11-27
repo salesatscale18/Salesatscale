@@ -13,7 +13,7 @@ import { translator, type Locale } from "@/lib/i18n";
 import { currentBuyerLanguage } from "@/lib/conversations/current-language";
 import { buyerChat, chatNames, recordChatOpen, type ChatContext } from "@/lib/simulator/service";
 import { brandVars, buyerBubbleColor, isSimulatedLead } from "@/lib/simulator/rules";
-import { ensureChatStarted } from "@/lib/chat/start";
+import { ensureChatStarted, ensureWrittenOpenerUnlessCall } from "@/lib/chat/start";
 import { smsState } from "@/lib/sms/service";
 import { stopPath, stopTokenFor } from "@/lib/sms/token";
 import { getMarket } from "@/lib/markets/service";
@@ -59,11 +59,20 @@ export async function chatFrame(ctx: ChatContext) {
  * Everything the ChatClient needs. `recordOpen: false` when the caller records
  * the open itself (the hand-over records it when the buyer picks how to talk).
  */
-export async function loadBuyerChat(token: string, ctx: ChatContext, sp: SearchParams = {}, opts: { recordOpen?: boolean } = {}): Promise<LoadedBuyerChat> {
+export async function loadBuyerChat(
+  token: string, ctx: ChatContext, sp: SearchParams = {},
+  /** `writtenOpener: false`: the lead page hand-over, whose chat waits for the buyer's choice (Talk now posts nothing). */
+  opts: { recordOpen?: boolean; writtenOpener?: boolean } = {},
+): Promise<LoadedBuyerChat> {
   const { lang, names, initials, rootStyle } = await chatFrame(ctx);
   const tr = translator(lang);
-  // Every buyer chat starts with the agent's intro (lib/chat/start.ts): never an empty chat.
-  await ensureChatStarted(appDb, { accountId: ctx.account.id, leadId: ctx.lead.id });
+  if (opts.writtenOpener !== false) {
+    // Every buyer chat starts with the agent's intro (lib/chat/start.ts): never an empty chat. A chat the hand-over
+    // prepared without it (the buyer left before choosing, or opens the SMS link later) gets it now, except while a
+    // call holds the conversation (a reload during the call must not post the written opener over the spoken one).
+    const r = await ensureChatStarted(appDb, { accountId: ctx.account.id, leadId: ctx.lead.id });
+    if (!r.started && r.reason === "exists") await ensureWrittenOpenerUnlessCall(appDb, ctx.account.id, r.conversationId);
+  }
   // RB2: the buyer opened the chat ("{buyer} opened the chat" in the seller's thread), from the SMS (/c/ redirects here with
   // ?via=sms and records it first) or straight from the chat link. Once per 10 minutes (recordChatOpen). Never a simulated
   // buyer, and never a viewer signed in as the seller's staff or a platform admin (a preview from the lead card).
