@@ -25,6 +25,7 @@
 import type { FitRule } from "@/lib/catalog/fit";
 import type { AutoAddRule } from "@/lib/pricing/auto-add";
 import { clearYes } from "./form-agreement";
+import { spokenNumbersCached } from "./spoken-numbers";
 
 /**
  * The quote-quantities guard on BUYER calls. ON since the owner decision of 26 Nov 2026 (proven on test calls; the
@@ -41,10 +42,15 @@ const NUMBER_WORDS: Record<number, RegExp> = {
   7: /\bseven\b|שבע|שבעה/i, 8: /\beight\b|שמונה/i, 9: /\bnine\b|תשע|תשעה/i, 10: /\bten\b|עשר|עשרה/i,
 };
 
-/** Whether a line says this number, in digits or in words (English, Hebrew; up to ten in words). */
+/**
+ * Whether a line says this number: in digits (with thousands separators too: "1,200"), or in words, English and
+ * Hebrew, compounds included ("twelve", "twenty-four", "a hundred and twenty", "two dozen", "שתים עשרה", "עשרים
+ * וארבע": lib/voice/spoken-numbers.ts, since 27 Nov 2026), and the older word list (up to ten, "both", "a couple").
+ */
 export function lineSaysNumber(line: string, n: number): boolean {
   if (new RegExp(`(^|[^\\d])${n}([^\\d]|$)`).test(line)) return true;
-  return NUMBER_WORDS[n]?.test(line) ?? false;
+  if (NUMBER_WORDS[n]?.test(line)) return true;
+  return spokenNumbersCached(line).has(n);
 }
 
 /** Above this, a quantity is grounded only when it was said as it is (no product or sum is searched). */
@@ -74,26 +80,42 @@ export function siteTiedSkus(rules: readonly (FitRule | AutoAddRule)[], autoAdd:
 // locations", "both of our stores", "שני סניפים", "בשני הסניפים"), or a Hebrew site word followed by one ("סניף אחד").
 const EN_NUMBER_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, both: 2, "a couple": 2,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, "a dozen": 12,
 };
 const HE_NUMBER_WORDS: Record<string, number> = {
   שניים: 2, שתיים: 2, שני: 2, שתי: 2, שלושה: 3, שלוש: 3, ארבעה: 4, ארבע: 4, חמישה: 5, חמש: 5, שישה: 6, שש: 6,
   שבעה: 7, שבע: 7, שמונה: 8, תשעה: 9, תשע: 9, עשרה: 10, עשר: 10,
+  עשרים: 20, שלושים: 30, ארבעים: 40, חמישים: 50, שנים: 2, שתים: 2, אחד: 1, אחת: 1,
 };
 const SITE_WORDS_EN = "sites?|locations?|branch(?:es)?|stores?|shops?|outlets?|venues?|premises|offices?|warehouses?|facilit(?:y|ies)|buildings?|propert(?:y|ies)|cafes?|hotels?|clinics?";
 const SITE_WORDS_HE = "סניפים|סניף|אתרים|אתר|מיקומים|מיקום|מסעדות|מסעדה|חנויות|חנות|משרדים|משרד|מחסנים|מחסן";
-const NUMBER_ALT = [...Object.keys(EN_NUMBER_WORDS).map((w) => w.replace(" ", "\\s+")), ...Object.keys(HE_NUMBER_WORDS), "\\d+"].join("|");
+// Longest first: "twenty" before "two"... (an alternation takes the first that matches).
+const NUMBER_ALT = [...Object.keys(EN_NUMBER_WORDS).map((w) => w.replace(" ", "\\s+")), ...Object.keys(HE_NUMBER_WORDS)].sort((a, b) => b.length - a.length).concat("\\d+").join("|");
 // Up to two English words between the number and the site word ("both of our sites", "2 retail locations"), never
 // a preposition, an article or "and" ("three in the back" is no site count); in Hebrew none ("שלושה בכל סניף").
 const FILLER = "(?:\\s+(?!(?:in|at|on|per|each|every|the|an?|for|by|with|across|inside|from|to|and|or)(?![A-Za-z]))[A-Za-z'-]+){0,2}";
-const SITE_PHRASE = new RegExp(`(^|[^\\p{L}\\d])[בולשה]?(${NUMBER_ALT})${FILLER}\\s+ה?(?:${SITE_WORDS_EN}|${SITE_WORDS_HE})(?!\\p{L})`, "giu");
+// A compound number word counts whole ("twenty four sites", "עשרים וארבעה סניפים"), never its last word alone.
+const NUMBER_PART = `(?:${NUMBER_ALT})(?:[\\s-]+ו?(?:${NUMBER_ALT}))*`;
+const SITE_PHRASE = new RegExp(`(^|[^\\p{L}\\d])[בולשה]?(${NUMBER_PART})${FILLER}\\s+ה?(?:${SITE_WORDS_EN}|${SITE_WORDS_HE})(?!\\p{L})`, "giu");
 const SITE_ONE_HE = new RegExp(`(^|[^\\p{L}\\d])ה?(?:${SITE_WORDS_HE})\\s+(?:אחד|אחת)(?!\\p{L})`, "gu");
 /** The agent asking for the number of sites ("How many locations do you have?", "כמה סניפים יש לכם?"). */
 const ASKS_SITES = new RegExp(`(?:^|[^\\p{L}])how\\s+many\\s+(?:[\\p{L}'-]+\\s+)?(?:${SITE_WORDS_EN})(?!\\p{L})|כמה\\s+(?:${SITE_WORDS_HE})`, "iu");
 
+/**
+ * A line with accents and other diacritics taken off (Hebrew points too), so a site word matches however it is written
+ * ("cafés" is "cafes"); case is ignored by the patterns themselves.
+ */
+export const withoutDiacritics = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "");
+
 const numberValue = (w: string): number | null => {
-  const t = w.toLowerCase().replace(/\s+/g, " ");
+  const t = w.toLowerCase().replace(/\s+/g, " ").trim();
   if (/^\d+$/.test(t)) return Number(t);
-  return EN_NUMBER_WORDS[t] ?? HE_NUMBER_WORDS[t] ?? null;
+  const one = EN_NUMBER_WORDS[t] ?? HE_NUMBER_WORDS[t];
+  if (one !== undefined) return one;
+  // A compound ("twenty four", "שתים עשרה"): its value when it reads as one number.
+  const all = [...spokenNumbersCached(t)];
+  return all.length === 1 ? all[0] : null;
 };
 
 /**
@@ -102,8 +124,9 @@ const numberValue = (w: string): number | null => {
  * count to `sites`, and it is no quantity in that line (`notQty`).
  */
 export function siteCountsOf(line: BuyerLine, savedSites: number | null): { text: string; sites: number[]; notQty: number | null } {
-  const raw = typeof line === "string" ? line : line.text;
-  const after = typeof line === "string" ? null : line.after ?? null;
+  const raw = withoutDiacritics(typeof line === "string" ? line : line.text);
+  const rawAfter = typeof line === "string" ? null : line.after ?? null;
+  const after = rawAfter === null ? null : withoutDiacritics(rawAfter);
   const sites: number[] = [];
   let text = raw.replace(SITE_PHRASE, (_m, pre: string, num: string) => {
     const v = numberValue(num);
