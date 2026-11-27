@@ -13,7 +13,7 @@ import { buildRequestParams, countCacheBreakpoints, ScriptedLlm, type Block, typ
 import { ensureDraftVersion, saveDraftPlaybook, startTestConversation } from "@/lib/agent/service";
 import type { PlaybookWithOffers, StoredOffer } from "@/lib/agent/offer-settings";
 import { resultForModel } from "@/lib/agent/tools";
-import { historyToolUseId } from "@/lib/agent/history";
+import { historyToolUseId, replayedResult } from "@/lib/agent/history";
 import { runBuyerTurn } from "@/lib/agent/turn";
 import { createVoiceSession } from "@/lib/voice/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -101,7 +101,11 @@ describe("tool history in chat turns", () => {
     expect(uses.map((u) => [u.name, u.id])).toEqual(stored.map((s) => [s.name, historyToolUseId(s.id)]));
     expect(uses.map((u) => u.input)).toEqual(stored.map((s) => s.input));
     expect(results.map((r) => r.tool_use_id)).toEqual(uses.map((u) => u.id));
-    expect(results.map((r) => r.content)).toEqual(stored.map((s) => JSON.stringify(resultForModel(s.result))));
+    expect(results.map((r) => r.content)).toEqual(stored.map((s) => JSON.stringify(replayedResult(s))));
+    // The earlier update_deal_state result is replayed without its stale stage block (the current one is in the context).
+    expect(stored[0].result.stage).toMatch(/^## Stage now/);
+    expect(results[0].content).not.toContain("Stage now");
+    expect(JSON.parse(String(results[0].content))).toEqual((({ stage: _s, ...rest }) => rest)(stored[0].result));
     // The order of the whole history: buyer 1, calls, the quote card create_quote posted, reply 1, buyer 2, reply 2, buyer 3.
     const texts = all.filter((b) => b.type === "text" || b.type === "tool_use").map((b) => (b.type === "tool_use" ? `use:${b.name}` : `${b.role}:${b.text?.split("\n")[0]}`));
     expect(texts).toEqual([
@@ -119,10 +123,15 @@ describe("tool history in chat turns", () => {
       const next = req.messages[i + 1].content as Loose[];
       expect(next.filter((b) => b.type === "tool_result").map((b) => b.tool_use_id)).toEqual(ids);
     });
-    // Caching: the system breakpoint and one on the last history block only (none left on replayed blocks).
+    // Caching: the system breakpoint, the per-turn context (last block, after the history), the history's end (the
+    // buyer's latest message) and the previous turn's history end ("Let me think."); none on other replayed blocks.
     const params = buildRequestParams(req);
-    expect(countCacheBreakpoints(params)).toBe(2);
-    expect((params.messages.at(-1)!.content as Loose[]).at(-1)!.cache_control).toEqual({ type: "ephemeral" });
+    expect(countCacheBreakpoints(params)).toBe(4);
+    expect(params.system).toHaveLength(1);
+    const last = params.messages.at(-1)!.content as Loose[];
+    expect(last.map((b) => [b.text?.slice(0, 20), !!b.cache_control])).toEqual([["Is the offer still o", true], [req.system[1].slice(0, 20), true]]);
+    const marked = params.messages.flatMap((m) => (Array.isArray(m.content) ? (m.content as Loose[]) : [])).filter((b) => b.cache_control).map((b) => b.text?.slice(0, 20));
+    expect(marked).toEqual(["Let me think.", "Is the offer still o", req.system[1].slice(0, 20)]);
   });
 
   it("a failed tool and a refusal are replayed as they were, the failure marked as an error", async () => {

@@ -10,9 +10,9 @@
  * check_offer returned another offer (a check that found nothing leaves it
  * standing); else offered.
  */
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { conversations, toolCalls } from "@/db/schema";
+import { conversations, quotes, toolCalls } from "@/db/schema";
 import type { OfferOutcome } from "./offers";
 import { isOfferType, type OfferType } from "./offer-settings";
 
@@ -161,3 +161,28 @@ export function findOffer(calls: readonly OfferCall[], id: string): OfferRecord 
   }
   return null;
 }
+
+/** The offers still standing (offered, or needing approval: not taken, replaced or expired), newest first (pure). */
+export function standingOffers(history: readonly MadeOfferEntry[]): OfferRecord[] {
+  return history.filter((h) => h.outcome === "offered" || h.outcome === "needs_approval").map((h) => h.record).reverse();
+}
+
+/**
+ * The newest standing offer made on a live quote of the lead (not cancelled or replaced), optionally of exactly this
+ * percent. Null when none. `history`: offerHistory of the lead (the caller's, so the running turn's calls count).
+ */
+export async function standingOfferOnLiveQuote(
+  db: Db, accountId: string, leadId: string, history: readonly MadeOfferEntry[], percentBp?: number,
+): Promise<OfferRecord | null> {
+  const standing = standingOffers(history).filter((r) => percentBp === undefined || r.percentBp === percentBp);
+  if (!standing.length) return null;
+  const rows = await db.select({ id: quotes.id }).from(quotes).where(and(
+    eq(quotes.accountId, accountId), eq(quotes.leadId, leadId), inArray(quotes.id, [...new Set(standing.map((r) => r.quoteId))]),
+    notInArray(quotes.status, ["cancelled", "replaced"]),
+  ));
+  const live = new Set(rows.map((r) => r.id));
+  return standing.find((r) => live.has(r.quoteId)) ?? null;
+}
+
+/** An offer as data in a tool result (`standing_offer`, `matching_offer`): its id, plain terms and quote ("Q-1012 v1"). */
+export const offerRef = (r: Pick<OfferRecord, "id" | "terms" | "quoteNumber" | "quoteVersion">) => ({ id: r.id, terms: r.terms, quote: `Q-${r.quoteNumber} v${r.quoteVersion}` });
