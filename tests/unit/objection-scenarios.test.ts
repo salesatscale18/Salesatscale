@@ -293,6 +293,45 @@ describe("Two objections in a row", () => {
   });
 });
 
+describe("buying_signal and two_objections find their buyer turn by content, not position", () => {
+  // A call's strict quantity guard adds one exchange ("Shall I go ahead with one?" / "Yes, go ahead.").
+  const extra = { buyer: "Yes, go ahead.", agent: "Thanks. Here is the quote.", calls: [quote(1)] };
+  it("buying_signal: an extra exchange before the signal does not shift it", () => {
+    const [open, hmm, yes] = turnsOf("buying_signal");
+    const ok = conversation([
+      { buyer: open, agent: "Shall I go ahead with one?" }, extra,
+      { buyer: hmm, agent: "I understand. Is it more than you planned, or more than another offer?", calls: [objection("too_expensive", 1)] },
+      { buyer: yes, agent: "Great. The order form is below.", calls: [objection("too_expensive", null, "settled"), call("send_order_form", { quote: "Q-1" }, { ok: true })] },
+    ]);
+    expect(check("buying_signal", ok)).toMatchObject({ result: "passed" });
+    // A step taken after the signal still fails; the one after "Hmm" (now the third buyer message) does not count.
+    const step = conversation([
+      { buyer: open, agent: "Shall I go ahead with one?" }, extra,
+      { buyer: hmm, agent: "I understand. Is it more than you planned?", calls: [objection("too_expensive", 1)] },
+      { buyer: yes, agent: "Before that: the price covers setup and support.", calls: [objection("too_expensive", 2)] },
+    ]);
+    expect(check("buying_signal", step)).toMatchObject({ result: "failed", reason: expect.stringContaining("another objection step") });
+    // A call line said without the punctuation still matches.
+    const spoken = conversation([
+      { buyer: open, agent: "Shall I go ahead with one?" }, extra,
+      { buyer: hmm, agent: "Is it more than you planned?", calls: [objection("too_expensive", 1)] },
+      { buyer: "ok fine lets do it send me the order form", agent: "Great. The order form is below.", calls: [call("send_order_form", { quote: "Q-1" }, { ok: true })] },
+    ]);
+    expect(check("buying_signal", spoken).result).toBe("passed");
+  });
+  it("two_objections: an extra exchange before the objections; not yet until the last line is answered", () => {
+    const [open, price, partner, again] = turnsOf("two_objections");
+    const head = [
+      { buyer: open, agent: "Shall I go ahead with one?" }, extra,
+      { buyer: price, agent: "I understand. Is it the budget, or another offer?", calls: [objection("too_expensive", 1)] },
+      { buyer: partner, agent: "Of course. What will your partner care about most?", calls: [objection("someone_else_decides", 1)] },
+    ];
+    expect(check("two_objections", conversation([...head, { buyer: again, agent: "It works out to less than one lost delivery a month.", calls: [objection("too_expensive", 2)] }])).result).toBe("passed");
+    // By position the fourth buyer message would be the last line here; by content it is not sent yet.
+    expect(check("two_objections", conversation(head)).result).toBe("not_yet");
+  });
+});
+
 describe("Question with no approved answer: the told-the-buyer check (O7 tightening)", () => {
   const q = { actor: "buyer", body: "Do you offer on-site training in our city, and how long does it take?" };
   const empty = call("lookup_knowledge", { query: "training" }, { ok: true, facts: [] });
