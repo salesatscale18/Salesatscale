@@ -6,7 +6,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { conversations, followUps, leadPageSubmissions, leads, legalSections, messages, sellerAccounts, users, voiceSessions, type LeadPage, type User } from "@/db/schema";
+import { agentVersions, catalogVersions, consentRecords, conversations, followUps, leadPageSubmissions, leads, legalSections, messages, quotes, quoteVersions, sellerAccounts, toolCalls, users, voiceSessions, type LeadPage, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, publishDraftVersion } from "@/lib/agent/service";
@@ -15,15 +15,23 @@ import { submitLeadPage, type SubmitResult } from "@/lib/lead-pages/intake";
 import { handoverWrittenOpener, loadHandover, recordHandoverChoice } from "@/lib/lead-pages/handover";
 import { createLeadPage, goLiveLeadPage } from "@/lib/lead-pages/service";
 import { OPENER_PENDING_MINUTES, runPendingOpeners } from "@/lib/lead-pages/pending-opener";
-import { formTimingToken } from "@/lib/lead-pages/tokens";
+import { formTimingToken, leadCookieValue, previewTokenFor } from "@/lib/lead-pages/tokens";
+import { isPreviewRunLead, isUnverifiedLead } from "@/lib/leads/unverified";
 import { activeChatToken, createSimulatedBuyer, resolveChatLink, startSimulatorConversation } from "@/lib/simulator/service";
 import { runDueFollowUps } from "@/lib/follow-ups/scheduler";
 import { failedCallOpener, openWrittenChat } from "@/app/h/[token]/handover-chat";
 import { createTestDb, type TestDb } from "../helpers/db";
 
-const holder = vi.hoisted(() => ({ db: null as unknown }));
+const holder = vi.hoisted(() => ({ db: null as unknown, skipTurnGuard: false }));
 vi.mock("@/lib/auth/account", () => ({ get appDb() { return holder.db; } }));
 vi.mock("@/lib/voice/chat-viewer", () => ({ chatViewerIsStaff: async () => false }));
+vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
+vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: () => undefined }));
+// `skipTurnGuard`: the typed-message route's in_call check passes, as when a call starts right after it (the race).
+vi.mock("@/lib/voice/one-agent", async (orig) => {
+  const real = await orig<typeof import("@/lib/voice/one-agent")>();
+  return { ...real, textTurnBlocked: (...a: Parameters<typeof real.textTurnBlocked>) => (holder.skipTurnGuard ? Promise.resolve(false) : real.textTurnBlocked(...a)) };
+});
 
 const APP = "http://localhost:3000";
 const MIN = 60_000;
@@ -60,6 +68,9 @@ describe("deferred written opener (lead page hand-over)", () => {
     db.select().from(messages).where(and(eq(messages.conversationId, conversationId), eq(messages.actor, "agent")));
   const liveCall = (conversationId: string) => db.insert(voiceSessions).values({
     accountId: acc, conversationId, status: "live", connectedAt: new Date(), model: "scripted", mode: "scripted", ticketHash: "t".repeat(64),
+  } as typeof voiceSessions.$inferInsert).returning();
+  const pendingCall = (conversationId: string) => db.insert(voiceSessions).values({
+    accountId: acc, conversationId, status: "pending", model: "scripted", mode: "scripted", ticketHash: "p".repeat(64),
   } as typeof voiceSessions.$inferInsert).returning();
   const ageSubmission = (id: string, minutes: number) =>
     db.update(leadPageSubmissions).set({ createdAt: new Date(Date.now() - minutes * MIN) }).where(eq(leadPageSubmissions.id, id));
@@ -268,5 +279,105 @@ describe("deferred written opener (lead page hand-over)", () => {
     if (!sim.ok) throw new Error(JSON.stringify(sim));
     const [m] = await agentMessages(sim.conversationId);
     expect(m.id).toBe(sim.messageId);
+  });
+
+  it("a typed message while a call is pending does not post the written opener (even past the in_call check)", async () => {
+    const messagesRoute = await import("@/app/chat/[token]/messages/route");
+    const a = await sendAndHandover();
+    const [call] = await pendingCall(a.conversationId);
+    const post = () => messagesRoute.POST(
+      new Request(`${APP}/chat/${a.chatToken}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "hello?", clientId: crypto.randomUUID() }) }),
+      { params: Promise.resolve({ token: a.chatToken }) },
+    );
+    holder.skipTurnGuard = true;
+    try {
+      await post();
+    } finally {
+      holder.skipTurnGuard = false;
+    }
+    expect(await agentMessages(a.conversationId)).toHaveLength(0);
+    // Once the call is over, the next typed message gets the opener in first.
+    await db.update(voiceSessions).set({ status: "ended" }).where(eq(voiceSessions.id, call.id));
+    expect(await (await post()).json()).toEqual({ ok: true });
+    const [opener] = await agentMessages(a.conversationId);
+    expect(opener.body).toContain("You asked about Fridge monitoring.");
+  });
+
+  describe("continuation leads (the agent talked to the lead before)", () => {
+    /** An existing lead with an earlier WhatsApp conversation and a sent quote (the continuation's card). */
+    const earlierLead = async () => {
+      const phone = nextPhone();
+      const [lead] = await db.insert(leads).values({ accountId: acc, fullName: "Yael Cohen", phone, language: "en", origin: "manual", status: "waiting_for_reply" }).returning();
+      await db.insert(consentRecords).values({ accountId: acc, leadId: lead.id, wording: "SMS, WhatsApp or email", source: "Form", capturedAt: new Date() });
+      const [av] = await db.select({ id: agentVersions.id }).from(agentVersions).where(eq(agentVersions.accountId, acc)).limit(1);
+      const [wa] = await db.insert(conversations).values({ accountId: acc, leadId: lead.id, channel: "whatsapp", language: "en", agentVersionId: av.id } as typeof conversations.$inferInsert).returning();
+      await db.insert(messages).values({ accountId: acc, conversationId: wa.id, actor: "buyer", body: "Hi, how much is it?" });
+      let [cv] = await db.select().from(catalogVersions).where(eq(catalogVersions.accountId, acc));
+      if (!cv) [cv] = await db.insert(catalogVersions).values({ id: crypto.randomUUID(), accountId: acc, version: 1 }).returning();
+      const quoteId = crypto.randomUUID();
+      await db.insert(quotes).values({ id: quoteId, accountId: acc, leadId: lead.id, number: 5000 + phoneN, status: "sent" });
+      await db.insert(quoteVersions).values({
+        id: crypto.randomUUID(), accountId: acc, quoteId, version: 1, catalogVersionId: cv.id, currency: "ILS", pricesIncludeTax: true, taxRateBp: 1800,
+        oneTimeSubtotalMinor: 0, oneTimeDiscountMinor: 0, oneTimeTaxMinor: 0, oneTimeTotalMinor: 0,
+        recurringSubtotalMinor: 0, recurringDiscountMinor: 0, recurringTaxMinor: 0, recurringTotalMinor: 0,
+        validUntil: new Date(Date.now() + 14 * 24 * 60 * MIN), createdByActor: "agent",
+      } as typeof quoteVersions.$inferInsert);
+      return { lead, phone, quoteId };
+    };
+    const send = async (body: Record<string, unknown>, cookie?: string) => {
+      const h: Record<string, string> = { origin: APP };
+      if (cookie) h.cookie = `sas_lp=${cookie}`;
+      const r = await submitLeadPage(db, {
+        key: page.publicKey, headers: new Headers(h), ip: `10.77.1.${++ipN}`, env: { APP_URL: APP },
+        body: { ft: formTimingToken(page.id, Date.now() - 5000), consent: "on", ...body },
+      });
+      if (r.kind !== "handover") throw new Error(JSON.stringify(r));
+      return r;
+    };
+    const webChat = async (leadId: string) => (await db.select().from(conversations).where(and(eq(conversations.leadId, leadId), eq(conversations.channel, "chat"))))[0];
+
+    it("the lead's own browser: the continuation line and its card are posted on render; Talk now keeps them", async () => {
+      const { lead, phone, quoteId } = await earlierLead();
+      const r = await send({ name: "Yael Cohen", phone }, leadCookieValue(lead.id));
+      const [sub] = await db.select().from(leadPageSubmissions).where(eq(leadPageSubmissions.id, r.submissionId));
+      expect(sub).toMatchObject({ leadId: lead.id, leadCreated: false });
+      const h = await loadHandover(db, { token: r.token, cookie: leadCookieValue(lead.id), ip: `10.78.1.${++ipN}` });
+      expect(h).toMatchObject({ kind: "ready", variant: "chat" });
+      const chat = await webChat(lead.id);
+      const rows = await db.select().from(messages).where(eq(messages.conversationId, chat.id)).orderBy(messages.createdAt);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({ actor: "agent" });
+      expect(rows[0].body).toMatch(/^Hi Yael, it's .+ again from .+, picking up where we left off\. Here's your quote Q-\d+ from .+, any questions about it\?$/);
+      const [card] = await db.select().from(toolCalls).where(eq(toolCalls.messageId, rows[1].id));
+      expect(card.result).toMatchObject({ kind: "quote", quote_id: quoteId, continued: true });
+      // A reload writes nothing more; Talk now keeps the chat as it is (the call speaks its own continuation).
+      await loadHandover(db, { token: r.token, cookie: leadCookieValue(lead.id), ip: `10.78.1.${++ipN}` });
+      expect(await recordHandoverChoice(db, { token: r.token, choice: "voice", cookie: leadCookieValue(lead.id), staffViewer: async () => false })).toEqual({ ok: true });
+      expect(await agentMessages(chat.id)).toHaveLength(2);
+      expect(await handoverWrittenOpener(db, { token: r.token, cookie: leadCookieValue(lead.id) })).toEqual({ ok: true, posted: false });
+    });
+
+    it("FRESH, not continuations: an unverified returning lead and a preview run with that number start empty", async () => {
+      const { lead, phone } = await earlierLead();
+      // Another browser, same number: a separate unverified lead.
+      const other = await send({ name: "Someone Else", phone });
+      expect(other.newLeadId).toBeTruthy();
+      expect(other.newLeadId).not.toBe(lead.id);
+      const [u] = await db.select().from(leads).where(eq(leads.id, other.newLeadId!));
+      expect(isUnverifiedLead(u)).toBe(true);
+      const hu = await loadHandover(db, { token: other.token, cookie: null, ip: `10.78.1.${++ipN}` });
+      expect(hu).toMatchObject({ kind: "ready", variant: "chat" });
+      expect(await db.select().from(messages).where(eq(messages.conversationId, (await webChat(u.id)).id))).toHaveLength(0);
+      // The seller's preview with the same number (and the real lead's cookie): a preview-run test lead.
+      const pv = await send({ name: "Seller Test", phone, preview: previewTokenFor(page.id, new Date()), fresh: "1" }, leadCookieValue(lead.id));
+      const [psub] = await db.select().from(leadPageSubmissions).where(eq(leadPageSubmissions.id, pv.submissionId));
+      const [pl] = await db.select().from(leads).where(eq(leads.id, psub.leadId));
+      expect(isPreviewRunLead(pl)).toBe(true);
+      const hp = await loadHandover(db, { token: pv.token, cookie: null, ip: `10.78.1.${++ipN}` });
+      expect(hp).toMatchObject({ kind: "ready", variant: "chat" });
+      expect(await db.select().from(messages).where(eq(messages.conversationId, psub.conversationId!))).toHaveLength(0);
+      // The real lead got no web chat from either.
+      expect(await webChat(lead.id)).toBeUndefined();
+    });
   });
 });
