@@ -106,7 +106,10 @@ async function startChat(
   const existing = await latestWebChat(db, accountId, leadId);
   if (existing) return { started: false, reason: "exists", conversationId: existing.id };
   const { continuation, opts } = await openerOptions(db, accountId, leadId, now);
-  const r = await startSimulatorConversation(db, input.actor ?? { userId: null, actingAs: false }, accountId, leadId, now, { ...opts, withoutOpener });
+  // Only a fresh lead's chat starts empty: a continuation (the agent talked to the lead before, leadContinuation) is
+  // posted at once, line and card, as ensureChatStarted does.
+  const deferred = withoutOpener && !continuation;
+  const r = await startSimulatorConversation(db, input.actor ?? { userId: null, actingAs: false }, accountId, leadId, now, { ...opts, withoutOpener: deferred });
   if (!r.ok) {
     // A parallel open started it a moment ago.
     if (r.reason === "already_started") {
@@ -115,7 +118,7 @@ async function startChat(
     }
     return { started: false, reason: r.reason };
   }
-  if (withoutOpener || !continuation) return { started: true, conversationId: r.conversationId, messageId: r.messageId, continued: null };
+  if (deferred || !continuation) return { started: true, conversationId: r.conversationId, messageId: r.messageId, continued: null };
   const card = await continuationCard(db, accountId, r.conversationId, continuation.state, now);
   return { started: true, conversationId: r.conversationId, messageId: r.messageId, continued: { state: continuation.state.kind, card } };
 }
@@ -135,7 +138,8 @@ export type EnsureChatPreparedResult =
 /**
  * The lead page hand-over (owner, 26 Nov: "Talk now" opens the conversation with no text in it, so the call's first
  * sentence is heard from its beginning): the lead's web chat and its chat link, with the opener's gates, but no
- * message yet. "Opener pending" is not stored anywhere: it is a web chat with no agent message (no schema change).
+ * message yet. Fresh leads only: a lead the agent already talked to (a continuation, lib/chat/continuation.ts
+ * leadContinuation) gets the continuation line and its card at once, exactly as ensureChatStarted posts them. "Opener pending" is not stored anywhere: it is a web chat with no agent message (no schema change).
  * The written opener follows from ensureWrittenOpener ("Chat in writing", a call that could not start, the chat page
  * opened later, or the cron after OPENER_PENDING_MINUTES); a call speaks its own greeting instead.
  */
@@ -172,6 +176,7 @@ async function buildWrittenOpener(db: Db, accountId: string, conversationId: str
  * account paused or not live, no published agent, the spend cap. It does not check whether the chat already holds an
  * agent message (hasAgentMessage); ensureWrittenOpener does.
  */
+// Null when a gate applies (closed, consent, paused, spend cap…): the Voice side then falls back to its own template.
 export async function writtenOpenerText(db: Db, accountId: string, conversationId: string, language?: Locale): Promise<string | null> {
   return (await buildWrittenOpener(db, accountId, conversationId, new Date(), language))?.prepared.body ?? null;
 }
