@@ -166,11 +166,11 @@ export async function loadGuardedInstructions(
   const switched = !!opts.language && opts.language !== (a.conv.language || "en");
   const ctx = await loadClassicInstructions(db, switched ? { ...a, conv: { ...a.conv, language: opts.language! } } : a, { recap: opts.recap, resumed: opts.resumed, woke: opts.woke });
   // A call that starts the conversation (no agent message yet: the hand-over's "Talk now") speaks the opener the chat
-  // would post, word for word (lib/voice-guarded/chat-opener.ts: the approved template, or the opener with what the
-  // lead asked about), not Classic's own build of it. Unchanged when they are the same or the chat would not open.
+  // would post, word for word (lib/voice-guarded/chat-opener.ts: lib/chat/start.ts writtenOpenerText), not Classic's
+  // own build of it. Unchanged when they are the same or the chat would post nothing (a test-lab chat: Classic's).
   let { opener, openerPrompt, instructions } = ctx;
   if (!ctx.continuing && !opts.resumed && !opts.woke && !switched) {
-    const written = await chatOpenerText(db, a, ctx.language, a.now).catch(() => null);
+    const written = await chatOpenerText(db, a).catch(() => null);
     if (written && written !== opener) {
       instructions = instructions.split(`"${opener}"`).join(`"${written}"`);
       opener = written;

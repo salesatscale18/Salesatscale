@@ -3,7 +3,8 @@
  * conversation and the call speaks the opener as its first message. A call that ends with nothing said (the buyer hung
  * up before the first word, the held greeting never released, the model refused or failed to connect, an error) would
  * leave the chat empty; so once the call is over, the written opener is posted when the conversation still has no
- * agent message (lib/chat/start.ts ensureWrittenOpener: idempotent, server-side, no request context).
+ * agent message (lib/chat/start.ts ensureWrittenOpenerUnlessCall: idempotent, server-side, no request context; not
+ * while another call holds the conversation).
  *
  * Called only after a call has ended (never while one is live): the engine's end (lib/voice/engine.ts finish), a call
  * that ended before its engine started (lib/voice/service.ts endUnstartedVoiceSession) and the stale close
@@ -17,9 +18,14 @@ import { errorSummary, voiceLine, type VoiceLog } from "./log";
 /** lib/chat/start.ts ensureWrittenOpener's signature (injectable: tests stub it). */
 export type WrittenOpenerFn = (db: Db, accountId: string, conversationId: string) => Promise<{ posted: boolean }>;
 
-/** The real one, imported lazily (lib/chat/start → lib/simulator/service imports lib/voice: no cycle at load). */
+/**
+ * The real one: lib/chat/start.ts ensureWrittenOpenerUnlessCall (ensureWrittenOpener, except while another call is
+ * pending or live on the conversation: that call speaks the opener, or leaves it to its own end). Every caller has
+ * set the ending session's row to "ended" first, so the call that just ended never counts. Imported lazily
+ * (lib/chat/start → lib/simulator/service imports lib/voice: no cycle at load).
+ */
 export const defaultWrittenOpener: WrittenOpenerFn = async (db, accountId, conversationId) =>
-  (await import("@/lib/chat/start")).ensureWrittenOpener(db, accountId, conversationId);
+  (await import("@/lib/chat/start")).ensureWrittenOpenerUnlessCall(db, accountId, conversationId);
 
 export const writtenOpenerLine = (posted: boolean) => `written opener posted after the call: ${posted ? "yes" : "no"}`;
 

@@ -25,7 +25,7 @@ const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
 const { createSimulatedBuyer } = await import("@/lib/simulator/service");
-const { ensureChatStarted, ensureWrittenOpener } = await import("@/lib/chat/start");
+const { ensureChatStarted, ensureWrittenOpener, ensureWrittenOpenerUnlessCall, writtenOpenerText } = await import("@/lib/chat/start");
 const { VoiceEngine, VOICE_HOLD_GREETING_MS } = await import("@/lib/voice/engine");
 const { flushAsync, ManualClock } = await import("@/lib/voice/realtime");
 const { micPcm, ScriptedRealtime } = await import("@/lib/voice/scripted-realtime");
@@ -132,6 +132,8 @@ describe("a call on an empty conversation speaks the opener (New engine)", () =>
     const prompt = c.conn().sent.responses[0]!;
     expect(c.conn().sent.responses).toHaveLength(1);
     expect(prompt).toBe(spokenOpenerPrompt(c0.written));
+    // One source: the chat's writtenOpenerText (what ensureWrittenOpener would post).
+    expect(prompt).toBe(spokenOpenerPrompt((await writtenOpenerText(db, acc, c0.conversationId))!));
     // The introduction first, then the recording line, then the rest of the opener.
     const intro = c0.written.slice(0, c0.written.indexOf(".") + 1);
     expect(prompt.indexOf(intro)).toBeLessThan(prompt.indexOf(recordingNoticeText("en")));
@@ -169,6 +171,16 @@ describe("a call on an empty conversation speaks the opener (New engine)", () =>
     await c.engine.stop("user_hangup");
   });
 
+  it("a test-lab call (writtenOpenerText is null for a test chat) keeps Classic's opener", async () => {
+    const lab = (await startVoiceTestConversation(db, acc, me.id, { scenario: null, language: "en" }))!;
+    expect(await writtenOpenerText(db, acc, lab.conversationId)).toBeNull();
+    const c = await call(lab.conversationId, { isTest: true });
+    const prompt = c.conn().sent.responses[0]!;
+    expect(prompt).toMatch(/Say your opening line now/);
+    expect(prompt).toMatch(/automated assistant of Acme/);
+    await c.engine.stop("user_hangup");
+  });
+
   it("a conversation that already has the written opener (a real continuation) gets the pick-up line, unchanged; nothing written after", async () => {
     const c0 = await buyerConversation({ empty: false });
     const fn = vi.fn<WrittenOpenerFn>(async () => ({ posted: false }));
@@ -195,7 +207,8 @@ describe("the written opener after a call that said nothing", () => {
     const fn: WrittenOpenerFn = async (d, a, conv) => {
       liveWhenCalled = (await db.select({ status: voiceSessions.status }).from(voiceSessions).where(eq(voiceSessions.conversationId, conv)))[0]?.status ?? null;
       endedSentBefore = sentRef.some((m) => (m as { t?: string }).t === "ended");
-      return ensureWrittenOpener(d, a, conv);
+      // The default (lib/voice/written-opener.ts): the ending call's own row is ended, so it does not block.
+      return ensureWrittenOpenerUnlessCall(d, a, conv);
     };
     const c = await call(c0.conversationId, { limits: HOLD, writtenOpener: fn });
     sentRef = c.sent;
@@ -324,6 +337,25 @@ describe("the written opener after a call that said nothing", () => {
     if (!qs.ok) throw new Error(qs.reason);
     await closeStaleVoiceSessions(db, null, later(20), { log });
     expect((await agentLines(q0.conversationId)).map((m) => m.body)).toEqual([q0.written]);
+  });
+
+  it("another call already pending on the conversation (the buyer called again): the ended call posts nothing; that call's own end does", async () => {
+    const c0 = await buyerConversation({ empty: true });
+    const c = await call(c0.conversationId, { limits: HOLD });
+    await c.run(2_000);
+    // A second call created on the same conversation (its socket still connecting).
+    const [rowA] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, c.sessionId));
+    const [b] = await db.insert(voiceSessions).values({ ...rowA, id: crypto.randomUUID(), status: "pending", createdAt: new Date(), connectedAt: null, endedAt: null, endReason: null, errorCode: null, ticketHash: "b" }).returning();
+    await c.engine.onClientGone({ code: 1001, reason: "gone" });
+    await c.settle();
+    expect((await db.select().from(voiceSessions).where(eq(voiceSessions.id, c.sessionId)))[0].status).toBe("ended");
+    expect(await agentLines(c0.conversationId)).toHaveLength(0);
+    expect(c.has(POSTED_NO)).toBe(1);
+    // That call fails before its engine starts (the socket path): now nothing else holds the conversation.
+    const lines: string[] = [];
+    await endUnstartedVoiceSession(db, b.id, "model_unavailable", new Date(), { log: { info: (l) => void lines.push(l), warn: (l) => void lines.push(l) } });
+    expect((await agentLines(c0.conversationId)).map((m) => m.body)).toEqual([c0.written]);
+    expect(lines.filter((l) => l.endsWith(POSTED_YES))).toHaveLength(1);
   });
 
   it("ensureWrittenOpener: idempotent, never on a closed conversation", async () => {

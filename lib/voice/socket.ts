@@ -108,7 +108,7 @@ export type VoiceSocketOptions = {
    * platform would otherwise stop or freeze the function once the browser's socket is gone.
    */
   keepAlive?: (work: Promise<unknown>) => void;
-  /** Tests: the written opener after a call that said nothing (default lib/chat/start.ts ensureWrittenOpener; lib/voice/written-opener.ts). */
+  /** Tests: the written opener after a call that said nothing (default lib/chat/start.ts ensureWrittenOpenerUnlessCall; lib/voice/written-opener.ts). */
   writtenOpener?: WrittenOpenerFn;
 };
 

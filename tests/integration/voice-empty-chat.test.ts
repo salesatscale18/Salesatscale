@@ -210,6 +210,35 @@ describe("voice on a chat that has not started", () => {
   });
 });
 
+describe("a call on the empty chat that fails at the socket, before its engine", () => {
+  it("no model for the session's mode: the session ends, then the written opener is posted (the real ensureWrittenOpenerUnlessCall)", async () => {
+    const b = await notStarted("Empty Eight");
+    const r = await start(b);
+    if (!r.ok) throw new Error(r.reason);
+    class Fake extends EventEmitter {
+      out: (string | Uint8Array)[] = [];
+      bufferedAmount = 0;
+      send(d: string | Uint8Array) { this.out.push(d); }
+      close() { setImmediate(() => this.emit("close")); }
+    }
+    const ws = new Fake();
+    const clock = new ManualClock();
+    // Voice is off now (no VOICE_REALTIME): the session's scripted mode has no model, so the socket refuses the call.
+    const done = handleVoiceSocket(ws, { db, deadlineSec: 270, env: {}, clock });
+    const settle = async () => { for (let i = 0; i < 6; i++) { await flushAsync(4); await new Promise((x) => setTimeout(x, 5)); } };
+    ws.emit("message", Buffer.from(JSON.stringify({ t: "auth", sessionId: r.sessionId, ticket: r.ticket })), false);
+    await settle();
+    ws.emit("close");
+    await settle();
+    await done;
+    expect((await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId)))[0]).toMatchObject({ status: "ended", errorCode: "model_unavailable" });
+    const stored = await db.select().from(messages).where(eq(messages.conversationId, r.conversationId));
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ actor: "agent", voiceSessionId: null });
+    expect(stored[0].body).toMatch(/automated assistant of Acme/);
+  });
+});
+
 describe("Switch to voice on both web-chat channels", () => {
   it("a real lead's web chat (channel chat): available before it started, the start makes a chat conversation, and a second call joins it", async () => {
     const b = await realNotStarted("0525550777");

@@ -145,7 +145,7 @@ export type StartBuyerCallResult =
  */
 export async function startBuyerVoiceCall(
   db: Db, ctx: Pick<ChatContext, "lead" | "account">, token: string,
-  /** `writtenOpener`: tests (default lib/chat/start.ts ensureWrittenOpener). */
+  /** `writtenOpener`: tests (default lib/chat/start.ts ensureWrittenOpenerUnlessCall). */
   opts: { deadlineSec: number | null; now?: Date; env?: Record<string, string | undefined>; writtenOpener?: WrittenOpenerFn },
 ): Promise<StartBuyerCallResult> {
   const now = opts.now ?? new Date();

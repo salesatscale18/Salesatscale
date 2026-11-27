@@ -173,7 +173,7 @@ export type VoiceEngineDeps = {
   speaker?: Speaker;
   /**
    * After the call: the written opener when the conversation still has no agent message (lib/voice/written-opener.ts;
-   * default lib/chat/start.ts ensureWrittenOpener). Tests stub it.
+   * default lib/chat/start.ts ensureWrittenOpenerUnlessCall). Tests stub it.
    */
   writtenOpener?: WrittenOpenerFn;
 };
