@@ -127,17 +127,22 @@ export function siteCountsOf(line: BuyerLine, savedSites: number | null): { text
  * - `sites`: the saved number of sites (deal state), when there is one;
  * - `perSiteSkus` / `onceSkus`: the items the catalog ties to sites / adds once (siteTiedSkus); none given or empty:
  *   the catalog has no site data, and every item counts as one per site;
- * - `refusedAt`: the length of `callLines` when this guard last refused on this call (null: never).
+ * - `refusedAt`: the length of `callLines` when this guard last refused on this call (null: never);
+ * - `siteFallback` (default true): whether a catalog with no site data lets the site count ground every item. Call
+ *   wiring v2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS) passes false: a live call quoted 2 units for 2 sites
+ *   that way. Then, with no site data, the site count grounds NO item by itself; it still is a factor of a product
+ *   with a buyer number ("three in each" × 2 sites), and the agent's number with a yes and the no-dead-lock path stay.
  * Lines with no positive whole quantity are left to the tool (it refuses them itself).
  */
 export function ungroundedQuoteLine(o: {
   lines: readonly { sku: string; qty: number }[]; buyerLines: readonly BuyerLine[]; callLines: readonly QuantityLine[]; sites: number | null; refusedAt: number | null;
-  perSiteSkus?: ReadonlySet<string>; onceSkus?: ReadonlySet<string>;
+  perSiteSkus?: ReadonlySet<string>; onceSkus?: ReadonlySet<string>; siteFallback?: boolean;
 }): { sku: string; qty: number } | null {
   // Which items the number of sites may ground: the catalog's per-site items. A catalog that ties NO item to sites
-  // gives no data either way: every item is then taken as one per site, as before 26 Nov (a generic "per location"
-  // product, e.g. "We have one location" → 1 package).
-  const perSite = (sku: string) => !o.perSiteSkus?.size || o.perSiteSkus.has(sku);
+  // gives no data either way: with `siteFallback` (buyer calls) every item is then taken as one per site, as before
+  // 26 Nov (a generic "per location" product, e.g. "We have one location" → 1 package); without it, none is.
+  const fallback = o.siteFallback ?? true;
+  const perSite = (sku: string) => (o.perSiteSkus?.size ? o.perSiteSkus.has(sku) : fallback);
   // The buyer's lines as quantities (site counts cut out), and every site count: the buyer's and the saved one.
   const parsed = o.buyerLines.map((l) => siteCountsOf(l, o.sites));
   const siteCounts = new Set<number>([...(o.sites !== null ? [o.sites] : []), ...parsed.flatMap((p) => p.sites)]);
@@ -188,11 +193,23 @@ export const QUANTITY_NOT_GIVEN_RULE = "Quantity not given";
  * The refusal the model gets, in the language the call speaks (Hebrew or English): no money figure, the item whose
  * quantity the buyer has not given, and the one question to ask now.
  */
-export function quantityNotGiven(item: string, language: string): { rule: string; message: string } {
+export function quantityNotGiven(item: string, language: string, o: { v2?: boolean } = {}): { rule: string; message: string } {
+  if (o.v2) return { rule: QUANTITY_NOT_GIVEN_RULE, message: quantityAskLine(item, language) };
   const message = language === "he"
     ? `לא נוצרה הצעת מחיר: הקונה עוד לא אמר כמה ${item} הוא צריך. שאל אותו עכשיו רק את השאלה הזאת, במשפט אחד קצר, וחכה לתשובה. אם הוא לא יודע להגיד, הצע מספר בקול וקבל ממנו "כן" לפני שאתה יוצר הצעת מחיר.`
     : `No quote was made: the buyer has not said how many ${item} they need. Ask the buyer that one question now, in one short sentence, and wait for the answer. If they cannot say, propose a number aloud and get their yes before you quote.`;
   return { rule: QUANTITY_NOT_GIVEN_RULE, message };
+}
+
+/**
+ * Call wiring v2 (test calls): the refusal in words the model cannot read aloud as they are ("No quote was made" is
+ * not for the buyer) and that ask for one question in its own words; the no-dead-lock path is named as a number to
+ * suggest and a yes to wait for. English and Hebrew.
+ */
+export function quantityAskLine(item: string, language: string): string {
+  return language === "he"
+    ? `לא נוצרה הצעת מחיר; אל תזכיר את זה לקונה. הקונה עוד לא אמר כמה ${item} הוא צריך. שאל רק את זה, בשאלה קצרה אחת במילים שלך, וחכה לתשובה. אם הוא לא יודע להגיד, הצע מספר וחכה ל"כן" שלו לפני שאתה קורא שוב ל-create_quote.`
+    : `No quote was made; do not mention this to the buyer. The buyer has not said how many ${item} they need. Ask only that, in one short question in your own words, and wait for the answer. If they cannot say, suggest a number and wait for their yes before you call create_quote again.`;
 }
 
 /** The log line of one decision (never the buyer's words). */

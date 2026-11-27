@@ -11,7 +11,7 @@ import { conversations, messages, rateLimits, users, voiceSessions, type User } 
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion } from "@/lib/agent/service";
-import { notSavedYet, OBJECTION_FIRST, VoiceEngine, inheritedSummary } from "@/lib/voice/engine";
+import { notSavedYet, OBJECTION_FIRST, removalKeepLine, VoiceEngine, inheritedSummary } from "@/lib/voice/engine";
 import { readDealState } from "@/lib/agent/service";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 import { activeCallOn, textTurnBlocked } from "@/lib/voice/one-agent";
@@ -348,7 +348,8 @@ describe("one agent at a time", () => {
     await c.run(500);
     const held = c.model.conns[0].results.find((r) => r.name === "create_quote")!.result;
     expect(held).toMatchObject({ ok: false, rule: "Removal not asked" });
-    expect(String(held.message)).toContain("The buyer did not ask to remove INST-1");
+    // A test call (call wiring v2): keep the line, no offer to remove it.
+    expect(String(held.message)).toContain(removalKeepLine(["INST-1"], false, "en").message);
     expect(logs.some((l) => l.endsWith("tool create_quote held: removes a line the buyer did not ask to remove"))).toBe(true);
     c.engine.onClientMessage({ t: "text", text: "Can we do it without the installation?" });
     await c.run(300);

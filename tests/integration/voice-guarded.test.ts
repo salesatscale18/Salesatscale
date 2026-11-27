@@ -18,8 +18,9 @@ import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, readDealState, saveDraftPlaybook } from "@/lib/agent/service";
 import type { PlaybookWithOffers, StoredOffer } from "@/lib/agent/offer-settings";
 import { ClassicVoiceEngine } from "@/lib/voice-classic/engine";
-import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, HELD_FORM_MESSAGE, HELD_FORM_RULE, HELD_QUOTE_MESSAGE, HELD_QUOTE_SAY, refusedQuoteMessage, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
+import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, HELD_FORM_MESSAGE, HELD_FORM_RULE, HELD_QUOTE_MESSAGE, HELD_QUOTE_SAY, refusedQuoteMessage, removalKeepLine, smallerQuoteHold, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
+import { QUOTE_NEEDS_LINE } from "@/lib/voice-guarded/stage-hints";
 import { guardedInstructions } from "@/lib/voice-guarded/instructions";
 import { realtimeTools as currentTools } from "@/lib/voice/tool-schema";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
@@ -75,6 +76,10 @@ beforeAll(async () => {
     { sku: "SEAT-M", name: "User seat", unit: "seat", plainName: "user seat" },
     { sku: "SENSOR", name: "Temperature sensor", unit: "unit" },
     { sku: "GATEWAY", name: "Gateway", unit: "unit", plainName: "kitchen hub" },
+  ], [
+    // Each site needs a user seat (catalog site data): "one location" grounds one seat on every call, so the scripted
+    // ready_buyer call runs as before on a test call too (call wiring v2: no site data, no grounding by the site count).
+    { kind: "requires", sku: "SEAT-M", oneOf: ["SEAT-M"], perSite: true },
   ]);
   // The sensor: ₪450 once and ₪17.70 a month each (VAT included): six of them are ₪106.20 a month.
   await seedPricing(db, acc, [{ sku: "SEAT-M", oneTime: 10_000 }, { sku: "SENSOR", oneTime: 45_000, recurring: 1_770 }, { sku: "GATEWAY", oneTime: 90_000 }], { userId: me.id });
@@ -174,6 +179,8 @@ describe("Classic + guards", () => {
         // (asserted below; tests/integration/voice-call-wiring.test.ts covers it).
         const own = g[0].toolResults.find((x) => x.callId === r.callId)!.result;
         if (r.name !== "update_deal_state") r.result = { ...r.result, stage: own.stage };
+        // 6. ...and update_deal_state's block (stages 2-4) says what a quote needs (nothing named yet: the rule only).
+        else r.result = { ...r.result, stage: `${String(r.result.stage)}\n${QUOTE_NEEDS_LINE}` };
       }
     }
     expect(normalize(g)).toEqual(normalize(expected));
@@ -322,7 +329,7 @@ describe("Classic + guards", () => {
         const c = await fakeCall([], {}, profile);
         await c.startNow();
         await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
-        await c.buyer("How much for six sensors and a gateway?");
+        await c.buyer("How much for six sensors and one gateway?");
         // A quote exists: the tool itself opens prices, so its stored result carries totals and line amounts.
         await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }, { sku: "GATEWAY", qty: 1 }]));
         const fit = await c.tool("c1", "check_fit", { lines: [{ sku: "SENSOR", qty: 6 }, { sku: "GATEWAY", qty: 1 }], sites: 1 });
@@ -438,7 +445,8 @@ describe("Classic + guards", () => {
       await c.buyer("It is more than we plan to spend.");
       const held = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 2 }], { remove_auto_added: ["INST-1"] }));
       expect(held).toMatchObject({ ok: false, rule: "Removal not asked" });
-      expect(String(held.message)).toContain("The buyer did not ask to remove INST-1");
+      // A test call (call wiring v2): keep the line; nothing to offer, nothing to mention (INST-1 is not in this catalog).
+      expect(held.message).toBe(removalKeepLine(["INST-1"], false, "en").message);
       expect(c.logs.some((l) => l.endsWith("tool create_quote held: removes a line the buyer did not ask to remove"))).toBe(true);
       await c.buyer("Can we do it without the installation?");
       const ran = await c.tool("q2", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 2 }], { remove_auto_added: ["INST-1"] }));
@@ -492,7 +500,8 @@ describe("Classic + guards", () => {
         const held = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 1 }], { sites: 1 }));
         // Hebrew: Current's language hint after the guidance (the New engine keeps it since 26 Nov 2026).
         const hint = he ? " Say it in Hebrew, the language you are speaking with the buyer." : "";
-        expect(held).toMatchObject({ ok: false, rule: "Smaller quote not asked", message: `${smallerQuoteNotAsked("1 site").message}${hint}` });
+        // A test call (call wiring v2): the hold in its own language, no offer of its own.
+        expect(held).toMatchObject({ ok: false, rule: "Smaller quote not asked", message: `${smallerQuoteHold("1 site", he ? "he" : "en").message}${hint}` });
         expect(c.logs.some((l) => l.endsWith("tool create_quote held: a smaller quote the buyer did not ask for"))).toBe(true);
         await c.said(he ? "להכין הצעת מחיר לסניף אחד?" : "Shall I prepare a quote for one site?");
         await c.buyer(he ? "כן בבקשה" : "yes please");

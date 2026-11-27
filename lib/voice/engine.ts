@@ -65,7 +65,7 @@ import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { medianOf, type RtElevenUsage } from "@/lib/voice-rt-eleven/summary";
 import { cutLine } from "@/lib/voice/cut-line";
 import { withoutInternalIds } from "./result-ids";
-import { callStageResult, STAGE_SKIP_TOOLS } from "./call-stage";
+import { callStageResult, STAGE_SKIP_TOOLS, type QuoteNeeds } from "./call-stage";
 import { callHasLines } from "@/lib/voice/call-lines";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
@@ -221,6 +221,12 @@ export type VoiceProfile = {
    * is not run again (VoiceEngine duplicateOf). Absent: every call runs.
    */
   dedupeToolCallsMs?: number;
+  /**
+   * Call wiring v2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS): lines added after the stage block a call's tool result
+   * carries (guarded: what a quote needs, lib/voice-guarded/stage-hints.ts). `needs` reads the call's quantities as
+   * the quote-quantities guard checks them; called only when the profile wants it. Absent: nothing added.
+   */
+  stageHints?(block: string, needs: () => Promise<QuoteNeeds>): Promise<string[]>;
 };
 
 export type { VoiceEndBy, VoiceEndDetail };
@@ -425,6 +431,30 @@ export const removalNotAsked = (removing: readonly string[]) => ({
   rule: "Removal not asked",
   message: `The buyer did not ask to remove ${removing.join(", ")}. The quote stays as it is. If it helps, offer that option in one short sentence and make the new quote only when the buyer agrees.`,
 });
+
+/**
+ * Call wiring v2 (test calls): the removal guard's refusal in words the model cannot turn into an offer (a test call
+ * offered the buyer to remove the installation after the old one). `items`: the lines as the agent names them;
+ * `perSite`: every one is added once per site. English and Hebrew.
+ */
+export function removalKeepLine(items: readonly string[], perSite: boolean, language: "en" | "he") {
+  const list = items.join(", ");
+  const message = language === "he"
+    ? `לא נוצרה הצעת מחיר: השאר את השורה של ${list}. ${perSite ? "היא נדרשת לכל סניף." : "היא חלק מההזמנה הזאת."} אל תציע להוריד אותה ואל תזכיר את זה לקונה; צור שוב את אותה הצעת מחיר עם השורה הזאת.`
+    : `No quote was made: keep the ${list} line. ${perSite ? "It is required for each site." : "It is part of this order."} Do not offer to remove it and do not mention this to the buyer; make the same quote again with that line.`;
+  return { rule: "Removal not asked", message };
+}
+
+/**
+ * Call wiring v2 (test calls): the smaller-quote guard's hold in words that neither read as a line to say nor invite
+ * an offer the buyer did not ask for; the smaller start stays the answer to a budget objection. English and Hebrew.
+ */
+export function smallerQuoteHold(what: string, language: "en" | "he") {
+  const message = language === "he"
+    ? `לא נוצרה הצעת מחיר; אל תזכיר את זה לקונה. הקונה לא ביקש הצעת מחיר עבור ${what}: ההצעה הנוכחית נשארת כמו שהיא. אל תציע מיוזמתך הצעה קטנה יותר. רק אם הקונה אמר שהמחיר מעל התקציב שלו, אפשר לשאול בשאלה קצרה אחת אם להכין הצעה עבור ${what}, וליצור אותה רק אחרי ה"כן" שלו.`
+    : `No quote was made; do not mention this to the buyer. The buyer has not asked for a quote for ${what}: the current quote stays as it is. Do not offer a smaller quote on your own. Only if the buyer said the price is over their budget may you ask, in one short question, whether to prepare a quote for ${what}; make it only after their yes.`;
+  return { rule: "Smaller quote not asked", message };
+}
 
 /** The smaller-quote guard's hold (smallerQuoteAgreed): ask that one question first. */
 export const smallerQuoteNotAsked = (what: string) => ({
@@ -676,6 +706,8 @@ export class VoiceEngine {
    * `id` is null when the result named no quote id.
    */
   private heldQuote: { id: string | null } | null = null;
+  /** Call wiring v2: the latest quantity of each item the model named in check_fit, create_quote or check_offer on this call. */
+  private quoteLines = new Map<string, number>();
   /** The quote-quantities guard last refused when the call had this many lines (null: never): its no-dead-lock path. */
   private qtyRefusedAt: number | null = null;
   /** This call's agent handed the conversation to the team (hand_off_to_human): the call itself goes on. */
@@ -2812,9 +2844,27 @@ export class VoiceEngine {
    * grounded. Reads the conversation's buyer lines (the chat's and this call's stored ones) and the saved sites.
    */
   private async quoteQuantities(args: unknown): Promise<{ refused: { sku: string; qty: number } | null; item: string }> {
-    const { account, conv } = this.loaded!;
+    const { account } = this.loaded!;
     const raw = args && typeof args === "object" ? (args as { lines?: unknown }).lines : null;
     const lines = (Array.isArray(raw) ? raw : []).map((l) => ({ sku: String((l as { sku?: unknown })?.sku ?? ""), qty: Number((l as { qty?: unknown })?.qty) }));
+    const { buyerLines, sites, tied } = await this.quantityContext();
+    const refused = ungroundedQuoteLine({
+      lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt, perSiteSkus: tied.perSite, onceSkus: tied.once, siteFallback: !this.wiringV2(),
+    });
+    if (!refused) return { refused: null, item: "" };
+    this.qtyRefusedAt = this.lines.length;
+    const [item] = await this.db.select({ name: catalogItems.name, plainName: catalogItems.plainName }).from(catalogItems)
+      .where(and(eq(catalogItems.accountId, account.id), eq(catalogItems.sku, refused.sku))).limit(1);
+    return { refused, item: item?.plainName?.trim() || item?.name || refused.sku };
+  }
+
+  /**
+   * What the quote-quantities checks read: the conversation's buyer lines (the chat's and this call's stored ones, each
+   * with the agent line before it), the saved sites, the items the catalog ties to sites or adds once, and the
+   * published catalog's items by name as the agent says them.
+   */
+  private async quantityContext() {
+    const { account, conv } = this.loaded!;
     const [deal, stored, catalog] = await Promise.all([
       readDealState(this.db, account.id, conv.leadId),
       this.db.select({ body: messages.body, actor: messages.actor }).from(messages)
@@ -2830,12 +2880,8 @@ export class VoiceEngine {
     const buyerLines = [...withAfter(stored.map((m) => ({ role: m.actor, text: m.body ?? "" }))), ...withAfter(this.lines)];
     // The items the catalog ties to sites (one per site) or adds once: its own rules, no SKU named in code.
     const tied = siteTiedSkus(catalog?.rules ?? [], catalog?.autoAdd ?? []);
-    const refused = ungroundedQuoteLine({ lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt, perSiteSkus: tied.perSite, onceSkus: tied.once });
-    if (!refused) return { refused: null, item: "" };
-    this.qtyRefusedAt = this.lines.length;
-    const [item] = await this.db.select({ name: catalogItems.name, plainName: catalogItems.plainName }).from(catalogItems)
-      .where(and(eq(catalogItems.accountId, account.id), eq(catalogItems.sku, refused.sku))).limit(1);
-    return { refused, item: item?.plainName?.trim() || item?.name || refused.sku };
+    const names = new Map((catalog?.items ?? []).map((i) => [i.sku, i.plainName?.trim() || i.name]));
+    return { buyerLines, sites, tied, catalog, names };
   }
 
   /**
@@ -2942,6 +2988,9 @@ export class VoiceEngine {
     this.send({ t: "tool", id: callId, name, label, status: "running" });
     // Every engine (a profile too since 26 Nov 2026: Classic passed the model's arguments as they came).
     const args = await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
+    if (name === "check_fit" || name === "create_quote" || name === "check_offer") this.noteQuoteLines(args);
+    const v2 = this.wiringV2();
+    const lang = this.spokenLanguage === "he" ? "he" : "en";
     const t0 = this.clock.now();
     // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
     // A number the buyer stated (sites, quantities) is not lowered unless their last line says the new number.
@@ -2966,11 +3015,11 @@ export class VoiceEngine {
       : formGate === "no"
         ? await this.refuseRecorded(turn, callId, name, args, FORM_NOT_AGREED)
         : removeGate === "no"
-          ? await this.refuseRecorded(turn, callId, name, args, removalNotAsked(removing))
+          ? await this.refuseRecorded(turn, callId, name, args, v2 ? await this.removalKeep(removing, lang) : removalNotAsked(removing))
           : smallerGate === "no" && smaller
-            ? await this.refuseRecorded(turn, callId, name, args, smallerQuoteNotAsked(smaller.what))
+            ? await this.refuseRecorded(turn, callId, name, args, v2 ? smallerQuoteHold(smaller.what, lang) : smallerQuoteNotAsked(smaller.what))
             : qtyRefused && qtyCheck
-              ? await this.refuseRecorded(turn, callId, name, args, quantityNotGiven(qtyCheck.item, this.spokenLanguage === "he" ? "he" : "en"))
+              ? await this.refuseRecorded(turn, callId, name, args, quantityNotGiven(qtyCheck.item, lang, { v2 }))
               : await this.runRecorded(turn, callId, name, args);
     if (quoteHeld) this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the quote waits for the team's approval"));
     // The conversation's latest quote: held for approval (the order form waits), or ready (the hold is lifted).
@@ -3051,14 +3100,60 @@ export class VoiceEngine {
   private async callStage(name: string, forModel: Record<string, unknown>): Promise<{ forModel: Record<string, unknown>; key: string } | null> {
     const profile = this.profile!;
     const { account, conv, version } = this.loaded!;
+    // The profile's lines after the block (guarded: what a quote needs, lib/voice-guarded/stage-hints.ts).
+    const hinted = async (block: string) => {
+      const lines = profile.stageHints ? await profile.stageHints(block, () => this.quoteNeeds()) : [];
+      return lines.length ? `${block}\n${lines.join("\n")}` : block;
+    };
     if (name === "update_deal_state" && typeof forModel.stage === "string") {
-      return callStageResult({ forModel, block: forModel.stage, title: null, own: true, last: this.stageSentConn });
+      const block = await hinted(forModel.stage);
+      return callStageResult({ forModel: { ...forModel, stage: block }, block, title: null, own: true, last: this.stageSentConn });
     }
     const [facts, deal] = await Promise.all([loadStageFacts(this.db, account.id, conv.leadId), readDealState(this.db, account.id, conv.leadId)]);
     const st = deriveStage({
       ...facts, playbook: version.playbook, fields: deal?.fields ?? null, objections: deal?.objections ?? null, agentMessages: this.effectiveAgentMessages(),
     });
-    return callStageResult({ forModel, block: profile.stageText(st.instruction), title: STAGE_TITLE[st.stage], own: false, last: this.stageSentConn });
+    return callStageResult({ forModel, block: await hinted(profile.stageText(st.instruction)), title: STAGE_TITLE[st.stage], own: false, last: this.stageSentConn });
+  }
+
+  /** The items and quantities the model named for a quote on this call (the latest per item). */
+  private noteQuoteLines(args: unknown) {
+    const raw = args && typeof args === "object" ? (args as { lines?: unknown }).lines : null;
+    for (const l of Array.isArray(raw) ? raw : []) {
+      const sku = String((l as { sku?: unknown })?.sku ?? "").trim();
+      const qty = Number((l as { qty?: unknown })?.qty);
+      if (sku && Number.isInteger(qty) && qty > 0) this.quoteLines.set(sku, qty);
+    }
+  }
+
+  /**
+   * Call wiring v2: what a quote still needs, from the same checks the quote-quantities guard runs (no site-count
+   * fallback): the items the model named that the catalog does not tie to sites (nor adds itself) whose quantity is
+   * not grounded yet, and the items the catalog adds once per site. Names as the agent says them.
+   */
+  private async quoteNeeds(): Promise<QuoteNeeds> {
+    const q = await this.quantityContext();
+    const nameOf = (sku: string) => q.names.get(sku) ?? sku;
+    const added = new Set((q.catalog?.autoAdd ?? []).map((r) => r.sku));
+    const notGiven: string[] = [];
+    for (const [sku, qty] of this.quoteLines) {
+      if (q.tied.perSite.has(sku) || q.tied.once.has(sku) || added.has(sku)) continue;
+      const open = ungroundedQuoteLine({
+        lines: [{ sku, qty }], buyerLines: q.buyerLines, callLines: this.lines, sites: q.sites, refusedAt: this.qtyRefusedAt,
+        perSiteSkus: q.tied.perSite, onceSkus: q.tied.once, siteFallback: false,
+      });
+      if (open && !notGiven.includes(nameOf(sku))) notGiven.push(nameOf(sku));
+    }
+    const perSiteAdded = [...new Set((q.catalog?.autoAdd ?? []).filter((r) => r.qty === "sites").map((r) => nameOf(r.sku)))];
+    return { known: this.quoteLines.size > 0, notGiven, perSiteAdded };
+  }
+
+  /** Call wiring v2: the removal guard's refusal, with the lines as the agent names them and whether each is per site. */
+  private async removalKeep(removing: readonly string[], language: "en" | "he") {
+    const q = await this.quantityContext().catch(() => null);
+    const names = removing.map((sku) => q?.names.get(sku) ?? sku);
+    const perSite = !!q && removing.every((sku) => q.tied.perSite.has(sku));
+    return removalKeepLine(names, perSite, language);
   }
 
   /** Current: a tool's result as the model gets it on a call, and what the tool's outcome does to the call. */

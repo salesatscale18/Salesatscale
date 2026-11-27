@@ -28,11 +28,25 @@ export function stageTitleOf(block: string): string | null {
   return TITLE.exec(block)?.[1]?.trim() ?? null;
 }
 
-/** What makes two blocks different for the model: the title and what is still missing for a quote (as stageKey). */
+/** The quote-needs line a profile adds (lib/voice-guarded/stage-hints.ts): what is not grounded yet is part of what is missing. */
+const QUOTE_NEEDS = /^Before create_quote: [^\n]*$/m;
+
+/**
+ * What makes two blocks different for the model: the title and what is still missing for a quote (as stageKey), with
+ * the quantities not given yet when the block says them.
+ */
 export function callStageKey(block: string): string {
   const missing = MISSING.exec(block)?.[1]?.trim() ?? "";
-  return `${stageTitleOf(block) ?? block}|${missing}`;
+  const needs = QUOTE_NEEDS.exec(block)?.[0] ?? "";
+  return `${stageTitleOf(block) ?? block}|${missing}${needs ? `|${needs}` : ""}`;
 }
+
+/**
+ * What a quote still needs on this call (call wiring v2), from the quote-quantities guard's own checks: `known`, the
+ * model named items for a quote; `notGiven`, those (not tied to sites) whose quantity the buyer has not given or
+ * agreed to; `perSiteAdded`, the items the catalog adds once per site. Names as the agent says them.
+ */
+export type QuoteNeeds = { known: boolean; notGiven: string[]; perSiteAdded: string[] };
 
 /** A "Do:" that asks the agent to say something now (it would compete with `say_this`). */
 const SPEAK_NOW = /^Do: (tell|say|answer|recommend|react|this is your first)/m;

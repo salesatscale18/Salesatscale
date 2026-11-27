@@ -3,6 +3,10 @@
  * calls the test emits by hand. No paid call.
  * A1 (every call): no internal id (create_quote's quote_id / quote_message_id, any uuid) in a result the model gets;
  *    the stored rows and the browser's messages keep them.
+ * A2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS off): the current step on every tool result.
+ * A3 (test calls): what a quote needs in the stage block; the guards' refusals in tighter words (English, Hebrew);
+ *    a catalog with no site data lets the site count ground no quantity (the scripted agent asks for it first).
+ * Buyer calls: everything but A1 exactly as before.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
@@ -11,7 +15,10 @@ import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, saveDraftPlaybook } from "@/lib/agent/service";
 import type { PlaybookWithOffers, StoredOffer } from "@/lib/agent/offer-settings";
-import { VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
+import { removalKeepLine, removalNotAsked, smallerQuoteHold, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
+import { quantityNotGiven } from "@/lib/voice/quote-quantities";
+import { QUOTE_NEEDS_LINE } from "@/lib/voice-guarded/stage-hints";
+import { micPcm, ScriptedRealtime } from "@/lib/voice/scripted-realtime";
 import { GUARDED_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
 import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
@@ -43,6 +50,8 @@ let db: TestDb;
 let me: User;
 /** A catalog that ties no item to sites. */
 let acc: string;
+/** A catalog with site data (as the Polar demo): a hub per site for the sensors, installation added per site. */
+let accSites: string;
 
 async function account(name: string): Promise<string> {
   const p = parseCreateAccount({ tradeName: name, market: "IL", languages: ["en", "he"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: `w-${name.toLowerCase()}@x.test` });
@@ -64,6 +73,16 @@ beforeAll(async () => {
     { sku: "SENSOR", name: "Temperature sensor", unit: "unit", plainName: "temperature sensor" },
   ]);
   await seedPricing(db, acc, [{ sku: "SEAT-M", oneTime: 10_000 }, { sku: "SENSOR", oneTime: 45_000, recurring: 1_770 }], { userId: me.id });
+  accSites = await account("Polar");
+  await seedCatalog(db, accSites, [
+    { sku: "SNS-200", name: "Wireless fridge sensor", unit: "unit", plainName: "wireless fridge sensor" },
+    { sku: "GW-10", name: "Site gateway", unit: "unit", plainName: "kitchen hub" },
+    { sku: "INST-1", name: "Installation", unit: "site", kind: "service", plainName: "installation" },
+  ], [
+    { kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true },
+    { kind: "auto_add", sku: "INST-1", whenAnyOf: ["GW-10"], qty: "sites", removable: true },
+  ]);
+  await seedPricing(db, accSites, [{ sku: "SNS-200", oneTime: 59_000 }, { sku: "GW-10", oneTime: 66_000, recurring: 9_000 }, { sku: "INST-1", oneTime: 25_000 }], { userId: me.id });
 });
 afterAll(async () => t.close());
 beforeEach(async () => void (await db.delete(rateLimits)));
@@ -79,9 +98,9 @@ const memLog = () => {
 };
 
 /** A call on the guarded engine (a test call unless `buyer`), driven by hand. */
-async function fakeCall(o: { accountId?: string; buyer?: boolean; profile?: VoiceProfile | null } = {}) {
+async function fakeCall(o: { accountId?: string; buyer?: boolean; profile?: VoiceProfile | null; language?: "en" | "he" } = {}) {
   const accountId = o.accountId ?? acc;
-  const c = (await startVoiceTestConversation(db, accountId, me.id, { scenario: null }))!;
+  const c = (await startVoiceTestConversation(db, accountId, me.id, { scenario: null, ...(o.language ? { language: o.language } : {}) }))!;
   const profile = o.profile === undefined ? GUARDED_PROFILE : o.profile;
   const s = await createVoiceSession(db, { accountId, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, ...(profile ? { engine: "guarded" as const } : {}) });
   if (!s.ok) throw new Error(s.reason);
@@ -233,7 +252,9 @@ describe("A2: the current step on every tool result (test calls; CALL_WIRING_V2_
     await c.buyer("We have two restaurants. How much would it cost?");
     const r = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 5 }]));
     expect(r).toMatchObject({ ok: false, rule: "Quantity not given" });
-    expect(r.stage).toBe("unchanged: 4 Quote and close");
+    // What is not given yet changed (the five sensors the model named): the full block again, saying so.
+    expect(String(r.stage)).toMatch(/^## Stage now: 4 Quote and close\n/);
+    expect(String(r.stage)).toContain("Not given yet: how many temperature sensor. Ask that before you quote.");
     const f = await c.tool("f1", "send_order_form", { quote: "Q-1" });
     expect(f.ok).toBe(false);
     expect(f.stage).toBe("unchanged: 4 Quote and close");
@@ -269,5 +290,172 @@ describe("A2: the current step on every tool result (test calls; CALL_WIRING_V2_
     for (const r of [fit, q]) expect(r.stage).toBeUndefined();
     expect(c.logs.some((l) => /stage not attached/.test(l))).toBe(false);
     await c.end();
+  });
+});
+
+describe("A3 (a): the stage block says what a quote needs (test calls)", () => {
+  it("stages 2-4: the rule, the items not given yet (same checks as the guard), the per-site item to keep; gone once the buyer gives the number", async () => {
+    const c = await fakeCall({ accountId: accSites });
+    await c.buyer("We have two cafés and we write the temperatures on paper. How much would it cost?");
+    const u = await c.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+    const stage = String(u.stage);
+    expect(stage).toMatch(/^## Stage now: 4 Quote and close\n/);
+    // Nothing named yet: the rule without a list, and the installation line.
+    expect(stage).toContain(`\n${QUOTE_NEEDS_LINE}\n`);
+    expect(stage).not.toContain("Not given yet");
+    expect(stage.endsWith("\nInstallation is added automatically for each site: keep it; do not offer to remove it unless the buyer asks.")).toBe(true);
+    // The model names ten sensors (never said) and two hubs (one per site): only the sensors are listed; the block
+    // changed, so it comes in full.
+    const fit = await c.tool("c1", "check_fit", { lines: [{ sku: "SNS-200", qty: 10 }, { sku: "GW-10", qty: 2 }], sites: 2 });
+    expect(String(fit.stage)).toMatch(/^## Stage now: 4 Quote and close\n/);
+    expect(String(fit.stage)).toContain(`${QUOTE_NEEDS_LINE} Not given yet: how many wireless fridge sensor. Ask that before you quote.`);
+    expect(String(fit.stage)).not.toContain("kitchen hub. Ask");
+    // Same again: unchanged.
+    expect((await c.tool("c2", "check_fit", { lines: [{ sku: "SNS-200", qty: 10 }, { sku: "GW-10", qty: 2 }], sites: 2 })).stage).toBe("unchanged: 4 Quote and close");
+    // The buyer gives the number: the list is gone (the full block once more, without it).
+    await c.buyer("12 fridges in total.");
+    const fit2 = await c.tool("c3", "check_fit", { lines: [{ sku: "SNS-200", qty: 12 }, { sku: "GW-10", qty: 2 }], sites: 2 });
+    expect(String(fit2.stage)).toContain(`\n${QUOTE_NEEDS_LINE}\n`);
+    expect(String(fit2.stage)).not.toContain("Not given yet");
+    // The quote is made: stage 5 carries none of it.
+    const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SNS-200", qty: 12 }, { sku: "GW-10", qty: 2 }], { sites: 2 }));
+    expect(q, JSON.stringify(q)).toMatchObject({ ok: true, status: "ready" });
+    expect(String(q.stage)).toMatch(/^## Stage now: 5 Order form\n/);
+    expect(String(q.stage)).not.toContain("Before create_quote");
+    expect(String(q.stage)).not.toContain("added automatically");
+    await c.end();
+  });
+
+  it("a buyer call: update_deal_state's block as before (no quote-needs lines)", async () => {
+    const c = await fakeCall({ accountId: accSites, buyer: true });
+    const u = await c.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+    expect(String(u.stage)).toMatch(/^## Stage now: 4 Quote and close\n/);
+    expect(String(u.stage)).not.toContain("Before create_quote");
+    expect(String(u.stage)).not.toContain("added automatically");
+    expect(String(u.stage).endsWith("Prices: allowed. Take every number from the tools.")).toBe(true);
+    await c.end();
+  });
+});
+
+describe("A3 (b): the guards' refusals in words the model cannot read aloud or turn into an offer (test calls)", () => {
+  it("removal guard: keep the per-site installation line (English and Hebrew); a buyer call keeps the old text", async () => {
+    for (const language of ["en", "he"] as const) {
+      const c = await fakeCall({ accountId: accSites, language });
+      await c.buyer(language === "he" ? "יש לנו שני בתי קפה עם שנים עשר מקררים, 12 בסך הכל." : "We have two cafés with 12 fridges in total.");
+      await c.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+      await c.buyer(language === "he" ? "זה יותר ממה שתכננו להוציא." : "It is more than we plan to spend.");
+      const held = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SNS-200", qty: 12 }, { sku: "GW-10", qty: 2 }], { sites: 2, remove_auto_added: ["INST-1"] }));
+      expect(held).toMatchObject({ ok: false, rule: "Removal not asked" });
+      const want = removalKeepLine(["installation"], true, language).message;
+      expect(String(held.message).startsWith(want)).toBe(true);
+      expect(String(held.message)).not.toMatch(/\boffer that option\b/);
+      await c.end();
+    }
+    const b = await fakeCall({ accountId: accSites, buyer: true });
+    await b.buyer("We have two cafés with 12 fridges in total.");
+    await b.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+    await b.buyer("It is more than we plan to spend.");
+    const old = await b.tool("q1", "create_quote", quoteArgs([{ sku: "SNS-200", qty: 12 }, { sku: "GW-10", qty: 2 }], { sites: 2, remove_auto_added: ["INST-1"] }));
+    expect(old.message).toBe(removalNotAsked(["INST-1"]).message);
+    await b.end();
+  });
+
+  it("quantities and smaller-quote guards: the v2 texts on a test call, the old ones on a buyer call", async () => {
+    for (const buyer of [false, true]) {
+      const c = await fakeCall({ buyer });
+      await c.buyer("A restaurant with two sites. How much for sensors?");
+      await c.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+      const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 5 }]));
+      expect(q.message).toBe(quantityNotGiven("temperature sensor", "en", { v2: !buyer }).message);
+      await c.buyer("Three in each.");
+      expect(await c.tool("q2", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }], { sites: 2 }))).toMatchObject({ ok: true });
+      await c.said("Would starting with one site help?");
+      await c.buyer("Yeah, I guess so. I need a solution.");
+      const smaller = await c.tool("q3", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 3 }], { sites: 1 }));
+      expect(smaller).toMatchObject({ ok: false, rule: "Smaller quote not asked" });
+      const what = "1 site, 3 × Temperature sensor";
+      expect(smaller.message).toBe(buyer ? smallerQuoteNotAsked(what).message : smallerQuoteHold(what, "en").message);
+      await c.end();
+    }
+  });
+});
+
+describe("A3 (c): no site data, no grounding by the site count (test calls)", () => {
+  it("one location does not ground one sensor on a test call; it still does on a buyer call; a product with the site count still grounds", async () => {
+    const t1 = await fakeCall();
+    await t1.buyer("We have one location. How much would it cost?");
+    await t1.tool("u1", "update_deal_state", { ...basics("1"), price_asked: true });
+    expect(await t1.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 1 }], { sites: 1 }))).toMatchObject({ ok: false, rule: "Quantity not given" });
+    expect(t1.logs.some((l) => l.endsWith("quote quantities: refused item=SENSOR qty=1"))).toBe(true);
+    await t1.end();
+    const b = await fakeCall({ buyer: true });
+    await b.buyer("We have one location. How much would it cost?");
+    await b.tool("u1", "update_deal_state", { ...basics("1"), price_asked: true });
+    expect(await b.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 1 }], { sites: 1 }))).toMatchObject({ ok: true, status: "ready" });
+    await b.end();
+    const t2 = await fakeCall();
+    await t2.buyer("We have two sites, three fridges in each.");
+    await t2.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+    expect(await t2.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }], { sites: 2 }))).toMatchObject({ ok: true });
+    await t2.end();
+  });
+
+  /** The scripted ready_buyer call (lib/voice/scripted-realtime.ts) on the catalog with no site data. */
+  async function scriptedReadyBuyer(buyer: boolean) {
+    const c = (await startVoiceTestConversation(db, acc, me.id, { scenario: "ready_buyer", language: "en" }))!;
+    const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, engine: "guarded" });
+    if (!s.ok) throw new Error(s.reason);
+    if (buyer) await db.update(voiceSessions).set({ isTest: false }).where(eq(voiceSessions.id, s.sessionId));
+    const clock = new ManualClock(Date.UTC(2026, 10, 27, 10, 0, 0));
+    const model = new ScriptedRealtime({ clock });
+    const { log } = memLog();
+    const e = new VoiceEngine({ db, model, sessionId: s.sessionId, send: () => undefined, clock, limits: QUIET, log, recording: { store: null, reason: "test" }, profile: GUARDED_PROFILE });
+    const settle = async () => {
+      for (let i = 0; i < 4; i++) {
+        await flushAsync();
+        await e.idle();
+      }
+    };
+    const run = (ms: number) => clock.advance(ms, settle);
+    const speak = async () => {
+      for (let x = 0; x < 1000; x += 100) { e.onClientAudio(micPcm(100, true)); await run(100); }
+      for (let x = 0; x < 800; x += 100) { e.onClientAudio(micPcm(100, false)); await run(100); }
+      await run(30_000);
+    };
+    await e.start();
+    await settle();
+    e.onClientMessage({ t: "ready" });
+    await run(15_000);
+    return { ...c, model, speak, end: async () => { e.onClientMessage({ t: "end" }); await settle(); } };
+  }
+  const buyerLines = async (conversationId: string) => (await db.select().from(messages).where(eq(messages.conversationId, conversationId)).orderBy(asc(messages.createdAt)))
+    .filter((m) => m.actor === "buyer").map((m) => m.body);
+
+  it("the scripted ready_buyer: a test call asks for the number and quotes after the buyer's yes; a buyer call runs as before", async () => {
+    const t = await scriptedReadyBuyer(false);
+    await t.speak();
+    // Refused once ("one location" grounds no package): the agent proposes one aloud and waits for the yes.
+    const names = () => t.model.connections[0].sent.toolResults.map((r) => `${r.name}:${(r.result as { ok?: boolean }).ok}`);
+    expect(names()).toEqual(["update_deal_state:true", "search_catalog:true", "create_quote:false"]);
+    await t.speak();
+    expect(names()).toEqual(["update_deal_state:true", "search_catalog:true", "create_quote:false", "create_quote:true"]);
+    await t.speak();
+    expect(names().at(-1)).toBe("send_order_form:true");
+    expect(await buyerLines(t.conversationId)).toEqual([
+      "Hi, I run a business with one location. I decide on purchases. Please send me a price and the order form so I can sign today.",
+      "Yes, go ahead.",
+      "Yes, please send it.",
+    ]);
+    await t.end();
+    const b = await scriptedReadyBuyer(true);
+    await b.speak();
+    await b.speak();
+    expect(b.model.connections[0].sent.toolResults.map((r) => `${r.name}:${(r.result as { ok?: boolean }).ok}`))
+      .toEqual(["update_deal_state:true", "search_catalog:true", "create_quote:true", "send_order_form:true"]);
+    expect(await buyerLines(b.conversationId)).toEqual([
+      "Hi, I run a business with one location. I decide on purchases. Please send me a price and the order form so I can sign today.",
+      "Yes, please send it.",
+    ]);
+    await b.end();
   });
 });

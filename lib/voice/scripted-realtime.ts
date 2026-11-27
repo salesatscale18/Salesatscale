@@ -263,6 +263,25 @@ const objectionStep = (play: string, words: string, step: number | null, attempt
 const recordObjection = (play: string, words: string, step: number | null, attempt: boolean, status: ObjectionStatus = "open") =>
   tool("update_deal_state", objectionStep(play, words, step, attempt, status));
 
+const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+/** A quote refused by the quote-quantities guard (its result as the model got it). */
+const quantityRefused = (ctx: ScriptCtx) => ctx.last("create_quote")?.rule === "Quantity not given";
+/**
+ * Call wiring v2 (test calls; lib/voice/settings.ts CALL_WIRING_V2_FOR_BUYER_CALLS): where the catalog ties no item
+ * to sites, the site count no longer grounds a quantity ("We have one location" is no count of packages), so the
+ * quote is refused once. The agent then does what the refusal asks: proposes the number aloud, hears the buyer's
+ * yes, and makes the same quote again. On a buyer call (the constant off) nothing is refused: these steps are skipped
+ * and the call runs as before.
+ */
+const agreeQuantity = (n: number, again: ScriptStep): ScriptStep[] => {
+  const w = COUNT_WORDS[n] ?? String(n);
+  return [
+    onlyIf(quantityRefused, say(`I'd quote ${w}, one for ${n === 1 ? "your location" : `each of your ${w} locations`}. Shall I go ahead with ${w}?`)),
+    onlyIf(quantityRefused, expectBuyer("Yes, go ahead.")),
+    onlyIf(quantityRefused, again),
+  ];
+};
+
 /** The fields a quote needs, the buyer's size, and the two facts that open prices and the quote. */
 const quoteFacts = (size: number) => tool("update_deal_state", (ctx: ScriptCtx) => ({
   updates: quoteFieldUpdates(ctx, size), next_step: "quote", objection: null, recommendation_confirmed: true, price_asked: true, asked: null,
@@ -272,7 +291,7 @@ const quoteFor = (size: number) => tool("create_quote", (ctx: ScriptCtx) => ({
   lines: [{ sku: firstSoldSku(ctx), qty: size }], discount_percent: 0, offer: null, sites: size, remove_auto_added: null, exception: null, headline: null, assumed: null,
 }));
 /** Facts, catalog and quote for `size` locations, as one step of a turn. */
-const quoteSteps = (size: number): ScriptStep[] => [quoteFacts(size), tool("search_catalog", { query: "" }), quoteFor(size)];
+const quoteSteps = (size: number): ScriptStep[] => [quoteFacts(size), tool("search_catalog", { query: "" }), quoteFor(size), ...agreeQuantity(size, quoteFor(size))];
 const totalOf = (ctx: ScriptCtx) => {
   const t = ctx.last("create_quote")?.totals as Record<string, unknown> | undefined;
   return typeof t?.total_today_including_vat === "string" ? t.total_today_including_vat : "the total on the quote";
@@ -323,6 +342,7 @@ function objectionScripts(): Record<string, Script> {
       expectBuyer(pbBudget),
       recordObjection("too_expensive", pbBudget, 2, true),
       quoteFor(1),
+      ...agreeQuantity(1, quoteFor(1)),
       say((ctx) => `Then let's start smaller, with one location first. That comes to ${totalOf(ctx)}, and the new quote is in the chat. Would that fit this year?`),
     ],
     // A competitor's offer: ask what matters, then what this price includes. No claims about them, no discount.
@@ -448,6 +468,7 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     tool("update_deal_state", dealUpdate),
     tool("search_catalog", { query: "" }),
     tool("create_quote", quoteArgs(0)),
+    ...agreeQuantity(1, tool("create_quote", quoteArgs(0))),
     say(totalLine),
     expectBuyer("Yes, please send it."),
     tool("send_order_form", (ctx: ScriptCtx) => ({ quote: String(ctx.last("create_quote")?.quote ?? "").split(" ")[0] })),
@@ -463,6 +484,7 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     // Offers (part 2): the first quote never has a discount; the price objection is recorded, check_offer runs, and
     // the 15% (more than check_offer returned) goes to the team as a quote held for approval.
     tool("create_quote", quoteArgs(0)),
+    ...agreeQuantity(1, tool("create_quote", quoteArgs(0))),
     recordObjection("too_expensive", "only with 15% off", 4, true),
     checkOffer,
     tool("create_quote", quoteArgs(15)),
