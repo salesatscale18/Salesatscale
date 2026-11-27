@@ -18,9 +18,9 @@ import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, readDealState, saveDraftPlaybook } from "@/lib/agent/service";
 import type { PlaybookWithOffers, StoredOffer } from "@/lib/agent/offer-settings";
 import { ClassicVoiceEngine } from "@/lib/voice-classic/engine";
-import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, HELD_FORM_MESSAGE, HELD_FORM_RULE, HELD_QUOTE_MESSAGE, HELD_QUOTE_SAY, refusedQuoteMessage, removalKeepLine, smallerQuoteHold, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
+import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, HELD_FORM_MESSAGE, HELD_FORM_RULE, HELD_QUOTE_MESSAGE, HELD_QUOTE_SAY, refusedQuoteMessage, removalKeepLine, searchForCall, smallerQuoteHold, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
-import { QUOTE_NEEDS_LINE } from "@/lib/voice-guarded/stage-hints";
+import { guardedCallStage } from "@/lib/voice-guarded/stage-hints";
 import { guardedInstructions } from "@/lib/voice-guarded/instructions";
 import { realtimeTools as currentTools } from "@/lib/voice/tool-schema";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
@@ -164,7 +164,8 @@ describe("Classic + guards", () => {
     const gq = g[0].toolResults.find((r) => r.name === "create_quote")!.result;
     for (const conn of expected) {
       // 1. Instructions: Classic's plus the guarded lines (tests/unit/voice-guarded-instructions.test.ts lists them).
-      conn.cfg.instructions = guardedInstructions(conn.cfg.instructions, { recorded: false });
+      // (and, on a test call, call wiring v2's quote-flow sentence swaps: lib/voice-guarded/quote-flow.ts).
+      conn.cfg.instructions = guardedInstructions(conn.cfg.instructions, { recorded: false, quoteFlow: true });
       // 2. Tools: Classic's plus order_form_status (K12).
       conn.cfg.tools = [...conn.cfg.tools, currentTools("openai").find((x) => x.name === "order_form_status")!];
       for (const r of conn.toolResults) {
@@ -178,9 +179,12 @@ describe("Classic + guards", () => {
         // 5. A test call (call wiring v2, CALL_WIRING_V2_FOR_BUYER_CALLS off): every other result carries the step
         // (asserted below; tests/integration/voice-call-wiring.test.ts covers it).
         const own = g[0].toolResults.find((x) => x.callId === r.callId)!.result;
+        // 7. ...search_catalog gives no money on a call (call wiring v2, the quote flow).
+        if (r.name === "search_catalog") r.result = searchForCall(r.result);
         if (r.name !== "update_deal_state") r.result = { ...r.result, stage: own.stage };
-        // 6. ...and update_deal_state's block (stages 2-4) says what a quote needs (nothing named yet: the rule only).
-        else r.result = { ...r.result, stage: `${String(r.result.stage)}\n${QUOTE_NEEDS_LINE}` };
+        // 6. ...and update_deal_state's block in the call's quote flow (lib/voice-guarded/quote-flow.ts) and what a
+        // quote needs (nothing named yet: the rule only).
+        else r.result = { ...r.result, stage: await guardedCallStage(String(r.result.stage), async () => ({ known: false, notGiven: [], perSiteAdded: [] })) };
       }
     }
     expect(normalize(g)).toEqual(normalize(expected));

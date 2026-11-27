@@ -23,6 +23,7 @@ import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/serv
 import type { VoiceLog } from "@/lib/voice/log";
 import { quantityNotGiven } from "@/lib/voice/quote-quantities";
 import { GPT_TOOL_RULES } from "@/lib/voice-guarded/instructions";
+import { quoteFlowInstructions } from "@/lib/voice-guarded/quote-flow";
 import { rtElevenProfile } from "@/lib/voice-rt-eleven/profile";
 import { ScriptedSpeaker } from "@/lib/voice-pipeline/speaker";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -247,14 +248,15 @@ describe("the session on GPT test calls", () => {
   it("GPT tool rules at the very top (2.1 and mini); parallel tool calls on 2.1 only; session-updated logged", async () => {
     const full = await call();
     const cfg = full.conn().cfg;
-    expect(cfg.instructions.startsWith(`${GPT_TOOL_RULES}\n\n`)).toBe(true);
+    // A test call (call wiring v2): the rules with the quote flow's swap (no check_fit before create_quote).
+    expect(cfg.instructions.startsWith(`${quoteFlowInstructions(GPT_TOOL_RULES)}\n\n`)).toBe(true);
     expect(cfg.parallelToolCalls).toBe(true);
     expect(cfg.logSessionAck).toBe(true);
     // GPT-Realtime connect lines end with the turn detection, eagerness and reasoning sent (defaults: server VAD, none).
     expect(full.logs.some((l) => / model connected in \d+ms .* parallelTools=on turn=server_vad eagerness=- reasoning=-$/.test(l))).toBe(true);
     await full.end();
     const mini = await call({ engine: "rt_eleven_mini" });
-    expect(mini.conn().cfg.instructions.startsWith(`${GPT_TOOL_RULES}\n\n`)).toBe(true);
+    expect(mini.conn().cfg.instructions.startsWith(`${quoteFlowInstructions(GPT_TOOL_RULES)}\n\n`)).toBe(true);
     expect(mini.conn().cfg.parallelToolCalls).toBeUndefined();
     expect(mini.conn().cfg.logSessionAck).toBe(true);
     await mini.end();

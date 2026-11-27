@@ -10,6 +10,7 @@
  *   the buyer asks (a test call offered to take the installation off).
  */
 import type { QuoteNeeds } from "@/lib/voice/call-stage";
+import { quoteFlowStage } from "./quote-flow";
 
 /** The stages before a quote, where what it needs is said. */
 const QUOTE_STAGES = /^## Stage now: (2 Understand|3 Recommend|4 Quote and close)\b/m;
@@ -28,8 +29,18 @@ export function quoteNeedsLines(n: QuoteNeeds): string[] {
   return lines;
 }
 
-/** The guarded profile's hook: the lines after a stage block of stages 2-4; none otherwise (and no database read). */
+/** The lines after a stage block of stages 2-4; none otherwise (and no database read). */
 export async function guardedStageHints(block: string, needs: () => Promise<QuoteNeeds>): Promise<string[]> {
   if (!QUOTE_STAGES.test(block) || HELD.test(block)) return [];
   return quoteNeedsLines(await needs());
+}
+
+/**
+ * The guarded profile's hook (VoiceProfile.stageForCall): the block with the quote flow's swaps
+ * (lib/voice-guarded/quote-flow.ts), then its lines, then what a quote needs.
+ */
+export async function guardedCallStage(block: string, needs: () => Promise<QuoteNeeds>): Promise<string> {
+  const flow = quoteFlowStage(block);
+  const lines = [...flow.lines, ...(await guardedStageHints(flow.block, needs))];
+  return lines.length ? `${flow.block}\n${lines.join("\n")}` : flow.block;
 }

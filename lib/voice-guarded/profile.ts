@@ -36,7 +36,7 @@ import { loadGuardedInstructions } from "./instructions";
 import { loadQuoteSummary } from "./quote-summary";
 import { plainDealStateResult } from "./plain-notes";
 import { DUPLICATE_TOOL_CALL_MS, silentProbeToolBehavior, withScheduling } from "./silent-probe";
-import { guardedStageHints } from "./stage-hints";
+import { guardedCallStage } from "./stage-hints";
 
 /** The model's tools: Classic's (today's tools and Classic's end_call, the 20 Nov descriptions), plus order_form_status (K12, Current's). */
 export function guardedTools(family: SchemaFamily) {
@@ -68,7 +68,7 @@ export const GUARDED_PROFILE: VoiceProfile = {
   quoteSummary: loadQuoteSummary,
   shapeResult: (name, forModel) => guardedShapeResult(name, forModel),
   // Call wiring v2 (test calls only while CALL_WIRING_V2_FOR_BUYER_CALLS is off; the engine decides when it applies).
-  stageHints: guardedStageHints,
+  stageForCall: guardedCallStage,
 };
 
 /**

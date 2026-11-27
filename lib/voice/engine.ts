@@ -222,11 +222,12 @@ export type VoiceProfile = {
    */
   dedupeToolCallsMs?: number;
   /**
-   * Call wiring v2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS): lines added after the stage block a call's tool result
-   * carries (guarded: what a quote needs, lib/voice-guarded/stage-hints.ts). `needs` reads the call's quantities as
-   * the quote-quantities guard checks them; called only when the profile wants it. Absent: nothing added.
+   * Call wiring v2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS): the stage block a call's tool result carries, as the
+   * profile words it for a call (guarded: the quote flow's sentence swaps and lines, lib/voice-guarded/quote-flow.ts,
+   * then what a quote needs, lib/voice-guarded/stage-hints.ts). `needs` reads the call's quantities as the
+   * quote-quantities guard checks them; called only when the profile wants it. Absent: the block as it is.
    */
-  stageHints?(block: string, needs: () => Promise<QuoteNeeds>): Promise<string[]>;
+  stageForCall?(block: string, needs: () => Promise<QuoteNeeds>): Promise<string>;
 };
 
 export type { VoiceEndBy, VoiceEndDetail };
@@ -512,6 +513,37 @@ export function fitForCall(forModel: Record<string, unknown>): Record<string, un
     })
     : undefined;
   return { ...rest, ...(lines ? { lines } : {}), prices: FIT_PRICES_FOR_CALL };
+}
+
+/** create_quote refused by the catalog's fit rules on a call (call wiring v2: create_quote checks the fit, no check_fit first). */
+export const fitRefusedMessage = (problems: readonly string[]) =>
+  `No quote was made: the set does not fit${problems.length ? ` (${problems.join(" ")})` : ""}. Change the lines so it fits (add what is missing, in the quantities the buyer gave or agreed to) and call create_quote again. Do not mention this check to the buyer.`;
+
+/** search_catalog's `prices` on a call (call wiring v2). */
+export const SEARCH_PRICES_FOR_CALL = "not shown on a call: prices come only from create_quote";
+/** An item's money fields in search_catalog's result (lib/agent/tools.ts). */
+const SEARCH_ITEM_MONEY = ["one_time_price", "recurring_price", "volume_prices", "priced_by_seller_from_qty"] as const;
+/** A money figure in free text (an item's value line or details): a currency sign or code next to a number. */
+const MONEY_IN_TEXT = /(?:[₪$€£]\s?\d[\d,.]*(?:\s?(?:\/|per|a)\s?\w+)?)|(?:\d[\d,.]*\s?(?:₪|ILS|NIS|USD|EUR|GBP|shekels?|dollars?|euros?)\b)/gi;
+
+/**
+ * search_catalog's result as the model gets it on a call (call wiring v2, test calls): no money (as fitForCall does
+ * for check_fit): no item prices, volume prices, currency, price basis, and no money figure in an item's text; a
+ * `prices` field says where prices come from. The stored row keeps the tool's result.
+ */
+export function searchForCall(forModel: Record<string, unknown>): Record<string, unknown> {
+  const { currency: _c, prices_include_tax: _i, price_basis: _b, prices: _p, ...rest } = forModel;
+  void [_c, _i, _b, _p];
+  const items = Array.isArray(rest.items)
+    ? rest.items.map((it) => {
+      if (!it || typeof it !== "object") return it;
+      const out = { ...(it as Record<string, unknown>) };
+      for (const k of SEARCH_ITEM_MONEY) delete out[k];
+      for (const k of ["value", "details", "availability"]) if (typeof out[k] === "string") out[k] = (out[k] as string).replace(MONEY_IN_TEXT, "(price on the quote)");
+      return out;
+    })
+    : undefined;
+  return { ...rest, ...(items ? { items } : {}), prices: SEARCH_PRICES_FOR_CALL };
 }
 
 /** send_order_form while the conversation's latest quote waits for the team's approval. */
@@ -3047,6 +3079,12 @@ export class VoiceEngine {
     const sayIn = this.spokenLanguage !== "en" ? this.sayIn() : null;
     const noTotals = name === "check_fit";
     if (noTotals) forModel = fitForCall(forModel);
+    // Call wiring v2 (test calls): the catalog on a call gives no money; prices come only from create_quote.
+    if (name === "search_catalog" && this.profile && this.wiringV2()) forModel = searchForCall(forModel);
+    // ...and create_quote checks the fit itself (no check_fit first): a set that does not fit says why and what to do.
+    if (name === "create_quote" && this.profile && this.wiringV2() && r.result.rule === "Fit check failed" && typeof forModel.message !== "string") {
+      forModel = { ...forModel, message: fitRefusedMessage(Array.isArray(r.result.problems) ? r.result.problems.map(String) : []) };
+    }
     if (heldNow) forModel = heldQuoteForModel(forModel, this.spokenLanguage === "he" ? "he" : "en", sayIn);
     if (quoteHeld) {
       forModel = {
@@ -3100,11 +3138,8 @@ export class VoiceEngine {
   private async callStage(name: string, forModel: Record<string, unknown>): Promise<{ forModel: Record<string, unknown>; key: string } | null> {
     const profile = this.profile!;
     const { account, conv, version } = this.loaded!;
-    // The profile's lines after the block (guarded: what a quote needs, lib/voice-guarded/stage-hints.ts).
-    const hinted = async (block: string) => {
-      const lines = profile.stageHints ? await profile.stageHints(block, () => this.quoteNeeds()) : [];
-      return lines.length ? `${block}\n${lines.join("\n")}` : block;
-    };
+    // The block as the profile words it for a call (guarded: the quote flow, what a quote needs).
+    const hinted = async (block: string) => (profile.stageForCall ? await profile.stageForCall(block, () => this.quoteNeeds()) : block);
     if (name === "update_deal_state" && typeof forModel.stage === "string") {
       const block = await hinted(forModel.stage);
       return callStageResult({ forModel: { ...forModel, stage: block }, block, title: null, own: true, last: this.stageSentConn });

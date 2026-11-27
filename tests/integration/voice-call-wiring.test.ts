@@ -6,6 +6,8 @@
  * A2 (test calls; CALL_WIRING_V2_FOR_BUYER_CALLS off): the current step on every tool result.
  * A3 (test calls): what a quote needs in the stage block; the guards' refusals in tighter words (English, Hebrew);
  *    a catalog with no site data lets the site count ground no quantity (the scripted agent asks for it first).
+ * A4 (test calls): the quote flow: search_catalog gives no money, the stage says recommend / quote straight away,
+ *    create_quote checks the fit and says why when it does not.
  * Buyer calls: everything but A1 exactly as before.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -15,7 +17,7 @@ import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, saveDraftPlaybook } from "@/lib/agent/service";
 import type { PlaybookWithOffers, StoredOffer } from "@/lib/agent/offer-settings";
-import { removalKeepLine, removalNotAsked, smallerQuoteHold, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
+import { fitRefusedMessage, removalKeepLine, removalNotAsked, SEARCH_PRICES_FOR_CALL, smallerQuoteHold, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
 import { quantityNotGiven } from "@/lib/voice/quote-quantities";
 import { QUOTE_NEEDS_LINE } from "@/lib/voice-guarded/stage-hints";
 import { micPcm, ScriptedRealtime } from "@/lib/voice/scripted-realtime";
@@ -457,5 +459,92 @@ describe("A3 (c): no site data, no grounding by the site count (test calls)", ()
       "Yes, please send it.",
     ]);
     await b.end();
+  });
+});
+
+describe("A4: the quote flow on a call (test calls)", () => {
+  const MONEY = /[₪$€£]|\bILS\b|\d[\d,]*\.\d{2}\b/;
+
+  it("search_catalog gives no figure on a test call (prices open: the buyer asked); a buyer call gets the prices as before", async () => {
+    for (const buyer of [false, true]) {
+      const c = await fakeCall({ accountId: accSites, buyer });
+      await c.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+      const s = await c.tool("s1", "search_catalog", { query: "" });
+      const items = s.items as Record<string, unknown>[];
+      expect(items.length).toBe(3);
+      if (buyer) {
+        expect(items[0].one_time_price).toBe("₪590.00");
+        expect(typeof s.price_basis).toBe("string");
+        expect(s.prices).toBeUndefined();
+      } else {
+        expect(JSON.stringify({ ...s, stage: undefined })).not.toMatch(MONEY);
+        for (const it of items) for (const k of ["one_time_price", "recurring_price", "volume_prices"]) expect(it[k]).toBeUndefined();
+        expect(s.prices).toBe(SEARCH_PRICES_FOR_CALL);
+      }
+      await c.end();
+      // The stored row keeps the tool's own result (prices included).
+      const row = (await storedRows(c.conversationId)).find((x) => x.name === "search_catalog")!;
+      expect(((row.result as { items: Record<string, unknown>[] }).items)[0].one_time_price).toBe("₪590.00");
+    }
+  });
+
+  it("a price turn: save and create_quote in one step, no check_fit; the quote is made and the model is told it is at 5 Order form", async () => {
+    const c = await fakeCall({ accountId: accSites });
+    await c.buyer("We have two cafés with 12 fridges in total. How much would it cost?");
+    // One model response with both calls (the GPT tool rules' Batch): the save and the quote.
+    const conn = c.model.conns.at(-1)!;
+    conn.emit({ type: "tool-call", callId: "u1", name: "update_deal_state", args: { ...basics("2"), price_asked: true } });
+    conn.emit({ type: "tool-call", callId: "q1", name: "create_quote", args: quoteArgs([{ sku: "SNS-200", qty: 12 }, { sku: "GW-10", qty: 2 }], { sites: 2 }) });
+    await c.run(1_000);
+    expect(conn.results.map((r) => r.name)).toEqual(["update_deal_state", "create_quote"]);
+    const q = conn.results[1].result;
+    expect(q, JSON.stringify(q)).toMatchObject({ ok: true, status: "ready" });
+    expect(String(q.stage)).toMatch(/^## Stage now: 5 Order form\n/);
+    expect(String(conn.results[0].result.stage)).toContain("Do: call create_quote now. Do not call check_fit first: create_quote checks the fit itself. Save new facts with update_deal_state in the same step.");
+    expect(String(conn.results[0].result.stage)).toContain("Prices: only from create_quote.");
+    await c.end();
+    const rows = await storedRows(c.conversationId);
+    expect(rows.map((r) => r.name)).not.toContain("check_fit");
+    expect(rows.filter((r) => r.name === "create_quote").map((r) => r.outcome)).toEqual(["ok"]);
+  });
+
+  it("a set that does not fit is refused by create_quote itself, and the model is told why and what to do", async () => {
+    const c = await fakeCall({ accountId: accSites });
+    await c.buyer("We have two cafés with 12 fridges in total. How much would it cost?");
+    await c.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+    const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SNS-200", qty: 12 }], { sites: 2 }));
+    expect(q).toMatchObject({ ok: false, rule: "Fit check failed" });
+    const problems = (q.problems as string[]);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(q.message).toBe(fitRefusedMessage(problems));
+    await c.end();
+    // A buyer call: the tool's refusal as before (no message added).
+    const b = await fakeCall({ accountId: accSites, buyer: true });
+    await b.buyer("We have two cafés with 12 fridges in total. How much would it cost?");
+    await b.tool("u1", "update_deal_state", { ...basics("2"), price_asked: true });
+    const old = await b.tool("q1", "create_quote", quoteArgs([{ sku: "SNS-200", qty: 12 }], { sites: 2 }));
+    expect(old).toMatchObject({ ok: false, rule: "Fit check failed" });
+    expect(old.message).toBeUndefined();
+    await b.end();
+  });
+
+  it("the stage on a call: Recommend says one set, no prices; price asked early says no number (test call); a buyer call as before", async () => {
+    for (const buyer of [false, true]) {
+      const c = await fakeCall({ accountId: accSites, buyer });
+      await c.said("Hi, this is Ava from Polar. How do you keep track of your fridges today?");
+      await c.buyer("On paper, in two cafés.");
+      const u = await c.tool("u1", "update_deal_state", { ...basics("2"), asked: ["business_type"] });
+      const stage = String(u.stage);
+      expect(stage).toMatch(/^## Stage now: 3 Recommend\n/);
+      if (buyer) {
+        expect(stage).toContain("then answer with a number or range from search_catalog.");
+        expect(stage).not.toContain("You have no prices yet.");
+      } else {
+        expect(stage).not.toContain("number or range from search_catalog");
+        expect(stage).toContain("\nPresent one set in plain words, no prices, and ask if it fits. You have no prices yet.");
+        expect(stage).toContain("say in one short sentence that you will give the exact price in a moment");
+      }
+      await c.end();
+    }
   });
 });

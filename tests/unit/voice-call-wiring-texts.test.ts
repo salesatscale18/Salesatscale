@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { quantityAskLine, quantityNotGiven, ungroundedQuoteLine } from "@/lib/voice/quote-quantities";
 import { removalKeepLine, removalNotAsked, smallerQuoteHold, smallerQuoteNotAsked } from "@/lib/voice/engine";
-import { guardedStageHints, QUOTE_NEEDS_LINE, quoteNeedsLines } from "@/lib/voice-guarded/stage-hints";
+import { guardedCallStage, guardedStageHints, QUOTE_NEEDS_LINE, quoteNeedsLines } from "@/lib/voice-guarded/stage-hints";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } from "@/lib/voice-guarded/profile";
 
 const run = (o: { qty: number; buyer: string[]; sites: number | null; siteFallback?: boolean; perSite?: string[]; call?: { role: string; text: string }[] }) => ungroundedQuoteLine({
@@ -55,8 +55,8 @@ describe("A3 (a): what a quote needs, in the stage block", () => {
     expect(reads).toBe(3);
   });
   it("the guarded profiles carry the hook", () => {
-    expect(GUARDED_PROFILE.stageHints).toBe(guardedStageHints);
-    expect(GUARDED_SILENT_PROFILE.stageHints).toBe(guardedStageHints);
+    expect(GUARDED_PROFILE.stageForCall).toBe(guardedCallStage);
+    expect(GUARDED_SILENT_PROFILE.stageForCall).toBe(guardedCallStage);
   });
 });
 
