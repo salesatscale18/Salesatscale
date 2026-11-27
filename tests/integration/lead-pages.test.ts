@@ -17,7 +17,7 @@ import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, publishDraftVersion } from "@/lib/agent/service";
 import { leadInterest } from "@/lib/chat/start";
 import { REPEAT_MS, submitLeadPage, type SubmitResult } from "@/lib/lead-pages/intake";
-import { loadHandover, recordHandoverChoice } from "@/lib/lead-pages/handover";
+import { handoverWrittenOpener, loadHandover, recordHandoverChoice } from "@/lib/lead-pages/handover";
 import {
   addLeadPageOrigin, bumpDaily, createLeadPage, getLeadPage, goLiveLeadPage, issuePreviewLink, latestSubmissions, leadPageReadiness, listLeadPages,
   pageByKey, pagesOfLeads, pauseLeadPage, removeLeadPageBanner, resumeLeadPage, saveLeadPageBanner, updateLeadPage,
@@ -170,6 +170,9 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect(h).toMatchObject({ kind: "ready", variant: "chat", firstName: "Rina", sms: "mocked" });
     const [conv] = await db.select().from(conversations).where(eq(conversations.leadId, lead.id));
     expect(conv.channel).toBe("chat");
+    // The hand-over prepares the chat without its opener (Talk now opens it empty); Chat in writing posts it.
+    expect(await db.select().from(messages).where(eq(messages.conversationId, conv.id))).toHaveLength(0);
+    expect(await handoverWrittenOpener(db, { token: r.token, cookie: null })).toEqual({ ok: true, posted: true });
     const [first] = await db.select().from(messages).where(eq(messages.conversationId, conv.id));
     expect(first.actor).toBe("agent");
     expect(first.body).toContain("You asked about Fridge monitoring.");

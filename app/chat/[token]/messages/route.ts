@@ -27,6 +27,7 @@ import { textTurnBlocked } from "@/lib/voice/one-agent";
 import { chatViewerIsStaff } from "@/lib/voice/chat-viewer";
 import { pendingAfterCall, replyAfterCall } from "@/lib/voice/after-call";
 import { chatReach } from "@/lib/chat/reach";
+import { ensureWrittenOpener } from "@/lib/chat/start";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -72,7 +73,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   // Any call holds the chat, a test call on a simulated chat too; the skip is logged (lib/voice/one-agent.ts).
   const conv = await buyerConversation(appDb, ctx);
   if (conv && (await textTurnBlocked(appDb, ctx.account.id, conv.id, "typed message"))) return json({ ok: false, reason: "in_call" }, 409);
-  const r = await receiveSimulatorInbound(appDb, ctx, text, clientId);
+  // A chat the lead page hand-over prepared without its opener: the written opener goes in before the buyer's first line.
+  if (conv && text.trim()) await ensureWrittenOpener(appDb, ctx.account.id, conv.id);
+  const r =await receiveSimulatorInbound(appDb, ctx, text, clientId);
   if (r.kind === "ignored") return json({ ok: false, reason: r.reason }, 409);
   if (r.kind === "stored") {
     after(async () => {

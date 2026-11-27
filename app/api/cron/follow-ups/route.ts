@@ -10,6 +10,7 @@ import { appDb } from "@/lib/auth/account";
 import { defaultTransport } from "@/lib/channels/twilio";
 import { cronAuthorized } from "@/lib/follow-ups/cron-auth";
 import { runDueFollowUps } from "@/lib/follow-ups/scheduler";
+import { runPendingOpeners } from "@/lib/lead-pages/pending-opener";
 import { runNamedTimeRetries } from "@/lib/follow-ups/named-time";
 import { runUnpaidReminders } from "@/lib/orders/unpaid-run";
 import { runTeamAnswers } from "@/lib/team-questions/service";
@@ -25,6 +26,8 @@ export async function GET(req: Request) {
   if (!cronAuthorized(req.headers.get("authorization"), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  // Lead page chats whose buyer never chose on the hand-over: the written opener after OPENER_PENDING_MINUTES (no model call).
+  const pendingOpeners = await runPendingOpeners(appDb);
   const summary = await runDueFollowUps(appDb, defaultTransport());
   // The buyer's own time: one more SMS 10 minutes later when the chat was not opened (at most 2 per named time).
   const namedTimeRetries = await runNamedTimeRetries(appDb);
@@ -41,6 +44,6 @@ export async function GET(req: Request) {
   // The model client is made only when a reply is due (no API key needed otherwise).
   const afterCalls = await runAfterCallReplies(appDb, { create: (req) => new AnthropicLlm().create(req) });
   // Counts only: never names, numbers or message text in the log.
-  console.info("[follow-ups] run", JSON.stringify({ ...summary, namedTimeRetries, teamAnswers, unpaid, staleCalls, expiredRecordings, afterCalls }));
-  return NextResponse.json({ ok: true, ...summary, namedTimeRetries, teamAnswers, unpaid, staleCalls, expiredRecordings, afterCalls });
+  console.info("[follow-ups] run", JSON.stringify({ ...summary, pendingOpeners, namedTimeRetries, teamAnswers, unpaid, staleCalls, expiredRecordings, afterCalls }));
+  return NextResponse.json({ ok: true, ...summary, pendingOpeners, namedTimeRetries, teamAnswers, unpaid, staleCalls, expiredRecordings, afterCalls });
 }

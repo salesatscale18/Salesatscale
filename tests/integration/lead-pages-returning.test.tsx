@@ -47,7 +47,7 @@ const { runBuyerTurn } = await import("@/lib/agent/turn");
 const { runTool } = await import("@/lib/agent/tools");
 const { loadStageFacts } = await import("@/lib/agent/core/stage-facts");
 const { REPEAT_MS, submitLeadPage } = await import("@/lib/lead-pages/intake");
-const { loadHandover } = await import("@/lib/lead-pages/handover");
+const { handoverWrittenOpener, loadHandover } = await import("@/lib/lead-pages/handover");
 const { createLeadPage, goLiveLeadPage } = await import("@/lib/lead-pages/service");
 const { listTotals, pageFunnel, rangeOfDays } = await import("@/lib/lead-pages/stats");
 const { formTimingToken, leadCookieValue } = await import("@/lib/lead-pages/tokens");
@@ -144,6 +144,7 @@ describe("lead pages: a returning number from another browser gets its own unver
     const first = await handover(page, { name: "Dana Levi", phone, company: "Cafe Dana", email: "dana@cafe.test" });
     existingId = first.newLeadId!;
     await loadHandover(db, { token: first.token, cookie: null, ip: "10.41.0.1" });
+    await handoverWrittenOpener(db, { token: first.token, cookie: null });
     const [conv] = await convsOf(existingId);
     // The existing lead's private state: a quote, deal state, a buyer message; a person is handling it.
     await db.insert(quotes).values({ id: crypto.randomUUID(), accountId: account.id, leadId: existingId, number: 4242, status: "sent" });
@@ -202,6 +203,9 @@ describe("lead pages: a returning number from another browser gets its own unver
     const uConvs = await convsOf(unverifiedId);
     expect(uConvs).toHaveLength(1);
     expect(uConvs[0]).toMatchObject({ channel: "chat", status: "open" });
+    // Prepared without its opener; "Chat in writing" posts the normal new-lead opener.
+    expect(await firstMessage(uConvs[0].id)).toBeUndefined();
+    expect(await handoverWrittenOpener(db, { token: second.token, cookie: null })).toEqual({ ok: true, posted: true });
     const uOpener = await firstMessage(uConvs[0].id);
     const eOpener = await firstMessage(conv.id);
     expect(uOpener.actor).toBe("agent");

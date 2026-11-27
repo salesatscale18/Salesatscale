@@ -57,6 +57,8 @@ export type ChatControls = {
   /** `holdGreeting` (the hand-over's readiness contract, app/h/[token]/call-ready.ts). */
   startCall(opts?: { holdGreeting?: boolean }): void;
   focusComposer(): void;
+  /** Fetches the chat's newest messages now (the hand-over shows the written opener it just posted before revealing the chat). */
+  refresh(): Promise<void>;
   canCall: boolean;
 } & HoldGreetingControls;
 
@@ -101,6 +103,7 @@ export function listenerEvents(listeners: Set<VoiceCallEvents>): VoiceCallEvents
 /** The controls a parent page gets (ChatControls): `startCall` already goes through the parent's subscribers. */
 export function chatControls(o: {
   startCall: (opts?: { holdGreeting?: boolean }) => void; client: () => VoiceClient | null; listeners: Set<VoiceCallEvents>; focusComposer: () => void;
+  refresh?: () => Promise<void>;
 }): ChatControls {
   return {
     startCall: (opts) => o.startCall({ holdGreeting: !!opts?.holdGreeting }),
@@ -111,6 +114,7 @@ export function chatControls(o: {
       return () => void o.listeners.delete(l);
     },
     focusComposer: o.focusComposer,
+    refresh: o.refresh ?? (async () => undefined),
     canCall: !!o.client(),
   };
 }
@@ -330,6 +334,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     };
   }, [cardLang]);
 
+  const pollRef = useRef<() => Promise<void>>(async () => undefined);
   const poll = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
@@ -367,6 +372,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       busy.current = false;
     }
   }, [base, seller]);
+  pollRef.current = poll;
 
   useEffect(() => {
     const tick = () => { if (document.visibilityState === "visible") void poll(); };
@@ -485,6 +491,11 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     controls?.(chatControls({
       startCall: (opts) => startCallRef.current({ ...opts, parent: true }), client: () => clientRef.current, listeners: callListeners.current,
       focusComposer: () => inputRef.current?.focus(),
+      refresh: async () => {
+        // A poll already on its way may have left before the newest message: wait for it (at most 2 s), then poll again.
+        for (let i = 0; i < 40 && busy.current; i++) await new Promise((r) => setTimeout(r, 50));
+        await pollRef.current();
+      },
     }));
   }, [controls]);
   // When a call ends: fetch its stored lines and the call row now, then let the bar go after a moment.
