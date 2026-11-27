@@ -51,6 +51,7 @@ import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
 import { cleanTranscript, transcriptWords } from "./transcript-clean";
 import { clip, consoleVoiceLog, errorSummary, textPrint, voiceLine, type VoiceLog } from "./log";
+import { writtenOpenerAfterCall, writtenOpenerLine, type WrittenOpenerFn } from "./written-opener";
 import { CallRecorder, recordingPrefix, recordingStoreFor, type RecordingStore } from "./recording";
 import { limitFinishSec } from "./socket-limits";
 import { recordingNoticeText, resolveRecordingSettings, withRecordingNotice } from "./recording-settings";
@@ -170,6 +171,11 @@ export type VoiceEngineDeps = {
    * speaks with its own voice, unchanged.
    */
   speaker?: Speaker;
+  /**
+   * After the call: the written opener when the conversation still has no agent message (lib/voice/written-opener.ts;
+   * default lib/chat/start.ts ensureWrittenOpenerUnlessCall). Tests stub it.
+   */
+  writtenOpener?: WrittenOpenerFn;
 };
 
 /**
@@ -617,6 +623,7 @@ export class VoiceEngine {
 
   private readonly log: VoiceLog;
   private readonly onEnding: VoiceEngineDeps["onEnding"];
+  private readonly writtenOpener: WrittenOpenerFn | undefined;
   private readonly recordingChoice: VoiceEngineDeps["recording"];
   /** Another engine's model side ("Classic + guards"); null: Current. */
   private readonly profile: VoiceProfile | null;
@@ -826,6 +833,7 @@ export class VoiceEngine {
     this.limits = { ...DEFAULTS, ...deps.limits };
     this.log = deps.log ?? consoleVoiceLog;
     this.onEnding = deps.onEnding;
+    this.writtenOpener = deps.writtenOpener;
     this.recordingChoice = deps.recording;
     this.profile = deps.profile ?? null;
     this.speaker = deps.speaker ?? null;
@@ -1277,6 +1285,9 @@ export class VoiceEngine {
       ? await this.profile.loadInstructions(this.db, { account, version, conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded, ...this.callModel() })
       : await loadVoiceInstructions(this.db, { account, version: this.instructionVersion(version), conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded });
     this.continuingCall = ctx.continuing;
+    // Once per call: a conversation with no agent message gets the opener spoken (the hand-over's "Talk now"); one that
+    // already has it (or more) gets the pick-up line.
+    this.log.info(voiceLine(this.sessionId, ctx.continuing ? "opener: pick-up (continuing)" : "opener: spoken (fresh conversation)"));
     // The count the stage uses for this call's tools (effectiveAgentMessages; nothing of this call is stored yet).
     this.log.info(voiceLine(this.sessionId, inheritedSummary(this.effectiveAgentMessages(), ctx.continuing, dealNow?.fields ?? null, ctx.instructions)));
     this.spokenLanguage = ctx.language || "en";
@@ -3520,6 +3531,21 @@ export class VoiceEngine {
       } catch (e) {
         (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `could not store the end line: ${errorSummary(e)}`));
       }
+    }
+    // The call is over (the engine stopped, its last line stored): a conversation still without an agent message (nothing
+    // was said: a hang-up before the first word, not started, a refused or failed model, an error) gets the written
+    // opener, so the chat is never empty. A spoken or cut opener, or a continuation, leaves it as it is. Before `ended`,
+    // so the chat the browser shows next has it. Only a call that loaded its conversation (passed the gates): a call
+    // that failed before that may not own the session (not_pending) or is gated (paused, closed, at the spend cap).
+    if (this.loaded) {
+      const { session, conv, account } = this.loaded;
+      await this.withTimeout(writtenOpenerAfterCall(this.db, {
+        sessionId: this.sessionId, accountId: account.id, conversationId: conv.id, skip: session.isTest || this.continuingCall,
+      }, { fn: this.writtenOpener, log: this.log }), FINAL_WRITE_TIMEOUT_MS).catch((e) => {
+        (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `written opener after the call: ${errorSummary(e)}`));
+      });
+    } else {
+      this.log.info(voiceLine(this.sessionId, writtenOpenerLine(false)));
     }
     this.send({ t: "ended", reason, durationSec, costMicros, answerMsAvg });
     this.state = null;

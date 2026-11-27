@@ -20,14 +20,18 @@
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { accountMembers, agentVersions, consentRecords, conversations, leads, messages, sellerAccounts, voiceSessions, type Conversation, type User } from "@/db/schema";
+import { randomUUID } from "node:crypto";
+import { atomic } from "@/db/atomic";
+import { accountMembers, agentVersions, consentRecords, conversations, leadEvents, leads, messages, sellerAccounts, voiceSessions, type Conversation, type User } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
-import { isSimulatedLead, WEB_CHAT_CHANNELS } from "@/lib/simulator/rules";
+import { isSimulatedLead, WEB_CHAT_CHANNELS, webChatChannelOf } from "@/lib/simulator/rules";
 import type { ChatContext } from "@/lib/simulator/service";
 import { isEmptyShortCall, isUnsaidCall } from "@/lib/agent/thread-markers";
 import { createVoiceSession, STALE_PENDING_SEC } from "./service";
+import { consoleVoiceLog } from "./log";
+import { writtenOpenerAfterCall, type WrittenOpenerFn } from "./written-opener";
 import { maxCallSeconds, voiceMode } from "./settings";
 
 /** Buyer calls per chat link per hour. */
@@ -38,7 +42,7 @@ export type BuyerVoiceBlock =
   | "no_conversation" | "not_agent" | "opted_out" | "no_consent";
 
 export type BuyerVoiceGate =
-  /** `conversation` null: the chat has not started; the call starts it (ensureChatStarted), as opening the chat link would. */
+  /** `conversation` null: the chat has not started; the call starts it (startChatForCall: empty, the call speaks the opener). */
   | { ok: true; conversation: Conversation | null; consented: boolean }
   | { ok: false; reason: BuyerVoiceBlock };
 
@@ -108,7 +112,7 @@ export async function buyerVoiceGate(db: Db, ctx: Pick<ChatContext, "lead" | "ac
   if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
   const conversation = await buyerConversation(db, { lead, account });
   if (!conversation) {
-    // A chat that has not started: the call will start it (startBuyerVoiceCall, ensureChatStarted). Only
+    // A chat that has not started: the call will start it (startBuyerVoiceCall, startChatForCall). Only
     // what that path would refuse or hand to a person is checked here: a published agent, and the spend cap (a new
     // buyer-started conversation at the cap waits for a person), in every mode.
     const [live] = await db.select({ id: agentVersions.id }).from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "live")));
@@ -141,13 +145,15 @@ export type StartBuyerCallResult =
  */
 export async function startBuyerVoiceCall(
   db: Db, ctx: Pick<ChatContext, "lead" | "account">, token: string,
-  opts: { deadlineSec: number | null; now?: Date; env?: Record<string, string | undefined> },
+  /** `writtenOpener`: tests (default lib/chat/start.ts ensureWrittenOpenerUnlessCall). */
+  opts: { deadlineSec: number | null; now?: Date; env?: Record<string, string | undefined>; writtenOpener?: WrittenOpenerFn },
 ): Promise<StartBuyerCallResult> {
   const now = opts.now ?? new Date();
   const gate = await buyerVoiceGate(db, ctx, { now, env: opts.env });
   if (!gate.ok) return { ok: false, reason: "unavailable", gate: gate.reason };
   if (!(await rateLimit(db, `voice-buyer:${hashKey(token)}`, { limit: BUYER_CALLS_PER_HOUR, windowSeconds: 3600 }, now)).ok) return { ok: false, reason: "rate_limited" };
-  // A chat that has not started: the call starts it as opening the chat link does (ensureChatStarted, with the opener).
+  // A chat that has not started: the call starts it with no first message (the call speaks the opener), or, for a lead
+  // the agent already talked to elsewhere, with the chat's continuation line (startChatForCall).
   let conversation = gate.conversation;
   let started = false;
   if (!conversation) {
@@ -160,8 +166,12 @@ export async function startBuyerVoiceCall(
   const [earlier] = started ? [] : await db.select({ id: voiceSessions.id }).from(voiceSessions)
     .where(and(eq(voiceSessions.accountId, ctx.account.id), eq(voiceSessions.conversationId, conversation.id), isNotNull(voiceSessions.connectedAt))).limit(1);
   const s = await createVoiceSession(db, { accountId: ctx.account.id, conversationId: conversation.id, userId: null, isTest: false }, { now, env: opts.env });
-  // A refusal now leaves the chat as opening its link would have: started, with the agent's opener.
-  if (!s.ok) return { ok: false, reason: s.reason === "already_in_call" ? "already_in_call" : "unavailable" };
+  if (!s.ok) {
+    // No call: a conversation left without an agent message (just started empty, or the hand-over's empty chat) gets
+    // the written opener now, as opening the chat link would have (idempotent; never while a call runs on it).
+    if (s.reason !== "already_in_call") await writtenOpenerAfterCall(db, { sessionId: "", accountId: ctx.account.id, conversationId: conversation.id }, { fn: opts.writtenOpener, log: consoleVoiceLog });
+    return { ok: false, reason: s.reason === "already_in_call" ? "already_in_call" : "unavailable" };
+  }
   if (!gate.consented) await recordVoiceConsent(db, ctx.account.id, ctx.lead.id, now);
   const [version] = await db.select({ voiceSettings: agentVersions.voiceSettings }).from(agentVersions)
     .where(and(eq(agentVersions.id, conversation.agentVersionId), eq(agentVersions.accountId, ctx.account.id)));
@@ -175,9 +185,10 @@ export async function startBuyerVoiceCall(
 const START_LOCK_SEC = 20;
 
 /**
- * Starts the lead's web chat for a call: lib/chat/start ensureChatStarted, the same start as opening the chat link
- * (idempotent, with the agent's opener as its first message, and its gates). The call then continues that chat
- * (its pick-up line re-asks the opener's question), so the buyer hears no second introduction.
+ * Starts the lead's web chat for a call, with the gates of opening the chat link. Since 26 Nov 2026 (owner) the
+ * conversation starts EMPTY (startEmptyChat) and the call speaks the opener as its first message; the written opener
+ * follows only if the call said nothing (lib/voice/written-opener.ts). A lead the agent already talked to elsewhere
+ * keeps lib/chat/start ensureChatStarted (its continuation line and card), and the call picks up from it.
  */
 async function startChatForCall(
   db: Db, ctx: Pick<ChatContext, "lead" | "account">, now: Date,
@@ -189,7 +200,20 @@ async function startChatForCall(
     return conv?.status === "open" ? { ok: true, conversation: conv } : { ok: false, reason: "unavailable", gate: "no_conversation" };
   }
   // Imported here: lib/chat/start imports lib/simulator/service, which imports this module.
-  const { ensureChatStarted } = await import("@/lib/chat/start");
+  const [{ ensureChatStarted }, { leadContinuation }] = await Promise.all([import("@/lib/chat/start"), import("@/lib/chat/continuation")]);
+  // A lead the agent already talked to elsewhere (WhatsApp, an earlier chat): the chat's continuation line and its
+  // card come first, as before (the call then picks up from them). Every other lead: an EMPTY conversation, and the
+  // call speaks the opener as its first message (owner, 26 Nov 2026); if the call says nothing, the written opener
+  // follows after it (lib/voice/written-opener.ts).
+  if (!(await leadContinuation(db, ctx.account.id, ctx.lead.id, now))) {
+    const e = await startEmptyChat(db, ctx, now);
+    if (e.ok) {
+      const conv = await buyerConversation(db, ctx);
+      if (conv?.status === "open") return { ok: true, conversation: conv };
+      return { ok: false, reason: "unavailable", gate: "not_agent" };
+    }
+    if (e.reason !== "already_started") return { ok: false, reason: "unavailable", gate: startRefusalBlock(e.reason) };
+  }
   const r = await ensureChatStarted(db, { accountId: ctx.account.id, leadId: ctx.lead.id, now });
   if (r.started || r.reason === "exists") {
     const conv = await buyerConversation(db, ctx);
@@ -197,6 +221,34 @@ async function startChatForCall(
     return { ok: false, reason: "unavailable", gate: conv?.status === "human" && (await spendCapped(db, ctx.account.id, now)) ? "spend_cap" : "not_agent" };
   }
   return { ok: false, reason: "unavailable", gate: startRefusalBlock(r.reason) };
+}
+
+/**
+ * The lead's web chat for a call, with NO first message: what lib/chat/start ensureChatStarted does (the same gates,
+ * via simulatorOpenerFacts, contact hours not applying; the conversation on the live version in the lead's language;
+ * a new lead waiting for a reply; the conversation.started event; the chat link), without posting the opener: the call
+ * speaks it. "already_started": a chat appeared meanwhile (the caller joins it). No model call.
+ */
+async function startEmptyChat(
+  db: Db, ctx: Pick<ChatContext, "lead" | "account">, now: Date,
+): Promise<{ ok: true; conversationId: string } | { ok: false; reason: string }> {
+  const { simulatorOpenerFacts, ensureChatLink } = await import("@/lib/simulator/service");
+  const accountId = ctx.account.id;
+  const facts = await simulatorOpenerFacts(db, accountId, ctx.lead.id, now);
+  if (!facts) return { ok: false, reason: "not_found" };
+  if (facts.refusal && facts.refusal !== "outside_contact_hours") return { ok: false, reason: facts.refusal };
+  const { lead, live } = facts;
+  if (!live) return { ok: false, reason: "no_agent" };
+  const channel = webChatChannelOf(lead);
+  const conversationId = randomUUID();
+  await atomic(db, (q) => [
+    q.insert(conversations).values({ id: conversationId, accountId, leadId: lead.id, channel, agentVersionId: live.id, language: lead.language, createdAt: now, updatedAt: now }),
+    q.update(leads).set({ status: "waiting_for_reply", lastActivityAt: now }).where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId), eq(leads.status, "new"))),
+    q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId))),
+    q.insert(leadEvents).values({ id: randomUUID(), accountId, leadId: lead.id, type: "conversation.started", actor: "system", data: { conversationId, channel, voice: true } }),
+  ]);
+  await ensureChatLink(db, { userId: null, actingAs: false }, accountId, lead.id);
+  return { ok: true, conversationId };
 }
 
 /** ensureChatStarted's refusals as the voice reasons a tester or the seller's staff is shown. */

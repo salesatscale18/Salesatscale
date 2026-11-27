@@ -22,7 +22,8 @@ import { voiceCallBlock as currentVoiceCallBlock } from "@/lib/agent/core/voice"
 import { recordedCallRule } from "@/lib/voice/recording-settings";
 import { isOpenAiVoiceModel, voiceFamilyOf } from "@/lib/voice/settings";
 import type { VoiceCallContext } from "@/lib/voice/instructions";
-import { loadVoiceInstructions as loadClassicInstructions, type TranscriptLine } from "@/lib/voice-classic/instructions";
+import { loadVoiceInstructions as loadClassicInstructions, openerInstruction, type TranscriptLine } from "@/lib/voice-classic/instructions";
+import { chatOpenerText } from "./chat-opener";
 
 /** Classic's hand-off line (lib/voice-classic/voice-block.ts): replaced (K7). */
 export const CLASSIC_HANDOFF_LINE = "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.";
@@ -164,8 +165,20 @@ export async function loadGuardedInstructions(
 ): Promise<VoiceCallContext> {
   const switched = !!opts.language && opts.language !== (a.conv.language || "en");
   const ctx = await loadClassicInstructions(db, switched ? { ...a, conv: { ...a.conv, language: opts.language! } } : a, { recap: opts.recap, resumed: opts.resumed, woke: opts.woke });
+  // A call that starts the conversation (no agent message yet: the hand-over's "Talk now") speaks the opener the chat
+  // would post, word for word (lib/voice-guarded/chat-opener.ts: lib/chat/start.ts writtenOpenerText), not Classic's
+  // own build of it. Unchanged when they are the same or the chat would post nothing (a test-lab chat: Classic's).
+  let { opener, openerPrompt, instructions } = ctx;
+  if (!ctx.continuing && !opts.resumed && !opts.woke && !switched) {
+    const written = await chatOpenerText(db, a).catch(() => null);
+    if (written && written !== opener) {
+      instructions = instructions.split(`"${opener}"`).join(`"${written}"`);
+      opener = written;
+      openerPrompt = openerInstruction(written, ctx.language);
+    }
+  }
   return {
-    instructions: guardedInstructions(ctx.instructions, { recorded: opts.recorded, gptToolRules: gptToolRulesFor(opts.modelId, opts.isTest ?? false) }),
-    opener: ctx.opener, openerPrompt: ctx.openerPrompt, language: ctx.language, expectedLanguages: ctx.expectedLanguages, continuing: ctx.continuing,
+    instructions: guardedInstructions(instructions, { recorded: opts.recorded, gptToolRules: gptToolRulesFor(opts.modelId, opts.isTest ?? false) }),
+    opener, openerPrompt, language: ctx.language, expectedLanguages: ctx.expectedLanguages, continuing: ctx.continuing,
   };
 }
