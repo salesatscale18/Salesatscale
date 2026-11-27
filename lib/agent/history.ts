@@ -12,12 +12,16 @@
  *   response (not stored): a message's calls are replayed as one or more rounds before its reply, and before
  *   the app messages (a quote card) that came just before that reply.
  * The tool_use ids are made from the stored row ids (stable across turns). The result is what the model
- * received: resultForModel(result), marked as an error when the tool failed. A call of a tool the
+ * received: resultForModel(result), marked as an error when the tool failed, except that an earlier
+ * update_deal_state result loses its `stage` block ("## Stage now", stale by now: the current step is in the
+ * per-turn context). A call of a tool the
  * current tool list does not have (a voice-only tool, or one since removed) is shown as a system text
  * line in its place, never as a tool_use block. A message without stored calls stays a text line.
  */
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Message, User } from "@/db/schema";
+import type { Db } from "@/db/types";
+import { messages, toolCalls, users, type Message, type User } from "@/db/schema";
 import { APP_MESSAGE_CALL } from "./app-message";
 import { resultForModel } from "./tools";
 
@@ -45,8 +49,20 @@ export function modelCall(c: Pick<StoredCall, "name" | "input">): boolean {
 /** The tool_use id of a stored call (allowed characters only). */
 export const historyToolUseId = (rowId: string) => `toolu_h_${rowId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
-/** The content the model received for a stored call's result. */
-export const resultContent = (c: Pick<StoredCall, "result">) => JSON.stringify(resultForModel(c.result ?? {}));
+/**
+ * A stored call's result as the history replays it: the model's view of it (resultForModel), without the stale
+ * stage block of an earlier update_deal_state (the current stage comes from the per-turn context).
+ */
+export function replayedResult(c: Pick<StoredCall, "name" | "result">): Record<string, unknown> {
+  const r = resultForModel(c.result ?? {});
+  if (c.name !== "update_deal_state" || !("stage" in r)) return r;
+  const { stage: _stale, ...rest } = r;
+  void _stale;
+  return rest;
+}
+
+/** The content the history gives for a stored call's result. */
+export const resultContent = (c: Pick<StoredCall, "name" | "result">) => JSON.stringify(replayedResult(c));
 
 /** A call of a tool the request does not define, shown as text (the API is not sent a tool_use it cannot match). */
 export function callAsText(c: StoredCall): string {
@@ -97,7 +113,7 @@ export function buildHistory(
   recent: readonly { m: Message; u: User | null }[],
   calls: readonly StoredCall[],
   tools: ReadonlySet<string>,
-): { history: Param[]; replayed: StoredCall[] } {
+): { history: Param[]; replayed: StoredCall[]; items: HistoryItem[] } {
   const byMessage = new Map<string, StoredCall[]>();
   for (const c of calls) {
     if (!c.messageId || !modelCall(c)) continue;
@@ -108,7 +124,8 @@ export function buildHistory(
   for (const list of byMessage.values()) list.sort((a, b) => a.sequence - b.sequence);
 
   // app: a message the app wrote (no agent version), not the agent's own reply.
-  type Segment = { params: Param[]; calls: StoredCall[]; buyer: boolean; reply: boolean; app: boolean };
+  // items: the segment's messages and calls in the order they are replayed (the text rendering reads them).
+  type Segment = { params: Param[]; calls: StoredCall[]; items: HistoryItem[]; buyer: boolean; reply: boolean; app: boolean };
   const segments: Segment[] = [];
   for (const { m, u } of recent) {
     const own = byMessage.get(m.id) ?? [];
@@ -117,13 +134,13 @@ export function buildHistory(
       // The calls ran before the app messages their tools posted during the turn (a quote card): they go before them.
       let at = segments.length;
       while (at > 0 && segments[at - 1].app) at--;
-      segments.splice(at, 0, { params: callRounds(own, tools), calls: own, buyer: false, reply: false, app: false });
-      segments.push({ params: [line!], calls: [], buyer: false, reply: true, app: false });
+      segments.splice(at, 0, { params: callRounds(own, tools), calls: own, items: own.map(callItem), buyer: false, reply: false, app: false });
+      segments.push({ params: [line!], calls: [], items: [lineItem(line!)], buyer: false, reply: true, app: false });
     } else if (m.actor === "system" && own.length) {
       // A turn that failed after its tools ran: the calls happened, no reply was written.
-      segments.push({ params: callRounds(own, tools), calls: own, buyer: false, reply: false, app: false });
+      segments.push({ params: callRounds(own, tools), calls: own, items: own.map(callItem), buyer: false, reply: false, app: false });
     } else if (line) {
-      segments.push({ params: [line], calls: [], buyer: m.actor === "buyer", reply: m.actor !== "buyer", app: m.actor === "agent" && m.agentVersionId === null });
+      segments.push({ params: [line], calls: [], items: [lineItem(line)], buyer: m.actor === "buyer", reply: m.actor !== "buyer", app: m.actor === "agent" && m.agentVersionId === null });
     }
   }
   // The history starts with the buyer (a fixed opener, or the cut-off start of a long thread, is dropped whole).
@@ -133,5 +150,68 @@ export function buildHistory(
   // (whose thinking block is not stored): they are left out.
   const lastReply = kept.map((s) => s.reply).lastIndexOf(true);
   const usable = kept.filter((s, i) => s.reply || s.buyer || i < lastReply);
-  return { history: usable.flatMap((s) => s.params), replayed: usable.flatMap((s) => s.calls) };
+  return { history: usable.flatMap((s) => s.params), replayed: usable.flatMap((s) => s.calls), items: usable.flatMap((s) => s.items) };
+}
+
+/** One entry of the history in replay order: a message's text line, or a call with its result. */
+export type HistoryItem =
+  | { kind: "message"; role: "user" | "assistant"; text: string }
+  | { kind: "call"; call: StoredCall };
+
+const lineItem = (p: Param): HistoryItem => ({ kind: "message", role: p.role === "user" ? "user" : "assistant", text: typeof p.content === "string" ? p.content : "" });
+const callItem = (c: StoredCall): HistoryItem => ({ kind: "call", call: c });
+
+/** A call with its result as one text line (the text rendering of the history). */
+export const callLine = (c: StoredCall) => `Tool call: ${c.name} ${JSON.stringify(c.input ?? {})} -> ${c.outcome}: ${resultContent(c)}`;
+
+/**
+ * The history as text (pure, for a voice call's start): the same entries in the same order and with the same
+ * content as buildHistory replays them, one line each: "Buyer: ..." or "Agent: ..." for a message (its text line as
+ * the model reads it: a team member's line keeps its "[Name from the team]:" label, a call line its "(On the voice
+ * call)" mark), and "Tool call: <name> <input> -> <outcome>: <result>" for every call, whatever tools a request has.
+ */
+export function renderHistoryText(recent: readonly { m: Message; u: User | null }[], calls: readonly StoredCall[]): string {
+  const all = new Set(calls.map((c) => c.name));
+  return buildHistory(recent, calls, all).items
+    .map((i) => (i.kind === "call" ? callLine(i.call) : `${i.role === "user" ? "Buyer" : "Agent"}: ${i.text}`))
+    .join("\n");
+}
+
+/** How many of the latest messages a turn's history reads. */
+export const HISTORY_MESSAGES = 40;
+
+/**
+ * The sources of a conversation's history (reads only): its latest messages (oldest first, with the user who wrote
+ * each) and the stored calls of those messages, in order. Scoped by account. `withCalls: false` reads the messages only.
+ */
+export async function historySources(
+  db: Db, accountId: string, conversationId: string, opts: { limit?: number; withCalls?: boolean } = {},
+): Promise<{ recent: { m: Message; u: User | null }[]; calls: StoredCall[] }> {
+  const recent = (await db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.accountId, accountId)))
+    .orderBy(desc(messages.createdAt)).limit(opts.limit ?? HISTORY_MESSAGES)).reverse();
+  return { recent, calls: opts.withCalls === false ? [] : await storedCallsOf(db, accountId, conversationId, recent.map(({ m }) => m.id)) };
+}
+
+/** The stored calls of these messages of a conversation, in order (sequence, then time). Scoped by account. */
+export async function storedCallsOf(db: Db, accountId: string, conversationId: string, messageIds: readonly string[]): Promise<StoredCall[]> {
+  if (!messageIds.length) return [];
+  return db.select({
+    id: toolCalls.id, messageId: toolCalls.messageId, sequence: toolCalls.sequence, name: toolCalls.name,
+    input: toolCalls.input, result: toolCalls.result, outcome: toolCalls.outcome,
+  }).from(toolCalls).where(and(eq(toolCalls.accountId, accountId), eq(toolCalls.conversationId, conversationId), inArray(toolCalls.messageId, [...messageIds])))
+    .orderBy(asc(toolCalls.sequence), asc(toolCalls.createdAt));
+}
+
+/**
+ * Where the previous turn's history ended, in this turn's history (for its cache breakpoint): the latest buyer text
+ * line that an agent message follows (the previous turn's history ended with that buyer message). Null when none.
+ */
+export function previousHistoryEndOf(history: readonly Param[]): number | null {
+  let answered = false;
+  for (let i = history.length - 2; i >= 0; i--) {
+    if (history[i].role === "assistant") answered = true;
+    else if (answered && typeof history[i].content === "string") return i;
+  }
+  return null;
 }

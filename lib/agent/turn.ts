@@ -4,7 +4,7 @@
  * code before the model sees anything.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, exists, inArray } from "drizzle-orm";
+import { and, desc, eq, exists } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
@@ -15,7 +15,8 @@ import { isRetryableModelError, withHistoryCacheBreakpoint, type Block, type Llm
 import { stableSystemPrompt, turnContext } from "./prompt";
 import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } from "./safety";
 import { readDealState } from "./service";
-import { buildHistory, type StoredCall } from "./history";
+import { buildHistory, previousHistoryEndOf, storedCallsOf, type StoredCall } from "./history";
+import { conversationFactsFigures, leadFacts, NO_FACTS, renderConversationFacts } from "./conversation-facts";
 import { resultForModel, runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } from "./tools";
 import { allowedFigures, figureNote, unverifiedFigures, withoutSentences } from "./figure-check";
 import { playFacts } from "./core/plays";
@@ -144,7 +145,7 @@ export async function runBuyerTurn(
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
-  const [recentDesc, stageFacts, catalog, followUp, callback, loggedCall, teamQuestions, priceApproval, buyerZone] = await Promise.all([
+  const [recentDesc, stageFacts, catalog, followUp, callback, loggedCall, teamQuestions, priceApproval, buyerZone, facts] = await Promise.all([
     db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
       .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
     loadStageFacts(db, args.accountId, conv.leadId),
@@ -160,6 +161,8 @@ export async function runBuyerTurn(
     priceApprovalContext(db, args.accountId, conv.leadId),
     // The buyer's own zone as stored (RB4): the tools give the buyer times in it, so the context does too.
     storedBuyerZone(db, args.accountId, conv.leadId),
+    // The conversation's facts (quotes, offers, order form; lib/agent/conversation-facts.ts): chat turns only.
+    callTurn ? Promise.resolve(NO_FACTS) : leadFacts(db, args.accountId, conv.leadId),
   ]);
   const recent = recentDesc.reverse();
   // For the stage: only what the agent wrote (the fixed opener too), not the app's messages (lib/agent/core/stage.ts).
@@ -177,15 +180,15 @@ export async function runBuyerTurn(
   const tools = spokenArgDescription ? toolDefsWithSpokenReply(TOOL_DEFS, spokenArgDescription) : TOOL_DEFS;
   // Chat turns replay the earlier tool calls (chat and call turns alike); a call turn's history stays text only.
   const recentIds = recent.map(({ m }) => m.id);
-  const storedCalls: StoredCall[] = callTurn || !recentIds.length ? [] : await db.select({
-    id: toolCalls.id, messageId: toolCalls.messageId, sequence: toolCalls.sequence, name: toolCalls.name,
-    input: toolCalls.input, result: toolCalls.result, outcome: toolCalls.outcome,
-  }).from(toolCalls).where(and(eq(toolCalls.accountId, args.accountId), eq(toolCalls.conversationId, conv.id), inArray(toolCalls.messageId, recentIds)))
-    .orderBy(asc(toolCalls.sequence), asc(toolCalls.createdAt));
+  const storedCalls: StoredCall[] = callTurn ? [] : await storedCallsOf(db, args.accountId, conv.id, recentIds);
   const { history, replayed } = buildHistory(recent, storedCalls, new Set(tools.map((t) => t.name)));
+  // The per-turn context goes right after the history (lib/agent/llm.ts withTurnContext): the history is cached
+  // across turns. Fixed before the turn's rounds add to `history`.
+  const historyLength = history.length;
+  const previousHistoryEnd = previousHistoryEndOf(history);
 
   // Both system blocks are fixed for the whole turn, so the prompt prefix stays
-  // byte-stable across tool rounds. Deal-state changes made during the turn reach
+  // byte-stable across tool rounds. The per-turn block (system[1]) is sent after the history (historyLength). Deal-state changes made during the turn reach
   // the model through the update_deal_state tool result.
   // The examples in the stable prompt come from the published catalog: fixed until it is published again.
   const activeItems = catalog?.items.filter((i) => i.active) ?? null;
@@ -202,6 +205,7 @@ export async function runBuyerTurn(
       teamCall: teamCallLogLine(loggedCall, (at) => formatBuyerLocal(at, buyerZone ?? contact.timezone)),
       teamQuestions,
       priceApproval,
+      facts: renderConversationFacts(facts) || null,
       // The clock the agent reads local times by: the tools read them in the buyer's stored zone, else the market's.
       localNow: localNowLine(new Date(), buyerZone ?? contact.timezone),
     })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing, as a natural continuation: answer the question directly, without referring back to the call unless that is needed to make the answer clear. Do not mention a technical problem." : ""}\nReply language: ${lang} (the language of the buyer's latest message). Write your reply and any text you pass to tools in it.${callLine ? `\n${callLine}` : ""}`,
@@ -234,6 +238,8 @@ export async function runBuyerTurn(
   // Owner, 26 Nov: the results of earlier tool calls in this conversation are in the history, so the agent knows
   // their figures (as the model read them). A held quote's pricing stays withheld (below).
   const earlierOk = replayed.filter((c) => c.outcome === "ok").map((c) => ({ name: c.name, result: resultForModel(c.result) }));
+  // Owner decision 3 (27 Nov): the facts in the per-turn context may be restated; a held quote's stay withheld.
+  const factFigures = conversationFactsFigures(facts);
   // The tools' strict mode of this turn's first call, sent again on every later round: the
   // model's thinking blocks are bound to the exact tool list they were made with.
   let strictTools: boolean | undefined;
@@ -258,7 +264,8 @@ export async function runBuyerTurn(
   try {
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
       const res = await callModel({
-        model: version.model, effort: version.effort, system, tools, messages: withHistoryCacheBreakpoint(history),
+        model: version.model, effort: version.effort, system, tools, messages: withHistoryCacheBreakpoint(history), historyLength,
+        ...(previousHistoryEnd === null ? {} : { previousHistoryEnd }),
         ...(strictTools === undefined ? {} : { strictTools }),
       }, round > 0);
       strictTools ??= res.strictTools;
@@ -282,7 +289,7 @@ export async function runBuyerTurn(
         // Call turns (a voice call's own session) are not checked: voice has no figure check in v1 (offers plan §4),
         // and a regeneration or a hand-off would hold up or end the spoken answer on a live call.
         if (optedOut || callTurn || round === MAX_TOOL_ROUNDS || !draft) break;
-        const allowed = allowedFigures([...chatFigures, masked.text, ...earlierOk.map((c) => c.result), ...pending.filter((p) => p.r.outcome === "ok").map((p) => p.r.result)]);
+        const allowed = allowedFigures([...chatFigures, ...factFigures.allowed, masked.text, ...earlierOk.map((c) => c.result), ...pending.filter((p) => p.r.outcome === "ok").map((p) => p.r.result)]);
         // A quote waiting for the seller's approval (made this turn, or the lead's latest when no quote was made this turn):
         // the totals of this turn's pricing (check_fit, check_offer, create_quote) may not be stated.
         const quotesNow = pending.filter((p) => p.name === "create_quote" && p.r.outcome === "ok");
@@ -295,7 +302,7 @@ export async function runBuyerTurn(
         ];
         const withheld = held
           // A held create_quote's lines carry line prices (data for the agent), withheld like its totals.
-          ? allowedFigures(pricing.map((p) => [p.result.totals, (p.result.offer as { totals?: unknown } | null | undefined)?.totals, p.result.now, p.name === "create_quote" && p.result.status === "awaiting_seller_approval" ? p.result.lines : null]))
+          ? allowedFigures([...pricing.map((p) => [p.result.totals, (p.result.offer as { totals?: unknown } | null | undefined)?.totals, p.result.now, p.name === "create_quote" && p.result.status === "awaiting_seller_approval" ? p.result.lines : null]), ...factFigures.held])
           : [];
         const bad = unverifiedFigures(draft, allowed, withheld);
         if (!bad.length) break;

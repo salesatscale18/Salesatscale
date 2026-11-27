@@ -20,6 +20,18 @@ export type LlmRequest = {
   system: [string, string];
   tools: ToolDef[];
   messages: Anthropic.Beta.BetaMessageParam[];
+  /**
+   * The agent's turns (lib/agent/turn.ts): how many leading `messages` are the conversation's history (the earlier
+   * messages and replayed tool calls, up to the buyer's latest message). When set, the per-turn block (system[1]) is
+   * not sent as a system block: it goes, unchanged, as a text block right after the history (lib/agent/llm.ts
+   * withTurnContext), so the history before it is read from cache on the next turn. Unset: two system blocks, as before.
+   */
+  historyLength?: number;
+  /**
+   * With `historyLength`: the index of the history message where the previous turn's history ended (its cache
+   * breakpoint), so this turn reads it even when more than 20 blocks were added since. Optional.
+   */
+  previousHistoryEnd?: number;
   /** Max output tokens; default 16000 (the agent). Small jobs (automatic names) ask for less. */
   maxTokens?: number;
   /** Server-side refusal fallback; default on (the agent). Off for models that do not offer it (Haiku). */
@@ -90,8 +102,58 @@ export function withHistoryCacheBreakpoint(history: Anthropic.Beta.BetaMessagePa
   return out;
 }
 
+type LooseBlock = { type: string; text?: string; cache_control?: unknown; [k: string]: unknown };
+const blocksOf = (m: Anthropic.Beta.BetaMessageParam): LooseBlock[] =>
+  typeof m.content === "string" ? [{ type: "text", text: m.content }] : [...((m.content ?? []) as LooseBlock[])];
+
+/** A copy of message `i` with a cache breakpoint on its last cacheable block before `before` (all blocks when unset). */
+function markMessage(out: Anthropic.Beta.BetaMessageParam[], i: number, before?: number): void {
+  const m = out[i];
+  if (!m) return;
+  const blocks = blocksOf(m);
+  for (let j = Math.min(before ?? blocks.length, blocks.length) - 1; j >= 0; j--) {
+    const b = blocks[j];
+    if (!CACHEABLE.has(b.type) || (b.type === "text" && !b.text)) continue;
+    if (b.cache_control) return;
+    blocks[j] = { ...b, cache_control: { type: "ephemeral" } };
+    out[i] = { ...m, content: blocks } as Anthropic.Beta.BetaMessageParam;
+    return;
+  }
+}
+
+/**
+ * The messages of an agent turn with the per-turn context right after the history (pure, never mutates its input),
+ * and the cache breakpoints (with the system one, at most MAX_CACHE_BREAKPOINTS):
+ * - the moving one on the last block of the request (round 1: the per-turn context; later rounds: the last tool
+ *   result), so the turn's next round reads everything before it;
+ * - one on the last history block before the per-turn context (the buyer's latest message): the next turn's history
+ *   starts with these same blocks, so it reads them from cache;
+ * - one where the previous turn's history ended (`previousHistoryEnd`), written by that turn: read by this one.
+ * The context is a text block added to the last history message when it is the user's, else a user message after it.
+ */
+export function withTurnContext(messages: Anthropic.Beta.BetaMessageParam[], context: string, historyLength: number, previousHistoryEnd?: number): Anthropic.Beta.BetaMessageParam[] {
+  const end = Math.max(0, Math.min(historyLength, messages.length));
+  const at = end - 1;
+  const ctx: LooseBlock = { type: "text", text: context };
+  let placed: Anthropic.Beta.BetaMessageParam[];
+  let historyBlocks: number | undefined;
+  if (at >= 0 && messages[at].role === "user") {
+    const blocks = blocksOf(messages[at]);
+    historyBlocks = blocks.length;
+    placed = [...messages.slice(0, at), { ...messages[at], content: [...blocks, ctx] } as Anthropic.Beta.BetaMessageParam, ...messages.slice(end)];
+  } else {
+    placed = [...messages.slice(0, end), { role: "user", content: [ctx] } as Anthropic.Beta.BetaMessageParam, ...messages.slice(end)];
+  }
+  const out = withHistoryCacheBreakpoint(placed);
+  if (at >= 0) markMessage(out, at, historyBlocks);
+  if (previousHistoryEnd !== undefined && previousHistoryEnd >= 0 && previousHistoryEnd < at) markMessage(out, previousHistoryEnd);
+  return out;
+}
+
 /** The request AnthropicLlm sends (pure, for tests). */
 export function buildRequestParams(req: LlmRequest): Anthropic.Beta.MessageCreateParamsNonStreaming {
+  // An agent turn: the per-turn context after the history (withTurnContext); otherwise the two system blocks.
+  const turn = req.historyLength !== undefined;
   return {
     model: req.model,
     max_tokens: req.maxTokens ?? 16000,
@@ -99,10 +161,10 @@ export function buildRequestParams(req: LlmRequest): Anthropic.Beta.MessageCreat
     output_config: { effort: req.effort as "low" | "medium" | "high" | "xhigh" | "max" },
     system: [
       { type: "text", text: req.system[0], cache_control: { type: "ephemeral" } },
-      { type: "text", text: req.system[1] },
+      ...(turn ? [] : [{ type: "text" as const, text: req.system[1] }]),
     ],
     ...(req.tools.length ? { tools: req.tools } : {}),
-    messages: withHistoryCacheBreakpoint(req.messages),
+    messages: turn ? withTurnContext(req.messages, req.system[1], req.historyLength!, req.previousHistoryEnd) : withHistoryCacheBreakpoint(req.messages),
   };
 }
 
@@ -161,7 +223,8 @@ export function isRetryableModelError(e: unknown): boolean {
  * Claude via the official SDK. Refusal fallbacks are on by default
  * ("default" routing): a declined request is retried server-side on a
  * fallback model inside the same call. Caching: one breakpoint on the stable
- * system block, one on the last history block.
+ * system block, one on the last block; on an agent turn also on the history's end
+ * and the previous turn's history end (withTurnContext).
  */
 export class AnthropicLlm implements LlmClient {
   private client: Anthropic;
