@@ -138,6 +138,11 @@ export type TurnExtra = {
    * (O1 part 5, lib/agent/quote-approval.ts priceApprovalContext): a ready "Price approval" block.
    */
   priceApproval?: string | null;
+  /**
+   * The conversation's facts as plain text (lib/agent/conversation-facts.ts renderConversationFacts): quotes, offers
+   * and the order form. Shown when given (chat turns).
+   */
+  facts?: string | null;
   /** "voice": a live call (lib/voice/instructions.ts). Default: chat, unchanged. */
   channel?: PromptChannel;
 };
@@ -167,6 +172,8 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
     `## Known so far\n${known}`,
     // The open objection with its card and the steps already used (O1), next to "Known so far".
     openObjectionText(deal?.objections, p, objectionAttemptsOf(p)),
+    // The conversation's facts (owner decision 3, 27 Nov): quotes, offers, order form, as data.
+    extra.facts ?? "",
     // O4: "Answer from the team to the buyer's question: …" and the questions still open with the team.
     extra.teamQuestions ?? "",
     // O1 part 5: the team declined a special price; the agent continues the price ladder from it.

@@ -119,6 +119,35 @@ function repliesAfter(run: ScenarioRun, n: number) {
 }
 /** Every scripted buyer message was sent and the agent answered the last one. */
 const allAnswered = (run: ScenarioRun, turns: number) => buyerCount(run) >= turns && repliesAfter(run, turns).length > 0;
+/** Words only, lower case: a line as said on a call (punctuation and case aside) still matches. */
+const wordsOf = (s: string) => s.toLowerCase().replace(/['’]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+/** The buyer message (1 = the opening) that carries this line, by its content (the latest such one); 0 when none. */
+function buyerTurnSaying(run: ScenarioRun, line: string): number {
+  const want = wordsOf(line);
+  let n = 0;
+  let turn = 0;
+  for (const m of run.messages) {
+    if (m.actor !== "buyer") continue;
+    n++;
+    if (want && wordsOf(m.body).includes(want)) turn = n;
+  }
+  return turn;
+}
+/**
+ * The buyer message that carries the scenario's last line, found by its content, not its position: an extra exchange
+ * before it (a quantity question on a call) does not move it. When no buyer message carries it (a paraphrase), the
+ * message right after the latest earlier scenario line found by content, else its place in the scenario as before.
+ * `lines`: the scenario's buyer turns after the opening (the opening is buyer message 1).
+ */
+function lastLineTurn(run: ScenarioRun, lines: readonly string[]): number {
+  const found = buyerTurnSaying(run, lines.at(-1)!);
+  if (found) return found;
+  for (let i = lines.length - 2; i >= 0; i--) {
+    const earlier = buyerTurnSaying(run, lines[i]);
+    if (earlier) return earlier + (lines.length - 1 - i);
+  }
+  return 1 + lines.length;
+}
 const handedOff = (run: ScenarioRun) => okCalls(run, "hand_off_to_human").length > 0 || run.conversationStatus === "human";
 
 type RecordedObjection = { call: RunCall; play: string; step: number | null; attempt: boolean; status: string };
@@ -540,7 +569,8 @@ export const SCENARIOS: Scenario[] = [
     check(run) {
       const basics = objectionBasics(run);
       if (basics) return basics;
-      const signal = 1 + SIGNAL_TURNS.length;
+      // The buyer's "let's do it" by its content, not its position (an extra exchange may come before it).
+      const signal = lastLineTurn(run, SIGNAL_TURNS);
       const formSent = okCalls(run, "send_order_form").length > 0;
       if (!formSent && buyerCount(run) < signal) return notYet("Send the next buyer message.");
       const afterSignal = recordedObjections(run).filter((o) => (turnOf(run, o.call) ?? 0) >= signal);
@@ -563,7 +593,8 @@ export const SCENARIOS: Scenario[] = [
       if (basics) return basics;
       const argument = repeatedArgument(run);
       if (argument) return fail(`The agent repeated an argument: "${argument}"`);
-      if (!allAnswered(run, 1 + TWO_OBJECTIONS_TURNS.length)) return notYet("Send the next buyer message.");
+      // The price coming back, found by its content, not its position (an extra exchange may come before it).
+      if (!allAnswered(run, lastLineTurn(run, TWO_OBJECTIONS_TURNS))) return notYet("Send the next buyer message.");
       if (new Set(recordedObjections(run).map((o) => o.play)).size < 2) return fail("Both objections should be recorded in the deal state, each with its own play.");
       return pass("Both objections recorded; no step or argument repeated.");
     },

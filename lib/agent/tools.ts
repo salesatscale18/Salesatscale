@@ -42,7 +42,7 @@ import { bookNamedTime, offerBooking } from "@/lib/team-calls/service";
 import { callRoleOf } from "./core/call-role";
 import { askTeam } from "@/lib/team-questions/service";
 import { nextOffer, offerSkipText, offersOf, type OfferOption, type OfferPricing, type OfferType } from "./offers";
-import { findOffer, highestOfferedBp, leadOfferCalls, offerHistory, standingOfferMatch, type NoOfferRecord, type OfferCall, type OfferRecord, type StandingMatch } from "./offer-records";
+import { findOffer, highestOfferedBp, leadOfferCalls, offerHistory, offerRef, standingOfferMatch, standingOfferOnLiveQuote, type NoOfferRecord, type OfferCall, type OfferRecord, type StandingMatch } from "./offer-records";
 
 const lineSchema = {
   type: "array",
@@ -58,7 +58,7 @@ const lineSchema = {
 const CHECK_OFFER_DESCRIPTION = "Get the one offer you may make on price, before you offer the buyer anything (a discount, a volume price, a smaller first step). Pass the buyer's current quote and the reason: next (the price in general), or the trade the buyer named: more_units, decide_now, pay_yearly, smaller_start (pass its lines and sites). Returns one offer at a time, in the seller's order, with the new figures already calculated and an offer id; state only those figures, in your own words. Creates nothing: when the buyer accepts, call create_quote with the offer id. When nothing more can be offered, it says so. Refused until the buyer's price objection or discount request is recorded (update_deal_state objection, play too_expensive).";
 
 /** check_offer's message with an offer. */
-export const OFFER_OK_MESSAGE = "Offer this as a trade, in your own words: what the buyer gives and what they get, with these figures only. Do not offer more, and add no other amount or percentage. When the buyer accepts, call create_quote with this offer id, these lines, these sites and this discount_percent. If the buyer turns it down, you may call check_offer again for the next offer. If the buyer needs more than this, create_quote with the discount they need (offer null) goes to the seller for approval.";
+export const OFFER_OK_MESSAGE = "Offer this in your own words, with these terms and figures only. Do not offer more, and add no other amount or percentage. When the buyer accepts, call create_quote with this offer id, these lines, these sites and this discount_percent. If the buyer turns it down, you may call check_offer again for the next offer. If the buyer needs more than this, create_quote with the discount they need (offer null) goes to the seller for approval.";
 /** check_offer's message when nothing more can be offered. */
 export const OFFER_NONE_MESSAGE = "Nothing more can be offered on price without the team's approval. If the buyer needs more, create_quote with the discount they need (offer null) goes to the seller for approval; otherwise take the card's last rungs.";
 /** create_quote's message for a quote held for an approved exception (owner, 23 Nov: never say the price already includes it). */
@@ -91,7 +91,7 @@ export const TOOL_DEFS: ToolDef[] = [
     input_schema: {
       type: "object",
       properties: {
-        quote: { type: "string", description: 'The buyer\'s current quote, e.g. "Q-1001".' },
+        quote: { type: "string", description: "The buyer's current quote number exactly as create_quote returned it or your context lists it (Q- and its number)." },
         reason: {
           type: "string", enum: ["next", "more_units", "decide_now", "pay_yearly", "smaller_start"],
           description: "next = the price in general (the next offer in the seller's order); more_units = they would take more; decide_now = they would sign while the new quote is valid; pay_yearly = they would pay the plan a year ahead; smaller_start = a smaller first set (pass its lines and sites).",
@@ -218,7 +218,7 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "send_order_form",
     description: "Send the buyer the personal link to the seller's order form for a ready quote, to fill in their company details, sign and pay. Do not ask for company or signer details in the chat: the buyer fills them in the form. Refused if the quote waits for the seller's approval, expired, or the buyer opted out.",
     strict: true,
-    input_schema: { type: "object", properties: { quote: { type: "string", description: 'Quote number, e.g. "Q-1001".' } }, required: ["quote"], additionalProperties: false },
+    input_schema: { type: "object", properties: { quote: { type: "string", description: "The quote number exactly as create_quote returned it or your context lists it (Q- and its number)." } }, required: ["quote"], additionalProperties: false },
   },
   {
     name: "check_payment",
@@ -790,7 +790,9 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const now = { total_today_including_vat: money(v.oneTimeTotalMinor), recurring_total_including_vat: v.recurringTotalMinor > 0 ? money(v.recurringTotalMinor, v.recurringPeriod === "year" ? "year" : "month") : null };
     if (!r.next) {
       const record: NoOfferRecord = { exhausted: true, quoteId: q.id, quoteNumber: q.number, tried };
-      const result = { ok: true, quote: `Q-${q.number} v${v.version}`, ...fallback, now, offer: null, ...namedNote, message: OFFER_NONE_MESSAGE, record };
+      // Data only (owner decision 4, 27 Nov): an earlier offer still standing on a live quote, so "nothing more" is not "no offer".
+      const standing = await standingOfferOnLiveQuote(ctx.db, ctx.accountId, ctx.leadId, history);
+      const result = { ok: true, quote: `Q-${q.number} v${v.version}`, ...fallback, now, offer: null, ...(standing ? { standing_offer: offerRef(standing) } : {}), ...namedNote, message: OFFER_NONE_MESSAGE, record };
       rememberOfferCall(ctx, name, args, result);
       return { outcome: "ok", result };
     }
@@ -1016,8 +1018,18 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         }
         if (!calls.some((c) => c.name === "check_offer")) return refuse("Offer first", { message: "Call check_offer first and offer what it returns; if the buyer needs more, create the quote with the discount they need." });
         // Rule B: up to what was offered, a discount comes only through its offer id.
-        const offered = highestOfferedBp(offerHistory(calls, new Date()));
-        if (discountBp <= offered) return refuse("Discount not from an offer", { message: "A discount comes only from check_offer. Call it with the buyer's quote and reason, offer what it returns, and pass its offer id when the buyer accepts." });
+        const history = offerHistory(calls, new Date());
+        const offered = highestOfferedBp(history);
+        if (discountBp <= offered) {
+          // Data only (owner decision 4, 27 Nov): what is missing (the offer id), and the standing offer of this percent
+          // it could not be bound to (other lines, or another quote), when there is one.
+          const matching = await standingOfferOnLiveQuote(ctx.db, ctx.accountId, ctx.leadId, history, discountBp);
+          return refuse("Discount not from an offer", {
+            missing: ["offer"],
+            ...(matching ? { matching_offer: { ...offerRef(matching), lines: matching.lines } } : {}),
+            message: "A discount comes only from check_offer. Call it with the buyer's quote and reason, offer what it returns, and pass its offer id when the buyer accepts.",
+          });
+        }
         // Above the offers: always the seller's approval (the quote's limit is what was offered).
         discountLimitBp = offered;
       }
